@@ -355,14 +355,16 @@ $('#run').onclick = async () => {
   msg(); const {k, D} = st, btn = $('#run');
   if (btn.disabled) return;
   for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
-  const q = st.shots.slice(0, k).map((s, i) => detectSide(s, st.hints[i]));
-  const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
-  const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
-  det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
-  if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
   btn.disabled = true; $('#busy').hidden = false; $('#engine').textContent = '';
-  try { engine = await measureWear(st.shots, {flutes: k, diameterMm: D}); }   // -> Tool3D.wearResult
-  finally { btn.disabled = false; $('#busy').hidden = true; }
+  await new Promise(ok => requestAnimationFrame(() => setTimeout(ok, 0)));   // 무거운 계산 전에 스피너를 먼저 그림
+  try {
+    const q = st.shots.slice(0, k).map((s, i) => detectSide(s, st.hints[i]));
+    const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
+    const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
+    det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
+    if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
+    engine = await measureWear(st.shots, {flutes: k, diameterMm: D});        // -> Tool3D.wearResult
+  } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
 };
