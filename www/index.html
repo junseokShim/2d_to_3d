@@ -75,6 +75,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
   <div class="cambar"><button id="camClose">취소</button><button id="shutter" aria-label="촬영"></button><span id="camtxt"></span></div>
 </div>
 
+<script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -339,6 +340,7 @@ $('#run').onclick = () => {
   const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
   det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
   analyze();
+  try { window.Tool3D?.wear?.run?.(st.shots, {flutes: k, diameterMm: D}); } catch (e) { console.warn('wear:', e); }   // -> Tool3D.wearResult
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 
