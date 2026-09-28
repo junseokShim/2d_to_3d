@@ -13,7 +13,7 @@ jobs:
         with: { node-version: 20, cache: npm }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17, cache: gradle }
-      - uses: android-actions/setup-android@v3
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true   # runner has the SDK preinstalled
       - run: npm ci --ignore-scripts   # Electron 바이너리는 APK에 필요 없음
       - run: chmod +x android/gradlew
       - run: npm run apk
