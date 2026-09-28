@@ -63,7 +63,7 @@ vec3 bumpN(vec3 pos, vec3 n, float h, float fd) {
     float fe = dot(vSurf, vec2(.8, .6)) * 60. + 1.4 * vn(vSurf * 6.);
     mk = lines(fe) * .7 + lines(dot(vSurf, vec2(.8, .6)) * 190.) * .3;
     streak = vn(vec2(dot(vSurf, vec2(.8, .6)) * 30., dot(vSurf, vec2(-.6, .8)) * .5));
-    gAlb = vec3(.58, .59, .61) * (.8 + .3 * streak); gRough = .2 + .14 * streak; gH = (mk - .5) * .0016;
+    gAlb = vec3(.58, .59, .61) * (.84 + .22 * streak); gRough = .22 + .1 * streak; gH = (mk - .5) * .0009;
   }
   // shank: fine circumferential cylindrical-grinding marks
   float sk = lines(z * 45. + .8 * vn(vec2(u * 3., z * 2.)));
@@ -92,7 +92,7 @@ vec3 bumpN(vec3 pos, vec3 n, float h, float fd) {
     float a = (1. - smoothstep(vb - soft, vb, s)) * smoothstep(.004, .02, vb);
     float t = clamp(1. - s / max(vb, 1e-4), 0., 1.);
     vec3 wc = mix(vec3(.95, .72, .08), vec3(.92, .30, .03), smoothstep(0., .12, t));
-    wc = mix(wc, vec3(.78, .025, .02), smoothstep(.12, .3, t));
+    wc = mix(wc, vec3(.52, .006, .005), smoothstep(.12, .3, t));
     sAlb = mix(sAlb, wc, a); sRough = mix(sRough, .55, a); sMetal = mix(sMetal, .05, a); sH *= 1. - .8 * a;
   }
 `;
