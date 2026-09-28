@@ -13,7 +13,9 @@
 
   const uniforms = {
     uWearTex: {value: null}, uZMax: {value: 1}, uVbMax: {value: 1}, uRows: {value: 8}, uWearOn: {value: 1},
-    uCloud: {value: 0}, uBump: {value: 1}
+    uCloud: {value: 0}, uBump: {value: 1},
+    // per-face segmentation map (js/map3d): side atlas (azimuth x z) and end atlas (X x Y), RGB = flank/chip/adhesion
+    uMapOn: {value: 0}, uSideTex: {value: null}, uEndTex: {value: null}, uSideZMax: {value: 1}, uMapR: {value: 5}
   };
 
   const VERT_HEAD = `
@@ -21,12 +23,15 @@ attribute vec4 aReg;
 attribute vec2 aSurf;
 varying vec4 vReg;
 varying vec2 vSurf;
+varying vec3 vTool;
 `;
   const FRAG_HEAD = `
 uniform sampler2D uWearTex;
-uniform float uZMax, uVbMax, uRows, uWearOn, uCloud, uBump;
+uniform float uZMax, uVbMax, uRows, uWearOn, uCloud, uBump, uMapOn, uSideZMax, uMapR;
+uniform sampler2D uSideTex, uEndTex;
 varying vec4 vReg;
 varying vec2 vSurf;
+varying vec3 vTool;
 float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vn(vec2 p) {
   vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
@@ -95,6 +100,17 @@ vec3 bumpN(vec3 pos, vec3 n, float h, float fd) {
     wc = mix(wc, vec3(.52, .006, .005), smoothstep(.12, .3, t));
     sAlb = mix(sAlb, wc, a); sRough = mix(sRough, .55, a); sMetal = mix(sMetal, .05, a); sH *= 1. - .8 * a;
   }
+  // per-face segmentation classes mapped onto the model (flank amber, chipping magenta, adhesion blue)
+  if (uMapOn > .5 && reg < 5.5) {
+    vec4 mc = vec4(0.);
+    if (reg > 4.5) mc = texture2D(uEndTex, vTool.xy / (2. * uMapR) + .5);
+    else if (vTool.z < uSideZMax) mc = texture2D(uSideTex, vec2(fract(atan(vTool.y, vTool.x) / 6.2831853), vTool.z / uSideZMax));
+    float aF = smoothstep(.3, .55, mc.r), aC = smoothstep(.3, .55, mc.g), aA = smoothstep(.3, .55, mc.b);
+    sAlb = mix(sAlb, vec3(.96, .60, .05), aF); sRough = mix(sRough, .5, aF); sMetal = mix(sMetal, .1, aF);
+    float fr = vn(vec2(u, z) * 90.);
+    sAlb = mix(sAlb, vec3(.78, .03, .32) * (.7 + .5 * fr), aC); sRough = mix(sRough, .8, aC); sMetal = mix(sMetal, .05, aC); sH += aC * (fr - .5) * .01;
+    sAlb = mix(sAlb, vec3(.08, .45, .95), aA); sRough = mix(sRough, .65, aA); sMetal = mix(sMetal, .1, aA);
+  }
 `;
 
   function create() {
@@ -102,7 +118,7 @@ vec3 bumpN(vec3 pos, vec3 n, float h, float fd) {
     m.extensions = {derivatives: true};
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, uniforms);
-      sh.vertexShader = VERT_HEAD + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vReg = aReg; vSurf = aSurf;');
+      sh.vertexShader = VERT_HEAD + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vReg = aReg; vSurf = aSurf; vTool = position;');
       sh.fragmentShader = FRAG_HEAD + sh.fragmentShader
         .replace('#include <color_fragment>', FRAG_SURF + '\n  diffuseColor.rgb = sAlb;')
         .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  roughnessFactor = sRough; metalnessFactor = sMetal;')

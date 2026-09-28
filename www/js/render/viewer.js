@@ -5,6 +5,8 @@
 //   view(name)       'iso' | 'tip' | 'side' | 'corner' (macro of flute 0's cutting corner)
 //   cloud(on)        focus-variation point-cloud look on/off
 //   stl()            ArrayBuffer, binary STL in mm, z = tool axis, tip z = 0
+//   setMap(r|null)   per-face segmentation map from js/map3d (evaluate() result): class colours + chip deformation
+//   volume(deformed) closed-mesh volume (mm3) of the current model, with or without the chip deformation
 // It mounts next to #gl, hides the legacy WebGL canvas, and takes over the STL button.
 (function () {
   'use strict';
@@ -13,10 +15,27 @@
   if (!window.THREE) { console.warn('Tool3D render: three.js missing (www/vendor/three)'); return; }
 
   const $ = s => document.querySelector(s);
-  let renderer, scene, camera, controls, group, mesh = null, params = {}, wearSeen, showWear = true, hud, dirty = true;
+  let renderer, scene, camera, controls, group, mesh = null, params = {}, wearSeen, showWear = true, hud, dirty = true, map = null;
 
   const mat = NS.surface.create(), U = NS.surface.uniforms;
   U.uWearTex.value = NS.wear.tex;
+
+  // atlas (Float32 class probabilities per cell) -> RGBA8 texture, max-pooled down to <= 2048 so thin chips survive
+  function atlasTexture(W, H, ch, wrapS) {
+    const tw = Math.min(W, 2048), th = Math.min(H, 2048), bx = W / tw, by = H / th, d = new Uint8Array(tw * th * 4);
+    for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+      const o = 4 * (y * tw + x);
+      for (let j = Math.floor(y * by); j < Math.min(H, Math.ceil((y + 1) * by)); j++) for (let i = Math.floor(x * bx); i < Math.min(W, Math.ceil((x + 1) * bx)); i++) {
+        const k = j * W + i;
+        for (let c = 0; c < 3; c++) { const v = 255 * ch[c](k); if (v > d[o + c]) d[o + c] = v; }
+      }
+      d[o + 3] = 255;
+    }
+    const t = new THREE.DataTexture(d, tw, th, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.magFilter = t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+    t.wrapS = wrapS ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
+    return t;
+  }
 
   function mount() {
     const old = $('#gl');
@@ -110,22 +129,30 @@
     if (!mesh) return;
     const w = currentWear();
     const tx = NS.wear.texture(w);
-    U.uZMax.value = tx.zMax; U.uVbMax.value = tx.vbMax; U.uRows.value = tx.rows; U.uWearOn.value = showWear && w ? 1 : 0;
+    U.uZMax.value = tx.zMax; U.uVbMax.value = tx.vbMax; U.uRows.value = tx.rows; U.uWearOn.value = showWear && w && !map ? 1 : 0;
+    U.uMapOn.value = showWear && map ? 1 : 0;
     const q = mesh.params, t = w && w.totals;
     hud.textContent =
       `Ø ${q.diameterMm.toFixed(2)} mm   ${q.flutes} FL   helix ${(+q.helixDeg).toFixed(1)}° ${q.hand > 0 ? 'RH' : 'LH'}\n` +
       `core ${(q.coreRatio * q.diameterMm).toFixed(2)} mm   rε ${q.cornerRadiusMm.toFixed(2)} mm   rake ${q.rakeDeg}°  clear ${q.clear1Deg}/${q.clear2Deg}°\n` +
       (t ? `VBmax ${t.vbMaxMm.toFixed(3)} mm   A ${t.areaMm2.toFixed(3)} mm²   V ${t.volumeMm3.toFixed(4)} mm³` +
         (w.mock ? '   [MOCK wear]' : '') : 'no wear data');
+    const mt = map && map.totals;
+    if (mt) hud.textContent += `
+faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${mt.chip.areaMm2.toFixed(3)} mm² / ${(map.result.chipVolumeModelMm3 ?? mt.chip.volumeMm3).toFixed(4)} mm³   adh ${mt.adhesion.areaMm2.toFixed(3)} mm²` + (map.mock ? '   [MOCK seg]' : '');
     const lg = $('#tool3d-legend');
-    if (lg) lg.innerHTML = showWear && t ? `<span>VB 0</span><span style="width:90px;height:8px;border-radius:2px;background:linear-gradient(90deg,#f2b814,#eb5a08,#c80605)"></span><span>${t.vbMaxMm.toFixed(3)} mm</span>` : '';
+    const sw = (c, t) => `<span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${c};margin-right:3px;vertical-align:-1px"></span>${t}`;
+    if (lg) lg.style.top = (hud.offsetHeight + 14) + 'px';
+    if (lg && showWear && mt) lg.innerHTML = [sw('#f59a0d', 'Flank wear'), sw('#c4085a', 'Chipping'), sw('#1473f2', 'Adhesion/BUE')].map(x => `<span data-cls>${x}</span>`).join('');
+    else if (lg) lg.innerHTML = showWear && t ? `<span>VB 0</span><span style="width:90px;height:8px;border-radius:2px;background:linear-gradient(90deg,#f2b814,#eb5a08,#c80605)"></span><span>${t.vbMaxMm.toFixed(3)} mm</span>` : '';
     dirty = true;
   }
 
   function update(p) {
     params = Object.assign({}, params, p || {});
+    if (map && (map.params.flutes !== params.flutes || map.params.diameterMm !== params.diameterMm)) setMapState(null);   // stale map
     if (mesh) { group.remove(mesh.obj); Object.values(mesh.parts).forEach(g => g.dispose()); }
-    const b = NS.geometry.build(params);
+    const b = NS.geometry.build(params, map && map.deform);
     const obj = new THREE.Group();
     for (const g of Object.values(b.parts)) obj.add(new THREE.Mesh(g, mat));
     group.add(obj);
@@ -157,6 +184,41 @@
     }
     camera.position.copy(tgt).addScaledVector(dir.normalize(), d);
     controls.target.copy(tgt); controls.update(); dirty = true;
+  }
+
+  function setMapState(r) {
+    if (map) { map.sideTex.dispose(); map.endTex.dispose(); }
+    map = null; U.uMapOn.value = 0;
+    if (!r || !r.atlas || !window.Tool3D.map3dCore) return;
+    const S = r.atlas.side, E = r.atlas.end, P = S.prob;
+    const sideTex = atlasTexture(S.NA, S.NZ, [k => P[2][k], k => P[3][k], k => P[4][k]], true);
+    const endTex = atlasTexture(E.N, E.N, [k => +(E.cls[k] === 2), k => +(E.cls[k] === 3), k => +(E.cls[k] === 4)], false);
+    map = {result: r, faces: r.faces, totals: r.totals, mock: !!r.mock, params: r.params || {},
+      sideTex, endTex, deform: r.totals.chip.areaMm2 > 0 ? window.Tool3D.map3dCore.deformer(r) : null};
+    U.uSideTex.value = sideTex; U.uEndTex.value = endTex; U.uSideZMax.value = S.zMax; U.uMapR.value = E.R;
+  }
+
+  function setMap(r) {
+    setMapState(r);
+    if (mesh) update();
+    return !!map;
+  }
+
+  // closed-mesh volume (divergence theorem) of the current parameters, with / without the chip deformation;
+  // both at the same mesh resolution so their difference is the removed volume
+  function volume(deformed = true) {
+    if (!mesh) return 0;
+    const b = NS.geometry.build(params, deformed && map && map.deform ? map.deform : {side: () => null, end: () => null}, {noNormals: true});
+    let v = 0;
+    for (const g of Object.values(b.parts)) {
+      const p = g.getAttribute('position').array, ix = g.getIndex().array;
+      for (let t = 0; t < ix.length; t += 3) {
+        const a = 3 * ix[t], c = 3 * ix[t + 1], d = 3 * ix[t + 2];
+        v += p[a] * (p[c + 1] * p[d + 2] - p[c + 2] * p[d + 1]) - p[a + 1] * (p[c] * p[d + 2] - p[c + 2] * p[d]) + p[a + 2] * (p[c] * p[d + 1] - p[c + 1] * p[d]);
+      }
+      g.dispose();
+    }
+    return Math.abs(v / 6);
   }
 
   function cloud(on) {
@@ -191,7 +253,7 @@
     a.download = 'tool.stl'; a.click();
   }
 
-  const api = {update, view, cloud, stl, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
+  const api = {update, view, cloud, stl, setMap, volume, refresh: () => repaint(), get map() { return map && map.result; }, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
   T3.render = api;
 
   function init() {

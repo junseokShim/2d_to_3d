@@ -387,12 +387,12 @@
       if (i === 1) put(-.4 * R, -.15 * R, .3 * D, .45 * D, 4);           // adhesion patch
       faces.push({face: 'side' + (i + 1), angleDeg: i * 360 / k, w, h, mask: m, pxPerMm: ppm, axisX, tipY, source: 'mock'});
     }
-    const N = Math.ceil(2.4 * R * ppm), m = new Uint8Array(N * N), cx = N / 2, cy = N / 2;
+    const N = Math.ceil(2.4 * R * ppm), m = new Uint8Array(N * N), cx = N / 2, cy = N / 2, lookE = layout ? toothLookup(Object.assign({}, layout, {tanH: 0})) : null;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const X = -(x + .5 - cx) / ppm, Y = -(y + .5 - cy) / ppm, r = Math.hypot(X, Y), a = Math.atan2(Y, X);
       if (r > R) continue;
       m[y * N + x] = 1;
-      if (r > .55 * R && r < .8 * R && Math.abs(wrap(a - .35)) < .18) m[y * N + x] = 3;   // chipped end tooth
+      if (r > .55 * R && r < .8 * R && Math.abs(wrap(a - .35)) < .18 && (!lookE || lookE(a, 0).s < 50)) m[y * N + x] = 3;   // chipped end tooth (on tooth material)
       else if (r > .3 * R && r < .9 * R && Math.abs(wrap(a - 2.0)) < .08) m[y * N + x] = 2;
     }
     faces.push({face: 'top', angleDeg: 0, w: N, h: N, mask: m, pxPerMm: ppm, cx, cy, source: 'mock'});

@@ -53,6 +53,8 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   res.checks.renderParams = await ev(`JSON.stringify(Tool3D.render&&Tool3D.render.params)`);
   res.checks.hud = await ev(`document.querySelector('#tool3d-view div').textContent`);
   res.checks.legend = await ev(`document.querySelector('#tool3d-legend').textContent`);
+  // per-face segmentation -> 3D (js/map3d), from the real run: 4 sides + top in wearResult.faces, rows in the table
+  res.checks.map3dRun = JSON.parse(await ev(`JSON.stringify((()=>{const w=Tool3D.wearResult||{},f=w.faces||[];return {n:f.length,names:f.map(x=>x.face),kinds:f.map(x=>x.kind),areas:f.map(x=>x.areasMm2),totals:w.facesTotals&&{area:w.facesTotals.totalAreaMm2,src:w.facesTotals.source},rows:document.querySelectorAll('#res tr[data-map3d]').length,faceSeg:(Tool3D.faceSeg||[]).length,ms:Tool3D.map3dResult&&Tool3D.map3dResult.ms}})())`));
   const shotView = async name => {
     await ev(`Tool3D.render.view('${name}');1`); await sleep(1200);
     const b = await ev(`(()=>{const r=document.querySelector('#tool3d-view').getBoundingClientRect();return [r.x+scrollX,r.y+scrollY,r.width,r.height]})()`);
@@ -172,13 +174,34 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   A.ok = !A.msg && !!B.assist && /no-band/.test(B.assist.reason) && B.assist.guess === true && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
     B.modes.every(x => x === 'awaiting-operator') && B.decision === 'indeterminate' && Af.mode === 'operator-assisted' && Af.vb > 0 && Af.U > 0 && Af.banner === 'operator-assisted' &&
     /operator-assisted/.test(Af.table) && Af.contract === 'operator-assisted' && Math.abs(Af.wr - Af.vb) < 1e-4 && A.csv.mode && A.csv.oa && A.html === true && A.pdf === true;
+  // map3d deformation: synthetic masks on the current model (mock) -> class colours, chip removes material, legend
+  {
+    const M3 = res.checks.map3d = {};
+    Object.assign(M3, JSON.parse(await ev(`JSON.stringify((()=>{const r=Tool3D.map3d.mock();const v0=Tool3D.render.volume(false),v1=Tool3D.render.volume(true);return {faces:r.faces.length,classes:r.totals.areaMm2,chipArea:r.totals.chip.areaMm2,chipVolModel:r.chipVolumeModelMm3,chipVolEst:r.totals.chip.volumeMm3,dv:+(v0-v1).toFixed(4),ms:r.ms,legend:document.querySelector('#tool3d-legend').textContent,hud:document.querySelector('#tool3d-view div').textContent,wrFaces:(Tool3D.wearResult&&Tool3D.wearResult.faces||[]).length,rows:document.querySelectorAll('#res tr[data-map3d]').length}})())`)));
+    const colour = async () => ev(`(()=>{const c=document.querySelector('#tool3d-view canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let f=0,ch=0,a=0;for(let i=0;i<d.length;i+=4){const r=d[i],g=d[i+1],b=d[i+2];if(r>150&&g>70&&g<190&&b<60)f++;else if(r>100&&g<60&&b>50&&b<160)ch++;else if(b>150&&r<90&&g<170)a++}return [f,ch,a]})()`);
+    const md = path.join(OUT, 'map3d'); fs.mkdirSync(md, {recursive: true});
+    for (const v of ['iso', 'tip', 'corner', 'side']) {
+      await ev(`Tool3D.render.view('${v}');1`); await sleep(1200);
+      M3['px_' + v] = await colour();
+      const b = await ev(`(()=>{const r=document.querySelector('#tool3d-view').getBoundingClientRect();return [r.x+scrollX,r.y+scrollY,r.width,r.height]})()`);
+      const {data} = await s('Page.captureScreenshot', {format: 'png', clip: {x: b[0], y: b[1], width: b[2], height: b[3], scale: 1}, captureBeyondViewport: true});
+      fs.writeFileSync(path.join(md, 'mock-' + v + '.png'), Buffer.from(data, 'base64'));
+    }
+    const px = ['iso', 'tip', 'corner', 'side'].map(v => M3['px_' + v]);
+    M3.ok = M3.faces === 5 && M3.chipArea > 0 && M3.chipVolModel > 0 && M3.dv > 0 && Math.abs(M3.dv - M3.chipVolModel) < 1e-3 &&
+      Math.abs(M3.chipVolModel / M3.chipVolEst - 1) < .2 && /Flank wear/.test(M3.legend) && /Chipping/.test(M3.legend) && /Adhesion/.test(M3.legend) &&
+      M3.wrFaces === 5 && M3.rows >= 7 && px.some(p => p[0] > 50) && px.some(p => p[1] > 20) && px.some(p => p[2] > 20);
+    await ev(`Tool3D.render.setMap(null);Tool3D.render.view('iso');1`);
+  }
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
     metroPanel: m.rows === 4 && m.matchesWear === true && m.hasU === true && /VBmax/.test(m.badge), metroDistance: m.distOk, metroCaliper: m.caliperOk, metroEdit: m.editOk,
     metroReport: !!(m.pdf && m.pdf.ok && m.csv && m.csv.ok && m.html && m.html.ok), metroHistory: m.history === 2,
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
-    enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true};
+    enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
+    map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
+    map3dDeform: !!(c.map3d && c.map3d.ok)};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

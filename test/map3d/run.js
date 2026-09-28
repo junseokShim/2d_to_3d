@@ -117,7 +117,7 @@ console.log('\n# 6. mock faces -> per-face, totals, per-tooth, chip deformation 
   check('all three classes present', r.totals.flank.areaMm2 > 0 && r.totals.chip.areaMm2 > 0 && r.totals.adhesion.areaMm2 > 0, JSON.stringify(r.totals.areaMm2));
   const R = 5;
   check('side chip on the cutting corner', r.totals.sideAreaMm2[3] > .1 && r.perTooth.some(p => p.areaMm2[3] > .1), r.totals.sideAreaMm2[3] + ' mm2');
-  rel('end chip area (end tooth sector)', r.totals.endAreaMm2[3], .18 * ((.8 * R) ** 2 - (.55 * R) ** 2), .03);
+  check('end chip on tooth material (0 < area <= sector)', r.totals.endAreaMm2[3] > .2 && r.totals.endAreaMm2[3] <= .18 * ((.8 * R) ** 2 - (.55 * R) ** 2) * 1.01, r.totals.endAreaMm2[3] + ' mm2');
   const sumTooth = r.perTooth.reduce((s, p) => s + p.areaMm2[2], 0);
   rel('per-tooth flank areas sum to total side flank', sumTooth, r.totals.sideAreaMm2[2], .001);
   const vbs = r.perTooth.map(p => p.vbMaxMm).sort((a, b) => a - b);
@@ -137,6 +137,14 @@ console.log('\n# 6. mock faces -> per-face, totals, per-tooth, chip deformation 
   let moved = 0; const p0 = b0.parts.side.position.array, p1 = b1.parts.side.position.array;
   for (let i = 0; i < p0.length; i += 3) if (Math.hypot(p1[i], p1[i + 1]) < Math.hypot(p0[i], p0[i + 1]) - 1e-4) moved++;
   check('side vertices displaced', moved > 20, moved + ' vertices');
+}
+
+console.log('\n# 6b. left hand / other phase / 3 flutes D6: deformed mesh removal = reported chip volume');
+for (const P of [{flutes: 4, diameterMm: 10, hand: -1, helixDeg: 32.5, phaseRad: .7}, {flutes: 3, diameterMm: 6, hand: 1, helixDeg: 35, phaseRad: -.4}]) {
+  const L = G.layout(P), r = M.evaluate(M.mock(P.flutes, P.diameterMm, 50, L), {diameterMm: P.diameterMm, flutes: P.flutes, helixDeg: P.helixDeg, cornerRadiusMm: L.q.cornerRadiusMm, layout: L});
+  const b0 = G.build(P, {side: () => null, end: () => null}), b1 = G.build(P, M.deformer(r)), dv = Math.abs(volume(b0)) - Math.abs(volume(b1));
+  rel(`removal vs chip volume ${JSON.stringify(P)}`, dv, r.totals.chip.volumeMm3, .15);
+  check('flank on lands', r.perTooth.every(p => p.onLandFrac > .95), JSON.stringify(r.perTooth.map(p => p.onLandFrac)));
 }
 
 console.log('\n# 7. tip chip derivation from a rectified strip');

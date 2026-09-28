@@ -113,7 +113,8 @@
   }
 
   // deform (optional, from js/map3d): {side(x,y,z,h), end(x,y,z,f)} -> [x,y,z] | null (h = level above the tip, f = end ring scale, 1 at the rim), applied before normals
-  function build(p, deform) {
+  function build(p, deform, opt) {
+    const normals = !(opt && opt.noNormals);                  // volume-only builds skip normals
     const L = layout(p), q = L.q, qs = L.qs, cut = L.cut, R = L.R;
     const ez = (x, y) => endZ(qs, x, cut > 0 ? -y : y);
     const cols = L.cols.slice();
@@ -164,7 +165,7 @@
     side.setAttribute('aReg', new THREE.BufferAttribute(meta, 4));
     side.setAttribute('aSurf', new THREE.BufferAttribute(surf, 2));
     side.setIndex(idx);
-    side.computeVertexNormals();
+    if (normals) side.computeVertexNormals();
     side.userData = {NC, NR};
 
     // end face: rings scaled from the (corner-clipped) bottom ring toward the axis
@@ -188,7 +189,7 @@
     end.setAttribute('aReg', new THREE.Float32BufferAttribute(em, 4));
     end.setAttribute('aSurf', new THREE.Float32BufferAttribute(es, 2));
     end.setIndex(ei);
-    end.computeVertexNormals();
+    if (normals) end.computeVertexNormals();
 
     // shank back cap
     const top = [], ti = [], base = (NR - 1) * NC;
@@ -202,7 +203,7 @@
     cap.setAttribute('aReg', new THREE.Float32BufferAttribute(cm, 4));
     cap.setAttribute('aSurf', new THREE.Float32BufferAttribute(cs, 2));
     cap.setIndex(ti);
-    cap.computeVertexNormals();
+    if (normals) cap.computeVertexNormals();
 
     return {params: q, parts: {side, end, cap}, lengthMm: Ltot};
   }
