@@ -93,11 +93,11 @@
   const NOS = 99;                                              // "no s": not on a flank land
   const smooth = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u);
 
-  function build(p) {
+  // Mirrored, break-split section ring + helix twist rate; pure (no THREE) so js/map3d can look up tooth / s.
+  function layout(p) {
     const q = defaults(p || {});
     const cut = q.hand >= 0 ? 1 : -1;
     const qs = cut > 0 ? Object.assign({}, q, {phaseRad: -q.phaseRad}) : q;   // unmirrored build frame
-    const ez = (x, y) => endZ(qs, x, cut > 0 ? -y : y);
     const {pts, R} = section(qs);
     // split columns at sharp breaks so normals stay crisp at edge / land / heel; the duplicate carries
     // the next region's attributes so regions do not bleed across a break
@@ -107,16 +107,26 @@
       if (pt.brk) { const n = pts[(i + 1) % pts.length]; cols.push(Object.assign({}, c, {dup: true, reg: n.reg, s: n.s < 0 ? NOS : n.s})); }
     });
     if (cut > 0) cols = cols.map(c => Object.assign({}, c, {y: -c.y})).reverse();   // mirror, keep CCW order
+    const tanH = Math.tan(q.helixDeg * DEG) / R * q.hand;
+    return {q, qs, cut, R, cols, tanH, zTwistMax: q.fluteLenMm + q.runoutMm, land1Mm: q.land1Mm, land2Mm: q.land2Mm,
+      endZ: (x, y) => endZ(qs, x, cut > 0 ? -y : y)};
+  }
+
+  // deform (optional, from js/map3d): {side(x,y,z,h), end(x,y,z,f)} -> [x,y,z] | null (h = level above the tip, f = end ring scale, 1 at the rim), applied before normals
+  function build(p, deform) {
+    const L = layout(p), q = L.q, qs = L.qs, cut = L.cut, R = L.R;
+    const ez = (x, y) => endZ(qs, x, cut > 0 ? -y : y);
+    const cols = L.cols.slice();
     cols.push(Object.assign({}, cols[0]));                   // close the ring (seam column)
     const arc = [0];
     for (let m = 1; m < cols.length; m++) arc.push(arc[m - 1] + Math.hypot(cols[m].x - cols[m - 1].x, cols[m].y - cols[m - 1].y));
     const NC = cols.length;
     const Rs = q.shankDiaMm / 2, rE = q.cornerRadiusMm, Lf = q.fluteLenMm, Lr = q.runoutMm;
-    const Ltot = Lf + Lr + q.shankLenMm, tanH = Math.tan(q.helixDeg * DEG) / R * q.hand;
+    const Ltot = Lf + Lr + q.shankLenMm, tanH = L.tanH;
     // non-uniform levels: dense at the corner, then even
     const hs = [];
     const nC = 14; for (let j = 0; j < nC; j++) hs.push(rE * (1 - Math.cos(j / nC * Math.PI / 2)));
-    const step = Math.min(.25, q.diameterMm / 50);
+    const step = Math.min(.25, q.diameterMm / (deform ? 100 : 50));   // finer rows when chips deform the surface
     for (let h = rE; h < Lf + Lr; h += step) hs.push(h);
     for (let h = Lf + Lr; h < Ltot - q.chamferMm; h += q.diameterMm / 10) hs.push(h);
     hs.push(Ltot - q.chamferMm, Ltot);
@@ -138,6 +148,7 @@
         const a = a0 + tanH * Math.min(z, Lf + Lr);
         const o = 3 * (j * NC + m);
         pos[o] = r * Math.cos(a); pos[o + 1] = r * Math.sin(a); pos[o + 2] = z;
+        if (deform && z < Lf) { const v = deform.side(pos[o], pos[o + 1], z, h); if (v) { pos[o] = v[0]; pos[o + 1] = v[1]; pos[o + 2] = v[2]; } }
         const e = 4 * (j * NC + m);
         meta[e] = c.tooth; meta[e + 1] = fl > .5 ? c.s : NOS; meta[e + 2] = c.reg; meta[e + 3] = fl;
         surf[2 * (j * NC + m)] = arc[m]; surf[2 * (j * NC + m) + 1] = z;
@@ -163,8 +174,8 @@
     for (let t = 0; t <= NRg; t++) {
       const f = 1 - Math.pow(t / NRg, 1.5);                 // dense near the rim
       for (let m = 0; m < NP; m++) {
-        const x = ring[m][0] * f, y = ring[m][1] * f;
-        ep.push(x, y, ez(x, y));
+        const x = ring[m][0] * f, y = ring[m][1] * f, v = deform ? deform.end(x, y, ez(x, y), f) : null;
+        v ? ep.push(v[0], v[1], v[2]) : ep.push(x, y, ez(x, y));
         em.push(-1, NOS, 5, 1); es.push(x, y);
       }
     }
@@ -196,5 +207,5 @@
     return {params: q, parts: {side, end, cap}, lengthMm: Ltot};
   }
 
-  NS.geometry = {build, defaults, endZ, NOS};
+  NS.geometry = {build, layout, defaults, endZ, NOS};
 })();
