@@ -32,3 +32,11 @@ import onnx, onnxruntime as ort, numpy as np
 onnx.checker.check_model(out)
 y = ort.InferenceSession(out).run(None, {'image': x.numpy()})[0]
 print('saved', out, os.path.getsize(out), 'bytes; out', y.shape, 'max abs diff vs torch', float(np.abs(y - net(x).detach().numpy()).max()))
+# the app loads the model as a <script> (works from file:// and Capacitor): wrap it as base64 and drop the raw .onnx
+import base64
+with open(out, 'rb') as f: b = base64.b64encode(f.read()).decode()
+with open(out + '.js', 'w') as f:
+    f.write('/* Tool3D wear backbone: ResNet-18 (torchvision ImageNet-1k, BSD-3-Clause) up to layer3, PatchCore features. ONNX, base64. Built by scripts/ai/export_backbone.py */\n')
+    f.write('(self.Tool3D=self.Tool3D||{}).aiModelB64="' + b + '";\n')
+os.remove(out)
+print('wrote', out + '.js')
