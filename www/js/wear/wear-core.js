@@ -268,8 +268,8 @@
     if (S.length < 30) return (strip.tool = tool);
     const flat = new Uint8ClampedArray(3 * w * h); for (let i = 0; i < w * h; i++) flat.set(px(i), 3 * i);
     const km = kmeans(S, 3, flat), tau = Math.max(6, quant(S.map(p => Math.sqrt(km.near(p)[1])), .95));
-    const yTip = top + Math.round(.25 * R), st = [];
-    const can = i => { const x = i % w, y = i / w | 0; return tool[i] && (outside(x, y) || y < yTip || Math.abs(x + .5 - cx) > .96 * R) && km.dist(i) <= tau; };
+    const st = [];
+    const can = i => { const x = i % w, y = i / w | 0; return tool[i] && (outside(x, y) || y < top || Math.abs(x + .5 - cx) > .96 * R) && km.dist(i) <= tau; };
     for (let i = 0; i < w * h; i++) if (outside(i % w, i / w | 0) && can(i)) { tool[i] = 0; st.push(i); }
     while (st.length) {
       const p = st.pop(), x = p % w;
@@ -290,7 +290,58 @@
       const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || !tm[i] || gl[i]) continue;
       score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
     }
-    return Object.assign(refineBand(strip, bandFromMask(strip, raw), score), {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color'});
+    const rb = refineBand(strip, bandFromMask(strip, raw), score);
+    return Object.assign(rb, {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color', tip: tipDamage(strip, cm, thr, rb.band)});
+  }
+
+  // ---------- 2b. tip / corner damage (chipping, broken end teeth) ----------
+  // The damage on real worn end mills is often at the tip: chipped corners and broken end teeth, whose fresh fracture
+  // faces are bright, often saturated white. The flank-band stage drops saturated pixels as glints and only looks for a
+  // band along the flank, so it reads VB 0 there (docs/debug-vb0.md). Here, in the tip region only (tip line + 0.3 D, at
+  // least 1 mm), a pixel is a candidate when its colour is unlike the unworn body OR it is saturated; thin edge glints are
+  // removed by an opening of ~0.3 mm; blobs must touch the tip line; the flank band and its rim are left out (flank wear, measured by the band). depthMm = axial depth from the tip line (localized wear VB3 /
+  // chipping CH, ISO 8688-2), widthMm = arc width across the flank.
+  const TIP_ZONE_D = .3;   // tip region depth, x D
+  function tipDamage(strip, cm, thr, band) {
+    const {w, h, g, cx, R, top, ppm, rgb} = strip, D = 2 * R / ppm, tm = toolMask(strip), Rmm = R / ppm;
+    const y1 = Math.min(h, top + Math.round(Math.max(1, TIP_ZONE_D * D) * ppm)), raw = new Uint8Array(w * h);
+    const nb = band ? dilateMask(band, w, h, Math.max(1, Math.round(.15 * ppm))) : null;   // flank band + its rim: measured by the band
+    const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
+    for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !tm[i] || (nb && nb[i])) continue;
+      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false)) raw[i] = 1;
+    }
+    const k = Math.max(2, Math.round(.3 * ppm)), op = openMask(raw, w, y1, k);
+    const lab = new Int32Array(w * h), out = new Uint8Array(w * h), touch = top + Math.max(1, Math.round(.3 * ppm));
+    let best = {depthMm: 0, widthMm: 0, areaMm2: 0, px: 0}, n = 0;
+    for (let s = 0; s < w * y1; s++) if (op[s] && !lab[s]) {
+      const st = [s], pts = []; lab[s] = ++n;
+      while (st.length) { const p = st.pop(); pts.push(p); const x = p % w; for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * y1 && Math.abs(q % w - x) <= 1 && op[q] && !lab[q]) { lab[q] = n; st.push(q); } }
+      let r0 = 1e9, r1 = -1;
+      for (const p of pts) { const y = p / w | 0; r0 = Math.min(r0, y); r1 = Math.max(r1, y); }
+      if (r0 > touch || pts.length < Math.max(2 * k * k, (.6 * ppm) ** 2)) continue;   // chips smaller than ~0.6 x 0.6 mm are not resolved
+      const arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R)));
+      // width = median over the blob's rows of the row's arc span (a bounding box would take in glints touching the blob)
+      const span = new Map(); for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
+      const depthMm = r4((r1 + 1 - Math.max(r0, top)) / ppm), widthMm = r4(quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5));
+      for (const p of pts) out[p] = 1;
+      best.areaMm2 = r4(best.areaMm2 + pts.length / ppm / ppm); best.px += pts.length;
+      if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
+    }
+    return Object.assign(best, {mask: out, y1, openPx: k});
+  }
+  // binary opening with a k x k square (separable running minimum / maximum)
+  function openMask(m, w, h, k) {
+    const at = (horiz, a, b) => horiz ? a * w + b : b * w + a;
+    const run = (src, horiz, erode) => {
+      const o = new Uint8Array(w * h), L = horiz ? w : h, N = horiz ? h : w;
+      for (let a = 0; a < N; a++) for (let b = 0; b + k <= L; b++) {
+        if (erode) { let all = 1; for (let j = 0; j < k && all; j++) all = src[at(horiz, a, b + j)]; if (all) o[at(horiz, a, b)] = 1; }   // anchor = first cell of the square
+        else if (src[at(horiz, a, b)]) for (let j = 0; j < k; j++) o[at(horiz, a, b + j)] = 1;                                        // paint the square back
+      }
+      return o;
+    };
+    return run(run(run(run(m, true, true), false, true), true, false), false, false);
   }
 
   // ---------- 3. VB profile along the cutting edge + area + volume ----------
@@ -365,8 +416,21 @@
     const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
     return Object.assign(m, {
       align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
-      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band
-    });
+      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band,
+      tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
+    }, evidence(al.pxPerMm, m.vbMaxMm, seg.tip));
+  }
+
+  // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
+  // flank band nor the tip shows anything; otherwise the side goes to the operator (never a confident 0, never an
+  // unconfirmed big number): 'low-resolution', 'tip-damage' (chipping / broken end tooth: VB3/CH, not a flank band).
+  const MIN_PPM = 15;   // 1 px = 0.067 mm: a 0.1 mm land is 1.5 px (the quality check warns below 20, fails below 8)
+  function evidence(ppm, vbMax, tip) {
+    const reasons = [];
+    if (ppm < MIN_PPM) reasons.push('low-resolution');
+    if (tip && tip.depthMm > 0) reasons.push('tip-damage');
+    const kind = vbMax > 0 && tip && tip.depthMm > 0 ? 'band+tip' : vbMax > 0 ? 'band' : tip && tip.depthMm > 0 ? 'tip' : 'none';
+    return {evidence: kind, needsOperator: reasons.length > 0, reasons, confidence: reasons.length ? 'low' : 'ok'};
   }
 
   // classic segmenter (sync): colour model vs the unworn body; legacy brightness threshold with o.method = 'bright'
@@ -405,11 +469,13 @@
     const topRes = top ? analyzeTop(top, {diameterMm, sens}) : null;
     const debug = {
       engine,
-      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated}),
+      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated,
+        tip: s.tip, evidence: s.evidence, needsOperator: s.needsOperator, reasons: s.reasons, confidence: s.confidence}),
       failedSides: S2.map((s, i) => s ? -1 : i).filter(i => i >= 0), top: topRes,
       warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean)
-        .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean)),
-      strips: S2.map(s => s && {strip: s.strip, band: s.band}),
+        .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean))
+        .concat(S2.map((s, i) => s && s.tip && s.tip.depthMm > 0 ? `side ${i + 1}: tip damage (chipping / broken end tooth) ${s.tip.depthMm.toFixed(2)} mm deep x ${s.tip.widthMm.toFixed(2)} mm wide - not a flank band; confirm in the measurement panel` : null).filter(Boolean)),
+      strips: S2.map(s => s && {strip: s.strip, band: s.band, tipMask: s.tipMask}),
       ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
       model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
     };
@@ -461,6 +527,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, GLINT, glintMask, toolMask, kmeans, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, MIN_PPM, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });

@@ -49,6 +49,27 @@ console.log('\n# no wear -> VB ~ 0');
   check('no wear, 10 seeds x 3 tilts: VBmax <= 0.03', !fp.length, fp.join('; '));
 }
 
+console.log('\n# tip damage (broken end tooth, bright fracture face) -> measured, flagged for the operator; clean tips -> none');
+{
+  const base = {w: 420, h: 560, D: 10, ppm: 20, tiltDeg: 1, axisDx: 0, tipV: -170, helixDeg: 30, flutes: 4, zoneMm: 3, bg: 'dark'};
+  const side = o => { const P = W.prepareSide(synth.sideReal(Object.assign({}, base, o)), {diameterMm: 10}); return W.finishSide(P, W.classicSegment(P), 30); };
+  for (const [dMm, wMm, uMm] of [[1.2, 1.5, -1], [2, 2.5, 1.5]]) {
+    const s = side({vb: () => 0, seed: 11, fracture: {uMm, wMm, dMm}});
+    near(`fracture ${dMm} mm deep: tip depth mm`, s.tip.depthMm, dMm, .15);
+    const arcW = 5 * (Math.asin((uMm + wMm / 2) / 5) - Math.asin((uMm - wMm / 2) / 5));   // truth: arc width on the D10 cylinder
+    near(`fracture ${wMm} mm wide (arc ${arcW.toFixed(2)}): tip width mm`, s.tip.widthMm, arcW, .25);
+    check('fracture: flagged for the operator (tip-damage)', s.needsOperator && s.reasons.includes('tip-damage'), s.reasons.join(','));
+  }
+  const fp = [];
+  for (const seed of [11, 12, 13, 40, 41, 42]) for (const vbm of [0, .2]) {
+    const s = side({vb: z => z <= 3 ? vbm : 0, seed, bg: seed % 2 ? 'light' : 'dark'});
+    if (s.tip.depthMm > 0) fp.push(`seed ${seed} vb ${vbm}: ${s.tip.depthMm}`);
+  }
+  check('clean tips (6 seeds x unworn/flank-worn, dark+light bg): no tip damage', !fp.length, fp.join('; '));
+  const ok = side({vb: () => 0, seed: 11});
+  check('clean tip at 20 px/mm: confident zero (no operator needed)', ok.vbMaxMm === 0 && !ok.needsOperator, ok.reasons.join(','));
+}
+
 console.log('\n# full measure(): 4 sides + top -> board contract');
 {
   const c = cases[0], sides = [.2, .15, .25, .1].map((v, i) => synth.side(Object.assign({}, c, {vb: () => v, seed: i + 3})));
