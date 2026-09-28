@@ -30,7 +30,7 @@ def get_range(url, a, b, tries=8):
 
 
 def pget(url, out, parts=8, chunk=16 << 20):
-    url, total = resolve(url)
+    _, total = resolve(url)   # keep the original url: signed redirect targets (figshare S3) expire fast
     if os.path.exists(out) and os.path.getsize(out) == total:
         print("exists", out); return
     part = out + ".part"
@@ -62,6 +62,8 @@ def pget(url, out, parts=8, chunk=16 << 20):
 
     ths = [threading.Thread(target=work) for _ in range(parts)]
     [t.start() for t in ths]; [t.join() for t in ths]
+    missing = total // chunk + (total % chunk > 0) - len({int(x) for x in open(donefile).read().split()})
+    if missing: sys.exit(f'pget incomplete: {missing} chunks missing, rerun to resume')
     os.replace(part, out); os.remove(donefile)
     print("done", out, total)
 
