@@ -2,7 +2,8 @@
 // Public API (window.Tool3D.render):
 //   update(params)   rebuild with measured params {flutes, diameterMm, helixDeg, hand, phaseRad, ...}
 //   setWear(result)  same as assigning window.Tool3D.wearResult
-//   view(name)       'iso' | 'tip' | 'side'
+//   view(name)       'iso' | 'tip' | 'side' | 'corner' (macro of flute 0's cutting corner)
+//   cloud(on)        focus-variation point-cloud look on/off
 //   stl()            ArrayBuffer, binary STL in mm, z = tool axis, tip z = 0
 // It mounts next to #gl, hides the legacy WebGL canvas, and takes over the STL button.
 (function () {
@@ -14,15 +15,14 @@
   const $ = s => document.querySelector(s);
   let renderer, scene, camera, controls, group, mesh = null, params = {}, wearSeen, showWear = true, hud, dirty = true;
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, vertexColors: true, metalness: .65, roughness: .38, side: THREE.DoubleSide, envMapIntensity: .55
-  });
+  const mat = NS.surface.create(), U = NS.surface.uniforms;
+  U.uWearTex.value = NS.wear.tex;
 
   function mount() {
     const old = $('#gl');
     const wrap = document.createElement('div');
     wrap.id = 'tool3d-view';
-    wrap.style.cssText = 'position:relative;width:100%;height:460px;border-radius:8px;overflow:hidden;touch-action:none;background:#2b2e33';
+    wrap.style.cssText = 'position:relative;width:100%;height:460px;border-radius:8px;overflow:hidden;touch-action:none;background:#b9bbbe';
     if (old) { old.style.display = 'none'; old.after(wrap); } else document.body.append(wrap);
 
     renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
@@ -37,11 +37,13 @@
     scene.background = gradientBg();
     const pm = new THREE.PMREMGenerator(renderer);
     scene.environment = pm.fromScene(new THREE.RoomEnvironment(), .03).texture;
-    const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(3, 6, 5);
-    const rim = new THREE.DirectionalLight(0xdfe8ff, .5); rim.position.set(-5, 2, -4);
+    const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(3, 6, 5);
+    const rim = new THREE.DirectionalLight(0xdfe8ff, .45); rim.position.set(-5, 2, -4);
     scene.add(key, rim, new THREE.HemisphereLight(0xeef2f6, 0x202226, .25));
 
     camera = new THREE.PerspectiveCamera(22, 1, .1, 2000);
+    const head = new THREE.DirectionalLight(0xffffff, .9);    // coaxial ring light, like a focus-variation scanner
+    head.position.set(0, 0, 1); camera.add(head); scene.add(camera);
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; controls.dampingFactor = .12;
     controls.addEventListener('change', () => dirty = true);
@@ -51,21 +53,21 @@
     scene.add(group);
 
     hud = document.createElement('div');
-    hud.style.cssText = 'position:absolute;left:10px;top:8px;font:12px/1.45 ui-monospace,Consolas,monospace;color:#e8eaee;text-shadow:0 1px 2px #000;pointer-events:none;white-space:pre';
+    hud.style.cssText = 'position:absolute;left:10px;top:8px;font:12px/1.45 ui-monospace,Consolas,monospace;color:#15181c;text-shadow:0 1px 1px #fff8;pointer-events:none;white-space:pre';
     wrap.append(hud);
     const bar = document.createElement('div');
-    bar.style.cssText = 'position:absolute;right:8px;top:8px;display:flex;gap:6px';
+    bar.style.cssText = 'position:absolute;right:8px;bottom:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:calc(100% - 16px)';
     for (const [t, f] of [['Iso', () => view('iso')], ['Tip', () => view('tip')], ['Side', () => view('side')],
-      ['Wear', () => { showWear = !showWear; repaint(); }]]) {
+      ['Corner', () => view('corner')], ['Wear', () => { showWear = !showWear; repaint(); }], ['Cloud', () => cloud()]]) {
       const b = document.createElement('button');
       b.textContent = t; b.type = 'button';
-      b.style.cssText = 'font:12px system-ui;padding:4px 9px;border-radius:5px;border:1px solid #666;background:#3a3e45cc;color:#eee;cursor:pointer';
+      b.style.cssText = 'font:12px system-ui;padding:4px 9px;border-radius:5px;border:1px solid #777;background:#2c3036d9;color:#eee;cursor:pointer';
       b.onclick = f; bar.append(b);
     }
     wrap.append(bar);
     const legend = document.createElement('div');
     legend.id = 'tool3d-legend';
-    legend.style.cssText = 'position:absolute;left:10px;bottom:8px;font:11px system-ui;color:#ddd;display:flex;align-items:center;gap:6px;pointer-events:none';
+    legend.style.cssText = 'position:absolute;left:10px;top:66px;font:11px system-ui;color:#15181c;display:flex;align-items:center;gap:6px;pointer-events:none';
     wrap.append(legend);
 
     new ResizeObserver(resize).observe(wrap);
@@ -76,7 +78,7 @@
   function gradientBg() {
     const c = document.createElement('canvas'); c.width = 2; c.height = 256;
     const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, '#5a5f66'); g.addColorStop(1, '#1f2226');
+    g.addColorStop(0, '#d4d6d8'); g.addColorStop(1, '#8e9195');
     x.fillStyle = g; x.fillRect(0, 0, 2, 256);
     const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
     return t;
@@ -107,7 +109,8 @@
   function repaint() {
     if (!mesh) return;
     const w = currentWear();
-    for (const g of Object.values(mesh.parts)) NS.wear.paint(g, w, showWear);
+    const tx = NS.wear.texture(w);
+    U.uZMax.value = tx.zMax; U.uVbMax.value = tx.vbMax; U.uRows.value = tx.rows; U.uWearOn.value = showWear && w ? 1 : 0;
     const q = mesh.params, t = w && w.totals;
     hud.textContent =
       `Ø ${q.diameterMm.toFixed(2)} mm   ${q.flutes} FL   helix ${(+q.helixDeg).toFixed(1)}° ${q.hand > 0 ? 'RH' : 'LH'}\n` +
@@ -115,7 +118,7 @@
       (t ? `VBmax ${t.vbMaxMm.toFixed(3)} mm   A ${t.areaMm2.toFixed(3)} mm²   V ${t.volumeMm3.toFixed(4)} mm³` +
         (w.mock ? '   [MOCK wear]' : '') : 'no wear data');
     const lg = $('#tool3d-legend');
-    if (lg) lg.innerHTML = showWear && t ? `<span>VB 0</span><span style="width:90px;height:8px;border-radius:2px;background:linear-gradient(90deg,#c8c8c8,#8a1a14,#db1410)"></span><span>${t.vbMaxMm.toFixed(3)} mm</span>` : '';
+    if (lg) lg.innerHTML = showWear && t ? `<span>VB 0</span><span style="width:90px;height:8px;border-radius:2px;background:linear-gradient(90deg,#f2b814,#eb5a08,#c80605)"></span><span>${t.vbMaxMm.toFixed(3)} mm</span>` : '';
     dirty = true;
   }
 
@@ -133,13 +136,32 @@
     return b.params;
   }
 
+  // World frame: group maps tool (x, y, z) -> (x, -z, y), so the tip is at y = 0 and the shank runs to -y.
   function view(name) {
     if (!mesh) return;
-    const D = mesh.params.diameterMm, side = name === 'side';
-    const tgt = new THREE.Vector3(0, side ? -1.3 * D : -.55 * D, 0), d = (side ? 8.5 : 4.4) * D;
-    const dir = name === 'tip' ? new THREE.Vector3(.35, .9, .55) : name === 'side' ? new THREE.Vector3(1, .12, .05) : new THREE.Vector3(.75, .55, .9);
+    const q = mesh.params, D = q.diameterMm, R = D / 2;
+    let tgt, dir, d;
+    if (name === 'corner') {
+      // flute 0's cutting corner: radial out, tangential toward the chip flute, from slightly above the end face
+      const a = q.phaseRad, cut = q.hand >= 0 ? 1 : -1, rad = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+      const tan = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(cut);    // toward the tooth body: shows the flank land
+      tgt = rad.clone().multiplyScalar(.8 * R).add(new THREE.Vector3(0, -.22 * D, 0));
+      dir = rad.clone().multiplyScalar(1).addScaledVector(tan, .45).add(new THREE.Vector3(0, .6, 0));
+      d = 2.1 * D;
+    } else if (name === 'side') {
+      tgt = new THREE.Vector3(0, -1.15 * D, 0); dir = new THREE.Vector3(1, .12, .05); d = 9.8 * D;   // tip clears the HUD
+    } else if (name === 'tip') {
+      tgt = new THREE.Vector3(0, -.3 * D, 0); dir = new THREE.Vector3(.35, .9, .55); d = 4.1 * D;
+    } else {
+      tgt = new THREE.Vector3(0, -.6 * D, 0); dir = new THREE.Vector3(.75, .55, .9); d = 4.4 * D;
+    }
     camera.position.copy(tgt).addScaledVector(dir.normalize(), d);
     controls.target.copy(tgt); controls.update(); dirty = true;
+  }
+
+  function cloud(on) {
+    U.uCloud.value = on === undefined ? 1 - U.uCloud.value : on ? 1 : 0; dirty = true;
+    return !!U.uCloud.value;
   }
 
   function stl() {
@@ -169,7 +191,7 @@
     a.download = 'tool.stl'; a.click();
   }
 
-  const api = {update, view, stl, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
+  const api = {update, view, cloud, stl, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
   T3.render = api;
 
   function init() {

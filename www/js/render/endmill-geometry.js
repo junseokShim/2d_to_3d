@@ -2,6 +2,11 @@
 // Tool frame: z = tool axis, tip at z = 0, shank toward +z, units mm.
 // Cross-section per flute (CCW): heel -> secondary clearance -> primary flank land -> cutting edge
 // -> rake face -> chip pocket (core) -> next heel. Sections are swept with the helix twist.
+// Hand: helix angle grows with z for RH (right-hand screw about +z); cut direction follows the helix
+// (RH cut = clockwise seen from the shank), so the section is mirrored for hand > 0.
+// Per-vertex attributes for the surface shader: aReg = (tooth, s behind edge | NOS, region, flute depth),
+// aSurf = (arc length along the section | planar x, z | planar y). Regions: 0/1 ground flank lands,
+// 2 heel, 3 rake, 4 chip pocket (coated), 5 end face (ground), 6 shank cap.
 (function () {
   'use strict';
   const T3 = window.Tool3D = window.Tool3D || {};
@@ -85,15 +90,26 @@
     return (R - r) * Math.tan(q.dishDeg * DEG) + Math.min(cl, .045 * q.diameterMm);
   }
 
+  const NOS = 99;                                              // "no s": not on a flank land
   const smooth = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u);
 
   function build(p) {
     const q = defaults(p || {});
-    const {pts, R} = section(q);
-    // split columns at sharp breaks so normals stay crisp at edge / land / heel
-    const cols = [];
-    pts.forEach((pt, i) => { cols.push(pt); if (pt.brk) cols.push(Object.assign({}, pt, {dup: true})); });
+    const cut = q.hand >= 0 ? 1 : -1;
+    const qs = cut > 0 ? Object.assign({}, q, {phaseRad: -q.phaseRad}) : q;   // unmirrored build frame
+    const ez = (x, y) => endZ(qs, x, cut > 0 ? -y : y);
+    const {pts, R} = section(qs);
+    // split columns at sharp breaks so normals stay crisp at edge / land / heel; the duplicate carries
+    // the next region's attributes so regions do not bleed across a break
+    let cols = [];
+    pts.forEach((pt, i) => {
+      const c = Object.assign({}, pt, {s: pt.s < 0 ? NOS : pt.s}); cols.push(c);
+      if (pt.brk) { const n = pts[(i + 1) % pts.length]; cols.push(Object.assign({}, c, {dup: true, reg: n.reg, s: n.s < 0 ? NOS : n.s})); }
+    });
+    if (cut > 0) cols = cols.map(c => Object.assign({}, c, {y: -c.y})).reverse();   // mirror, keep CCW order
     cols.push(Object.assign({}, cols[0]));                   // close the ring (seam column)
+    const arc = [0];
+    for (let m = 1; m < cols.length; m++) arc.push(arc[m - 1] + Math.hypot(cols[m].x - cols[m - 1].x, cols[m].y - cols[m - 1].y));
     const NC = cols.length;
     const Rs = q.shankDiaMm / 2, rE = q.cornerRadiusMm, Lf = q.fluteLenMm, Lr = q.runoutMm;
     const Ltot = Lf + Lr + q.shankLenMm, tanH = Math.tan(q.helixDeg * DEG) / R * q.hand;
@@ -108,8 +124,8 @@
     const Lz = .35 * q.diameterMm;
     // bottom ring with corner applied (radius clipped to R - rE); its z is the end-face height there
     const bot = cols.map(c => { const r = Math.hypot(c.x, c.y), f = r > R - rE ? (R - rE) / r : 1; return [c.x * f, c.y * f]; });
-    const zb = bot.map(([x, y]) => endZ(q, x, y));
-    const pos = new Float32Array(NR * NC * 3), meta = new Float32Array(NR * NC * 4);   // tooth, s, reg, zMm
+    const zb = bot.map(([x, y]) => ez(x, y));
+    const pos = new Float32Array(NR * NC * 3), meta = new Float32Array(NR * NC * 4), surf = new Float32Array(NR * NC * 2);
     for (let j = 0; j < NR; j++) {
       const h = hs[j], fl = 1 - smooth((h - Lf) / Lr);      // flute depth factor (runout)
       const cham = h > Ltot - q.chamferMm ? (h - (Ltot - q.chamferMm)) : 0;
@@ -123,7 +139,8 @@
         const o = 3 * (j * NC + m);
         pos[o] = r * Math.cos(a); pos[o + 1] = r * Math.sin(a); pos[o + 2] = z;
         const e = 4 * (j * NC + m);
-        meta[e] = c.tooth; meta[e + 1] = fl > .5 ? c.s : -1; meta[e + 2] = c.reg; meta[e + 3] = z;
+        meta[e] = c.tooth; meta[e + 1] = fl > .5 ? c.s : NOS; meta[e + 2] = c.reg; meta[e + 3] = fl;
+        surf[2 * (j * NC + m)] = arc[m]; surf[2 * (j * NC + m) + 1] = z;
       }
     }
     const idx = [];
@@ -133,20 +150,22 @@
     }
     const side = new THREE.BufferGeometry();
     side.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    side.setAttribute('aReg', new THREE.BufferAttribute(meta, 4));
+    side.setAttribute('aSurf', new THREE.BufferAttribute(surf, 2));
     side.setIndex(idx);
     side.computeVertexNormals();
-    side.userData = {meta, NC, NR};
+    side.userData = {NC, NR};
 
     // end face: rings scaled from the (corner-clipped) bottom ring toward the axis
     const ring = [];
     cols.forEach((c, m) => { if (!c.dup && m < NC - 1) ring.push(bot[m]); });
-    const NRg = 24, NP = ring.length, ep = [], ei = [], em = [];
+    const NRg = 24, NP = ring.length, ep = [], ei = [], em = [], es = [];
     for (let t = 0; t <= NRg; t++) {
       const f = 1 - Math.pow(t / NRg, 1.5);                 // dense near the rim
       for (let m = 0; m < NP; m++) {
         const x = ring[m][0] * f, y = ring[m][1] * f;
-        ep.push(x, y, endZ(q, x, y));
-        em.push(-1, -1, 5, 0);
+        ep.push(x, y, ez(x, y));
+        em.push(-1, NOS, 5, 1); es.push(x, y);
       }
     }
     for (let t = 0; t < NRg; t++) for (let m = 0; m < NP; m++) {
@@ -155,9 +174,10 @@
     }
     const end = new THREE.BufferGeometry();
     end.setAttribute('position', new THREE.Float32BufferAttribute(ep, 3));
+    end.setAttribute('aReg', new THREE.Float32BufferAttribute(em, 4));
+    end.setAttribute('aSurf', new THREE.Float32BufferAttribute(es, 2));
     end.setIndex(ei);
     end.computeVertexNormals();
-    end.userData = {meta: new Float32Array(em)};
 
     // shank back cap
     const top = [], ti = [], base = (NR - 1) * NC;
@@ -166,12 +186,15 @@
     for (let m = 1; m < NC; m++) ti.push(0, m + 1, m);
     const cap = new THREE.BufferGeometry();
     cap.setAttribute('position', new THREE.Float32BufferAttribute(top, 3));
+    const cm = [], cs = [];
+    for (let m = 0; m <= NC; m++) { cm.push(-1, NOS, 6, 0); cs.push(top[3 * m], top[3 * m + 1]); }
+    cap.setAttribute('aReg', new THREE.Float32BufferAttribute(cm, 4));
+    cap.setAttribute('aSurf', new THREE.Float32BufferAttribute(cs, 2));
     cap.setIndex(ti);
     cap.computeVertexNormals();
-    cap.userData = {meta: new Float32Array((NC + 1) * 4).fill(-1)};
 
     return {params: q, parts: {side, end, cap}, lengthMm: Ltot};
   }
 
-  NS.geometry = {build, defaults, endZ};
+  NS.geometry = {build, defaults, endZ, NOS};
 })();
