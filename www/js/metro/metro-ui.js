@@ -118,7 +118,7 @@
     $('#mtFlutes').innerHTML = S.F.map((f, i) => `<button data-fl="${i}" ${f ? '' : 'disabled'} style="--c:${COLORS[i % 6]}">F${i + 1}</button>`).join('');
     root.querySelectorAll('[data-fl]').forEach(b => b.onclick = () => select(+b.dataset.fl));
     $('#mtGrid').hidden = false; $('#mtEmpty').hidden = true; S.ready = true;
-    sizeCanvas(); select(S.sel); recompute(true);
+    sizeCanvas(); select(S.sel); recompute(true); renderManual();
     if (firstAssist >= 0) setTool('edit');   // 보조 측정: 해당 날을 편집 모드로 열어 둠
   }
   // operator-assisted fallback: the auto band is empty (no-band) or the shot failed the quality check (low-quality).
@@ -313,7 +313,7 @@
       const top = F.strip.top, {A, B, vb} = e.rows;
       cx.fillStyle = 'rgba(255,40,40,.38)'; for (let r = 0; r < F.n; r++) if (vb[r] > 0) cx.fillRect(A[r] - .5, top + r, B[r] - A[r] + 1, 1);
       const line = (side, color) => { cx.strokeStyle = color; cx.lineWidth = 1.6 * lw; cx.beginPath(); for (let r = 0; r < F.n; r++) { const x = side === 'a' ? A[r] - .5 : B[r] + .5; r ? cx.lineTo(x, top + r + .5) : cx.moveTo(x, top + r + .5); } cx.stroke(); };
-      line(F.edge, '#00d0ff'); line(F.edge === 'a' ? 'b' : 'a', '#ffd400');
+      line(F.edge === 'a' ? 'b' : 'a', '#ffd400'); line(F.edge, '#00d0ff');   // edge on top: visible where the band is zero-width (assisted)
       // ISO zones: C from the tip, notch window around ap
       const z = e.zones, ppm = F.strip.ppm / scaleNow(), yz = mm => top + mm * ppm, xl = F.strip.cx - F.strip.R, xr = F.strip.cx + F.strip.R;
       cx.setLineDash([6 * lw, 4 * lw]); cx.lineWidth = lw; cx.font = `${11 * lw}px system-ui`;
