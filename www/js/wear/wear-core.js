@@ -186,11 +186,28 @@
     return h - y0 >= .15 * 2 * R ? [y0, h] : null;
   }
 
-  // k-means colour model of the unworn body; pixel score = distance to the nearest body colour
+  // Specular glints: near-white, unsaturated pixels (every channel > GLINT), grown by 2 px to take the blended rim that
+  // bilinear resampling leaves between a glint and the dark flute (those rim pixels have wear-like mid-grey colours).
+  // Worn carbide is bright but never saturated white under a diffuse light; a glint is never wear.
+  const GLINT = 225;
+  function glintMask(strip) {
+    if (strip.glint) return strip.glint;
+    const {w, h, rgb, g} = strip, m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10) m[i] = 1;
+    return (strip.glint = dilateMask(m, w, h, 2));
+  }
+  function dilateMask(m, w, h, r) {
+    const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) { let last = -1e9; for (let x = 0; x < w; x++) { if (m[y * w + x]) last = x; if (x - last <= r) a[y * w + x] = 1; } last = 1e9; for (let x = w - 1; x >= 0; x--) { if (m[y * w + x]) last = x; if (last - x <= r) a[y * w + x] = 1; } }
+    for (let x = 0; x < w; x++) { let last = -1e9; for (let y = 0; y < h; y++) { if (a[y * w + x]) last = y; if (y - last <= r) b[y * w + x] = 1; } last = 1e9; for (let y = h - 1; y >= 0; y--) { if (a[y * w + x]) last = y; if (last - y <= r) b[y * w + x] = 1; } }
+    return b;
+  }
+
+  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
   function colorModel(strip, rows, K = 8) {
-    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000)));
+    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
     for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
-      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i])) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
+      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
     }
     if (S.length < 50) return null;
     const L = S.map(p => p[0] + p[1] + p[2]), ord = L.map((_, i) => i).sort((a, b) => L[a] - L[b]);
@@ -212,10 +229,10 @@
   function segmentColor(strip, zoneRows, o) {
     const rows = strip.rgb && refRows(strip, zoneRows), cm = rows && colorModel(strip, rows);
     if (!cm) return segment(strip, zoneRows, o.sens);
-    const {w, h, g, cx, R, top} = strip, thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
+    const {w, h, g, cx, R, top} = strip, gl = glintMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
     const score = new Float32Array(w * h);
     for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || Number.isNaN(g[i])) continue;
+      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || Number.isNaN(g[i]) || gl[i]) continue;
       score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
     }
     return Object.assign(refineBand(strip, bandFromMask(strip, raw), score), {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color'});
@@ -277,10 +294,14 @@
     for (const deg of rots) { const r = tryRot(deg); if (r && !r.edge) { best = r; break; } if (r && !best) best = r; }
     if (!best) return null;
     const {G, al} = best, zone = o.zoneMm || .8 * D;
-    const strip = rectify(G, al, Math.max(zone + .6 * D, 1.2 * D));
+    // o.stripMm: rectify a longer strip (more unworn body for a reference); rows past the photo end are trimmed
+    let strip = rectify(G, al, Math.max(zone + .6 * D, o.stripMm || 1.2 * D));
+    if (o.stripMm) { const {w, g, cx, top} = strip, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
     const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
     return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
   }
+
+  const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)});
 
   function finishSide(P, seg, helixDeg) {
     const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
@@ -299,8 +320,8 @@
   }
 
   // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
-  function prepareAll({sides, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method};
+  function prepareAll({sides, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm};
     Object.keys(o).forEach(key => o[key] == null && delete o[key]);
     let P = sides.slice(0, k).map(img => prepareSide(img, o));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
@@ -372,8 +393,9 @@
     return assemble(A, A.P.map(p => p && classicSegment(p)), args, 'classic');
   }
   // segmenter(prep, sideIndex) -> Promise<seg> (e.g. the AI stage); a side it rejects falls back to the classic segmenter
+  // segmenter.prepare(args) may ask for other prepare options (the AI stage wants a longer strip of unworn body)
   async function measureAsync(args, segmenter, engine) {
-    const A = prepareAll(args);
+    const A = prepareAll(segmenter.prepare ? Object.assign({}, args, segmenter.prepare(args)) : args);
     const fallback = (p, e) => { const s = classicSegment(p); s.aiError = String(e && e.message || e); return s; };
     const segs = segmenter.batch   // batch: all sides of the tool at once (e.g. one memory bank pooled over every side)
       ? (await segmenter.batch(A.P).catch(e => A.P.map(() => e))).map((s, i) => !A.P[i] ? null : !s || s instanceof Error ? fallback(A.P[i], s) : s)
@@ -381,6 +403,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, glintMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });

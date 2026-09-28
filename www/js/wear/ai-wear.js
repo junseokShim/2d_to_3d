@@ -17,8 +17,8 @@
   else { root.Tool3D = root.Tool3D || {}; root.Tool3D.wear = root.Tool3D.wear || {}; root.Tool3D.wear.ai = api; }
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
-  const NET_TOOL_PX = 320;   // tool diameter in network pixels (one feature cell = D/40)
-  const STRIDE = 8, PAD = 32, PROJ = 128, BANK = 2000, COLW = 2, AIK = 1.5, HOLD = 4, MINSEP = 25;
+  let NET_TOOL_PX = 320;     // tool diameter in network pixels (one feature cell = D/40)
+  const EDGE_U = .9, STRIDE = 8, PAD = 32, PROJ = 128, BANK = 2000, COLW = 2, AIK = 1.5, HOLD = 4, MINSEP = 25;
 
   function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
   const quant = (a, p) => { const b = Float32Array.from(a).sort(); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : 0; };
@@ -125,7 +125,7 @@
   // runFeatures(x Float32Array, H, W) -> Promise<{data, C, fh, fw}>;  core = wear-core api
   // Returns segmentAI(P) (one photo, own bank) with segmentAI.batch(Ps) (all sides of one tool, pooled bank; measureAsync uses it).
   function createSegmenter(runFeatures, core, opts = {}) {
-    const aiK = opts.aiK || AIK;
+    const aiK = opts.aiK || AIK; if (opts.netPx) NET_TOOL_PX = opts.netPx;
     async function featuresOf(P) {
       const {strip, zoneRows} = P;
       if (!strip.rgb) throw new Error('AI: colour strip missing');
@@ -134,29 +134,41 @@
     }
     function finish({P: {strip, zoneRows, o}, inp, feat}, an) {
       const {w, h, g, cx, R, top} = strip, up = upsample(an.score, feat.fh, feat.fw, strip, inp.sc), y1 = Math.min(h, top + zoneRows);
-      const region = new Uint8Array(w * h);
-      for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && up[i] > aiK) region[i] = 1; }
-      // pixel boundary (the AI map is one feature cell = D/40 coarse): nearest-prototype colour split inside the AI region
-      // grown by one cell. Wear prototype = median colour of the region's highest-scoring third; body prototypes = the
-      // k-means colours of the unworn body (classic colour model). A pixel is worn when it is nearer the wear prototype.
+      // gates: glints (+ their blended rim) are never wear; the silhouette rim (|u| > EDGE_U R) is foreshortened to a few px
+      // per mm of arc and carries background bleed, so it is not scored
+      const region = new Uint8Array(w * h), gl = core.glintMask(strip);
+      for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (Math.abs(x - cx) < EDGE_U * R && !Number.isNaN(g[i]) && !gl[i] && up[i] > aiK) region[i] = 1; }
+      // pixel boundary (the AI map is one feature cell = D/40 coarse): nearest-prototype colour split, seeded by the AI
+      // region. Body prototypes = the k-means colours of the unworn body (classic colour model, glints excluded).
+      // A pixel is worn when it is nearer the wear prototype than every body colour.
       const cls = core.segmentColor(strip, zoneRows, o), grow = Math.ceil(STRIDE / inp.sc), cm = cls.colorModel, rgb = strip.rgb;
       let seg;
       if (cm) {
         const idx = []; for (let i = 0; i < w * h; i++) if (region[i]) idx.push(i);
-        idx.sort((a, b) => up[b] - up[a]);
-        const hi = idx.slice(0, Math.max(1, Math.ceil(idx.length / 3))), med = c => quant(hi.map(i => rgb[3 * i + c]), .5), P0 = [med(0), med(1), med(2)];
         const d2 = (p, q) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2, px = i => [rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]];
-        const dBody = p => Math.min(...cm.C.map(q => d2(p, q))), sep = Math.sqrt(dBody(P0));
+        const dBody = p => Math.min(...cm.C.map(q => d2(p, q))), db = new Map(idx.map(i => [i, dBody(px(i))]));
+        // wear prototype: median colour of the third of the AI region least like any body colour (the AI cell is coarser
+        // than a thin band, so the region also holds body pixels; those are the most body-like and drop out here)
+        idx.sort((a, b) => db.get(b) - db.get(a));
+        const hi = idx.slice(0, Math.max(1, Math.ceil(idx.length / 3))), med = c => quant(hi.map(i => rgb[3 * i + c]), .5), P0 = [med(0), med(1), med(2)];
+        const sep = Math.sqrt(dBody(P0));
         if (idx.length && sep >= MINSEP) {   // wear has its own colour: pixel-accurate edge
-          const near = dilate(region, w, h, grow), raw = new Uint8Array(w * h);
-          for (let i = 0; i < w * h; i++) if (near[i]) { const p = px(i); if (d2(p, P0) < dBody(p)) raw[i] = 1; }
-          seg = {band: core.bandFromMask(strip, raw), edge: 'color', wearRGB: P0.map(Math.round), sep: Math.round(sep)};
+          // wear-coloured pixels of the zone, then only the connected pieces that touch the AI seed (hysteresis: the AI
+          // says where, the colour says how far; a thin band along the edge keeps growing where the AI map is too coarse)
+          const near = dilate(region, w, h, grow), cand = new Uint8Array(w * h), raw = new Uint8Array(w * h), st = [];
+          for (let y = top + 1; y < y1; y++) for (let x = 0; x < w; x++) {   // row `top` blends tool and background
+            const i = y * w + x; if (Math.abs(x - cx) >= EDGE_U * R || gl[i] || Number.isNaN(g[i])) continue;
+            const p = px(i); if (d2(p, P0) < dBody(p)) { cand[i] = 1; if (near[i]) { raw[i] = 1; st.push(i); } }
+          }
+          while (st.length) { const i = st.pop(), x = i % w; for (const j of [i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < w * h && Math.abs(j % w - x) <= 1 && cand[j] && !raw[j]) { raw[j] = 1; st.push(j); } }
+          seg = {band: rimFill(core.bandFromMask(strip, raw), gl, strip), edge: 'color', wearRGB: P0.map(Math.round), sep: Math.round(sep)};
         }
       }
-      if (!seg) { seg = {band: core.bandFromMask(strip, region), edge: 'ai-map'}; }   // texture-only wear: AI map boundary
-      let mx = 0; for (const v of an.score) if (v > mx) mx = v;
+      let mx = 0, nSeed = 0; for (const v of an.score) if (v > mx) mx = v; for (const v of region) nSeed += v;
+      // no colour of its own: texture-only wear is accepted only on a strong AI score, else it is structure the bank missed
+      if (!seg) seg = mx > 2 * aiK ? {band: core.bandFromMask(strip, region), edge: 'ai-map'} : {band: new Uint8Array(w * h), edge: 'none'};
       return Object.assign(seg, {thr: an.tau, med: 0, sig: 0, y1, method: 'ai', classicBand: cls.band,
-        ai: {tau: an.tau, nRef: an.nRef, nQuery: an.nQuery, fh: feat.fh, fw: feat.fw, maxScore: mx, cells: an.score, sc: inp.sc}});
+        ai: {edge: seg.edge, sep: seg.sep, seedPx: nSeed, tau: an.tau, nRef: an.nRef, nQuery: an.nQuery, fh: feat.fh, fw: feat.fw, maxScore: mx, cells: an.score, sc: inp.sc}});
     }
     const segmentAI = async P => { const F = await featuresOf(P); return finish(F, anomalyPooled([F.cells])[0]); };
     // all sides of one tool: features one after another (one wasm session), one pooled bank; an Error per failed side
@@ -167,7 +179,21 @@
       let an; try { an = anomalyPooled(ok.map(f => f.cells)); } catch (e) { return F.map(f => f && e); }
       return F.map(f => !f ? null : f instanceof Error ? f : finish(f, an[ok.indexOf(f)]));
     };
+    // memory bank = unworn body beyond the zone; use as much of the photo as there is (the helix pattern repeats only
+    // every pitch/tan(helix) along the axis, so a short reference misses flute phases and flags them as wear)
+    segmentAI.prepare = a => ({stripMm: a.stripMm || 3 * a.diameterMm});
     return segmentAI;
+  }
+  // the glint gate also removed the 1-2 px rim between glint and wear; give those rim pixels back to a band that touches
+  // them, so VB is measured from the glint (the cutting edge), not from 2 px behind it. The glint core stays out.
+  function rimFill(band, gl, strip) {
+    const {w, h, rgb} = strip, T = 225;
+    for (let it = 0; it < 2; it++) {
+      const add = [];
+      for (let i = w; i < w * h - w; i++) if (gl[i] && !band[i] && !(rgb[3 * i] > T && rgb[3 * i + 1] > T && rgb[3 * i + 2] > T) && (band[i - 1] || band[i + 1] || band[i - w] || band[i + w])) add.push(i);
+      for (const i of add) band[i] = 1;
+    }
+    return band;
   }
   function dilate(m, w, h, r) {
     const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
