@@ -399,7 +399,7 @@ $('#run').onclick = async () => {
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
-  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine});   // ④ 측정 패널 (js/metro)
+  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine, quality: st.shots.slice(0, k).map((_, i) => shotQuality(i))});   // ④ 측정 패널 (js/metro)
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 
