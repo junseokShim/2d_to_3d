@@ -37,6 +37,9 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   const smp = ['side1', 'side2', 'side3', 'side4', 'top'].map(n => path.join(REPO, 'test/wear/samples', n + '.png').replace(/\//g, '\\'));
   await s('DOM.setFileInputFiles', {nodeId, files: smp}); await sleep(1500);
   res.checks.slotsFilled = await ev(`[...document.querySelectorAll('#slots .th')].filter(t=>t.querySelector('canvas')).length`);
+  // per-shot quality badges (js/enhance/quality.js) appear under each side slot right after loading
+  const qWait = async () => { for (let t = 0; t < 60; t++) { const q = await ev(`JSON.stringify([...document.querySelectorAll('#slots .qbox')].map(b=>[b.dataset.verdict||'',b.querySelector('.qb')?.textContent||'',b.querySelectorAll('.qadv li').length]))`); if (JSON.parse(q).length && JSON.parse(q).every(v => v[0])) return JSON.parse(q); await sleep(250); } return null; };
+  res.checks.quality = await qWait();
   await ev(`window.__busySeen=false;new MutationObserver(()=>{if(!document.querySelector('#busy').hidden)window.__busySeen=true}).observe(document.querySelector('#busy'),{attributes:true});document.querySelector('#run').click();1`);
   const tRun = Date.now();
   while (Date.now() - tRun < 240000 && !(await ev(`document.querySelector('#engine').textContent`))) await sleep(500);   // AI wear: model load + inference
@@ -100,6 +103,15 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   m.caliper = await ev(`JSON.stringify(Tool3D.metro.state.manual.filter(x=>x.kind==='caliper').map(x=>[x.mm,x.U]))`);
   const cm = JSON.parse(m.caliper)[0]; m.caliperOk = !!cm && cm[0] > .5 * 10 / ppm && cm[0] < 1.2 * 10 / ppm && cm[1] > 0;
   m.readout = await ev(`document.querySelector('#mtReadout').textContent`);
+  // Photo / Enhanced toggle: same geometry (canvas size), different pixels; back to Photo afterwards
+  const canvasSig = `(()=>{const c=document.querySelector('#mtCanvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let s=0;for(let i=0;i<d.length;i+=16)s+=d[i]+d[i+1]+d[i+2];return s})()`;
+  const sig0 = await ev(canvasSig);
+  await ev(`document.querySelector('[data-enh="1"]').click();1`); await sleep(400);
+  m.enh = await ev(`JSON.stringify({on:Tool3D.metro.state.enh,btn:document.querySelector('[data-enh="1"]').classList.contains('on'),info:Object.values(Tool3D.metro.state.enhImg).map(c=>c.enhanceInfo&&Object.keys(c.enhanceInfo).length),same:Object.values(Tool3D.metro.state.enhImg).every(c=>c.width===Tool3D.metro.stripImage(Tool3D.metro.state.sel).width)})`);
+  const sig1 = await ev(canvasSig);
+  await ev(`document.querySelector('[data-enh="0"]').click();1`); await sleep(300);
+  const sig2 = await ev(canvasSig), me0 = JSON.parse(m.enh);
+  m.enhSig = [sig0, sig1, sig2]; m.enhanceOk = me0.on === true && me0.btn && me0.info.length > 0 && me0.same && Math.abs(sig1 - sig0) > .01 * sig0 && Math.abs(sig2 - sig0) < .002 * sig0;   // back to Photo: same frame up to hover overlays
   const {data: mshot} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const r=document.querySelector('#metro').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`), captureBeyondViewport: true});
   fs.writeFileSync(path.join(OUT, 'metro-measure.png'), Buffer.from(mshot, 'base64'));
   // drag-to-correct: move a wear-front node 8 px outward -> VB of flute 1 grows, 3D contract updated
@@ -130,11 +142,43 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   m.mobileNoHScroll = await ev(`document.documentElement.scrollWidth<=innerWidth+1`);
   await shotEl('#metro', 'metro-mobile.png');
   await s('Emulation.setDeviceMetricsOverride', {width: 1280, height: 1600, deviceScaleFactor: 1, mobile: false}); await sleep(500);
+  // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
+  const A = res.checks.assisted = {};
+  const deg = require('./degraded-inputs.js')(path.join(OUT, 'degraded')).slice(0, 4).map(f => f.replace(/\//g, '\\'));
+  await ev(`document.querySelector('#flutes').value='4';document.querySelector('#flutes').dispatchEvent(new Event('change'));document.querySelector('#engine').textContent='';1`);
+  await s('DOM.setFileInputFiles', {nodeId, files: deg}); await sleep(1000);
+  A.quality = await qWait();
+  await ev(`document.querySelector('#run').click();1`);
+  const tA = Date.now(); while (Date.now() - tA < 240000 && !(await ev(`document.querySelector('#engine').textContent`)) && !(await ev(`document.querySelector('#msg').textContent`))) await sleep(500);
+  await sleep(800);
+  A.msg = await ev(`document.querySelector('#msg').textContent`); A.engine = await ev(`document.querySelector('#engine').textContent`);
+  await ev(`document.querySelector('#metro').scrollIntoView({block:'start'});document.querySelector('#mtTool').value='E2E-OA';document.querySelector('#mtTool').dispatchEvent(new Event('input'));1`); await sleep(300);
+  A.before = JSON.parse(await ev(`JSON.stringify((()=>{const S=Tool3D.metro.state,F=S.F[S.sel],b=document.querySelector('#mtAssist');return {sel:S.sel,tool:S.tool,assist:F&&F.assist,modes:Tool3D.metro.summary().flutes.map(e=>e&&e.mode),banner:!b.hidden&&b.textContent,vb:Tool3D.metro.summary().flutes[S.sel].vbMaxMm,decision:Tool3D.metro.summary().flutes[S.sel].status.decision}})())`));
+  const {data: ashot} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const r=document.querySelector('#metro').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`), captureBeyondViewport: true});
+  fs.writeFileSync(path.join(OUT, 'metro-assist.png'), Buffer.from(ashot, 'base64'));
+  // operator drags the wear boundary (mid node) 8 px toward the flank
+  const [na, dxa] = await ev(`(()=>{const S=Tool3D.metro.state,F=S.F[S.sel],side=F.edge==='a'?'b':'a',i=F.nodeRows.length>>1;return [Tool3D.metro.nodeClient(side,i),(side==='b'?8:-8)*S.view.s]})()`);
+  await mouse('mouseMoved', na, 0); await mouse('mousePressed', na);
+  for (let j = 1; j <= 4; j++) await mouse('mouseMoved', [na[0] + dxa * j / 4, na[1]]);
+  await mouse('mouseReleased', [na[0] + dxa, na[1]]); await sleep(300);
+  A.after = JSON.parse(await ev(`JSON.stringify((()=>{const S=Tool3D.metro.state,e=Tool3D.metro.summary().flutes[S.sel],b=document.querySelector('#mtAssist');return {mode:e.mode,vb:e.vbMaxMm,U:e.q.vbMax.U,sigma:e.sigmaPx,banner:b.dataset.mode,table:[...document.querySelectorAll('#mtTable tr[data-row]')][S.sel].textContent,contract:Tool3D.wearResult.metro&&Tool3D.wearResult.metro.modes[S.sel],wr:Tool3D.wearResult.perFlute[S.sel].vbMaxMm}})())`));
+  await ev(`document.querySelector('#mtCsv').click();1`); const acf = await waitFile(/^tool3d-E2E-OA-.*\.csv$/);
+  A.csv = acf ? (t => ({mode: /,mode\r?\n/.test(t) || /,light,mode/.test(t), oa: /operator-assisted/.test(t)}))(fs.readFileSync(acf, 'utf8')) : 'missing';
+  await ev(`document.querySelector('#mtHtml').click();1`); const ahf = await waitFile(/^tool3d-report-E2E-OA-.*\.html$/);
+  A.html = ahf ? /operator-assisted/.test(fs.readFileSync(ahf, 'utf8')) : 'missing';
+  await ev(`document.querySelector('#mtPdf').click();1`); const apf = await waitFile(/^tool3d-report-E2E-OA-.*\.pdf$/);
+  A.pdf = apf ? /\(OA\)|\\\(OA\\\)/.test(fs.readFileSync(apf).toString('latin1')) : 'missing';
+  const B = A.before, Af = A.after;
+  A.ok = !A.msg && !!B.assist && /no-band/.test(B.assist.reason) && B.assist.guess === true && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
+    B.modes.every(x => x === 'awaiting-operator') && B.decision === 'indeterminate' && Af.mode === 'operator-assisted' && Af.vb > 0 && Af.U > 0 && Af.banner === 'operator-assisted' &&
+    /operator-assisted/.test(Af.table) && Af.contract === 'operator-assisted' && Math.abs(Af.wr - Af.vb) < 1e-4 && A.csv.mode && A.csv.oa && A.html === true && A.pdf === true;
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
     metroPanel: m.rows === 4 && m.matchesWear === true && m.hasU === true && /VBmax/.test(m.badge), metroDistance: m.distOk, metroCaliper: m.caliperOk, metroEdit: m.editOk,
-    metroReport: !!(m.pdf && m.pdf.ok && m.csv && m.csv.ok && m.html && m.html.ok), metroHistory: m.history === 2};
+    metroReport: !!(m.pdf && m.pdf.ok && m.csv && m.csv.ok && m.html && m.html.ok), metroHistory: m.history === 2,
+    qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
+    enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));
