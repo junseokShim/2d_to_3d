@@ -6,6 +6,7 @@
  *      facesPerTooth, rows in the results table (#res), faceSeg[i].areasMm2.
  * Tool3D.map3d.apply(faces, {source})  same with explicit contract faces (tests, seg worker)
  * Tool3D.map3d.mock()                  synthetic faces on the current model (flagged mock)
+ * 'tool3d:params' (viewer RH/LH toggle) re-applies the last faces on the new model.
  */
 (function () {
   'use strict';
@@ -28,7 +29,9 @@
     return Array.isArray(s) && s.length && !s.derived && s.filter(f => !/^top|end/i.test(f.face || '')).length <= k ? s : null;
   }
 
+  let last = null;                                             // re-evaluated when the model parameters change (RH/LH toggle)
   function apply(faces, o = {}) {
+    last = {faces, o};
     const R3 = T.render, G = T._render && T._render.geometry;
     if (!R3 || !R3.params || !G || !faces || !faces.length) return null;
     const q = R3.params, layout = G.layout(q), t0 = performance.now();
@@ -88,6 +91,11 @@
     const faces = C.mock(q.flutes, q.diameterMm, 40, T._render.geometry.layout(q));
     return apply(faces, {mock: true, source: 'mock'});
   }
+
+  window.addEventListener('tool3d:params', () => {
+    if (!last || !T.render || !T.render.map) return;
+    try { apply(last.faces, last.o); } catch (e) { console.warn('map3d re-apply:', e); }
+  });
 
   T.map3d = {run, apply, mock, deriveFaces};
 })();

@@ -106,7 +106,7 @@ vec3 bumpN(vec3 pos, vec3 n, float h, float fd) {
     if (reg > 4.5) mc = texture2D(uEndTex, vTool.xy / (2. * uMapR) + .5);
     else if (vTool.z < uSideZMax) mc = texture2D(uSideTex, vec2(fract(atan(vTool.y, vTool.x) / 6.2831853), vTool.z / uSideZMax));
     float aF = smoothstep(.3, .55, mc.r), aC = smoothstep(.3, .55, mc.g), aA = smoothstep(.3, .55, mc.b);
-    sAlb = mix(sAlb, vec3(.96, .60, .05), aF); sRough = mix(sRough, .5, aF); sMetal = mix(sMetal, .1, aF);
+    sAlb = mix(sAlb, vec3(.95, .38, .01), aF); sRough = mix(sRough, .6, aF); sMetal = mix(sMetal, 0., aF);
     float fr = vn(vec2(u, z) * 90.);
     sAlb = mix(sAlb, vec3(.78, .03, .32) * (.7 + .5 * fr), aC); sRough = mix(sRough, .8, aC); sMetal = mix(sMetal, .05, aC); sH += aC * (fr - .5) * .01;
     sAlb = mix(sAlb, vec3(.08, .45, .95), aA); sRough = mix(sRough, .65, aA); sMetal = mix(sMetal, .1, aA);

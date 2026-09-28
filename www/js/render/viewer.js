@@ -1,8 +1,11 @@
 // Tool3D render: scanner-style three.js viewer for the parametric end mill.
 // Public API (window.Tool3D.render):
 //   update(params)   rebuild with measured params {flutes, diameterMm, helixDeg, hand, phaseRad, ...}
+//                    helix hand: toolbar RH/LH choice (remembered) > params.hand > wearResult.helixHand (estimator) > RH;
+//                    params.handEst (e.g. index.html's photo-texture guess) is only reported, never applied
+//   hand(h|null)     user helix hand +1 RH / -1 LH, null = back to the automatic source; fires 'tool3d:params'
 //   setWear(result)  same as assigning window.Tool3D.wearResult
-//   view(name)       'iso' | 'tip' | 'side' | 'corner' (macro of flute 0's cutting corner)
+//   view(name, o)    'iso' | 'tip' | 'side' | 'corner' (macro of flute 0's cutting corner) | 'face' ({angleDeg}: as side photo angleDeg saw it)
 //   cloud(on)        focus-variation point-cloud look on/off
 //   stl()            ArrayBuffer, binary STL in mm, z = tool axis, tip z = 0
 //   setMap(r|null)   per-face segmentation map from js/map3d (evaluate() result): class colours + chip deformation
@@ -15,7 +18,9 @@
   if (!window.THREE) { console.warn('Tool3D render: three.js missing (www/vendor/three)'); return; }
 
   const $ = s => document.querySelector(s);
-  let renderer, scene, camera, controls, group, mesh = null, params = {}, wearSeen, showWear = true, hud, dirty = true, map = null;
+  let renderer, scene, camera, controls, group, mesh = null, params = {}, wearSeen, showWear = true, hud, dirty = true, map = null, handBtn;
+  let userHand = null;
+  try { const h = +localStorage.getItem('tool3d.hand'); if (h === 1 || h === -1) userHand = h; } catch (e) { /* storage blocked */ }
 
   const mat = NS.surface.create(), U = NS.surface.uniforms;
   U.uWearTex.value = NS.wear.tex;
@@ -77,8 +82,10 @@
     const bar = document.createElement('div');
     bar.style.cssText = 'position:absolute;right:8px;bottom:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:calc(100% - 16px)';
     for (const [t, f] of [['Iso', () => view('iso')], ['Tip', () => view('tip')], ['Side', () => view('side')],
-      ['Corner', () => view('corner')], ['Wear', () => { showWear = !showWear; repaint(); }], ['Cloud', () => cloud()]]) {
+      ['Corner', () => view('corner')], ['Wear', () => { showWear = !showWear; repaint(); }], ['Cloud', () => cloud()],
+      ['RH', () => setHand(mesh && mesh.params.hand > 0 ? -1 : 1)]]) {
       const b = document.createElement('button');
+      if (t === 'RH') { handBtn = b; b.title = 'Helix hand (click to switch RH / LH)'; }
       b.textContent = t; b.type = 'button';
       b.style.cssText = 'font:12px system-ui;padding:4px 9px;border-radius:5px;border:1px solid #777;background:#2c3036d9;color:#eee;cursor:pointer';
       b.onclick = f; bar.append(b);
@@ -133,7 +140,7 @@
     U.uMapOn.value = showWear && map ? 1 : 0;
     const q = mesh.params, t = w && w.totals;
     hud.textContent =
-      `Ø ${q.diameterMm.toFixed(2)} mm   ${q.flutes} FL   helix ${(+q.helixDeg).toFixed(1)}° ${q.hand > 0 ? 'RH' : 'LH'}\n` +
+      `Ø ${q.diameterMm.toFixed(2)} mm   ${q.flutes} FL   helix ${(+q.helixDeg).toFixed(1)}° ${q.hand > 0 ? 'RH' : 'LH'} (${mesh.handSource})\n` +
       `core ${(q.coreRatio * q.diameterMm).toFixed(2)} mm   rε ${q.cornerRadiusMm.toFixed(2)} mm   rake ${q.rakeDeg}°  clear ${q.clear1Deg}/${q.clear2Deg}°\n` +
       (t ? `VBmax ${t.vbMaxMm.toFixed(3)} mm   A ${t.areaMm2.toFixed(3)} mm²   V ${t.volumeMm3.toFixed(4)} mm³` +
         (w.mock ? '   [MOCK wear]' : '') : 'no wear data');
@@ -150,9 +157,15 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
 
   function update(p) {
     params = Object.assign({}, params, p || {});
+    const est = window.Tool3D && window.Tool3D.wearResult && window.Tool3D.wearResult.helixHand;
+    const [hand, handSource] = userHand ? [userHand, 'user'] : params.hand === 1 || params.hand === -1 ? [params.hand, 'set'] :
+      est === 1 || est === -1 ? [est, 'estimated'] : [1, 'default'];
     if (map && (map.params.flutes !== params.flutes || map.params.diameterMm !== params.diameterMm)) setMapState(null);   // stale map
     if (mesh) { group.remove(mesh.obj); Object.values(mesh.parts).forEach(g => g.dispose()); }
-    const b = NS.geometry.build(params, map && map.deform);
+    const bp = Object.assign({}, params, {hand}), b = NS.geometry.build(bp, map && map.deform);
+    b.buildParams = bp;
+    b.handSource = handSource;
+    if (handBtn) handBtn.textContent = hand > 0 ? 'RH' : 'LH';
     const obj = new THREE.Group();
     for (const g of Object.values(b.parts)) obj.add(new THREE.Mesh(g, mat));
     group.add(obj);
@@ -164,11 +177,15 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
   }
 
   // World frame: group maps tool (x, y, z) -> (x, -z, y), so the tip is at y = 0 and the shank runs to -y.
-  function view(name) {
+  function view(name, o = {}) {
     if (!mesh) return;
     const q = mesh.params, D = q.diameterMm, R = D / 2;
     let tgt, dir, d;
-    if (name === 'corner') {
+    if (name === 'face') {
+      // what side photo o.angleDeg saw (js/map3d azimuth convention: model azimuth = -angleDeg), lower flute
+      const a = -(+o.angleDeg || 0) * Math.PI / 180;
+      tgt = new THREE.Vector3(0, -.45 * D, 0); dir = new THREE.Vector3(Math.cos(a), .25, Math.sin(a)); d = 3.6 * D;
+    } else if (name === 'corner') {
       // flute 0's cutting corner: radial out, tangential toward the chip flute, from slightly above the end face
       const a = q.phaseRad, cut = q.hand >= 0 ? 1 : -1, rad = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
       const tan = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(cut);    // toward the tooth body: shows the flank land
@@ -184,6 +201,14 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     }
     camera.position.copy(tgt).addScaledVector(dir.normalize(), d);
     controls.target.copy(tgt); controls.update(); dirty = true;
+  }
+
+  function setHand(h) {
+    userHand = h === 1 || h === -1 ? h : null;
+    try { userHand ? localStorage.setItem('tool3d.hand', String(userHand)) : localStorage.removeItem('tool3d.hand'); } catch (e) { /* storage blocked */ }
+    if (mesh) update();
+    window.dispatchEvent(new CustomEvent('tool3d:params', {detail: mesh && mesh.params}));
+    return mesh && mesh.params.hand;
   }
 
   function setMapState(r) {
@@ -208,7 +233,7 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
   // both at the same mesh resolution so their difference is the removed volume
   function volume(deformed = true) {
     if (!mesh) return 0;
-    const b = NS.geometry.build(params, deformed && map && map.deform ? map.deform : {side: () => null, end: () => null}, {noNormals: true});
+    const b = NS.geometry.build(mesh.buildParams, deformed && map && map.deform ? map.deform : {side: () => null, end: () => null}, {noNormals: true});
     let v = 0;
     for (const g of Object.values(b.parts)) {
       const p = g.getAttribute('position').array, ix = g.getIndex().array;
@@ -253,7 +278,7 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     a.download = 'tool.stl'; a.click();
   }
 
-  const api = {update, view, cloud, stl, setMap, volume, refresh: () => repaint(), get map() { return map && map.result; }, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
+  const api = {update, view, cloud, stl, setMap, hand: setHand, volume, refresh: () => repaint(), get map() { return map && map.result; }, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
   T3.render = api;
 
   function init() {

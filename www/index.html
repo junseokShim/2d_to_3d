@@ -475,7 +475,7 @@ function analyze() {
   R.mesh = buildMesh(D, k, sl, ph0, Lmm, Wt, Hs, Cs);
   R.atlas = atlas;
   view.set(R.mesh, atlas, Lmm);
-  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: wr && wr.helixDeg || beta, hand: -hand, phaseRad: -ph0});   // render hook (v0.1 azimuth runs left-handed: '/' flutes give hand=-1 here = RH)
+  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: wr && wr.helixDeg || beta, handEst: -hand, phaseRad: -ph0});   // render hook (v0.1 azimuth runs left-handed: '/' flutes give hand=-1 here = RH). The photo-texture hand guess is unreliable (LH on RH tools): reported only; the viewer uses the user's RH/LH choice > wearResult.helixHand > RH
   window.Tool3D?.map3d?.run({shots: st.shots, flutes: k, diameterMm: D});   // per-face segmentation -> 3D (js/map3d)
 }
 

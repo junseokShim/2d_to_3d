@@ -174,24 +174,45 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   A.ok = !A.msg && !!B.assist && /no-band/.test(B.assist.reason) && B.assist.guess === true && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
     B.modes.every(x => x === 'awaiting-operator') && B.decision === 'indeterminate' && Af.mode === 'operator-assisted' && Af.vb > 0 && Af.U > 0 && Af.banner === 'operator-assisted' &&
     /operator-assisted/.test(Af.table) && Af.contract === 'operator-assisted' && Math.abs(Af.wr - Af.vb) < 1e-4 && A.csv.mode && A.csv.oa && A.html === true && A.pdf === true;
-  // map3d deformation: synthetic masks on the current model (mock) -> class colours, chip removes material, legend
+  // map3d deformation: synthetic masks on the current model (mock) -> class colours, chip removes material (render + STL), legend
   {
     const M3 = res.checks.map3d = {};
-    Object.assign(M3, JSON.parse(await ev(`JSON.stringify((()=>{const r=Tool3D.map3d.mock();const v0=Tool3D.render.volume(false),v1=Tool3D.render.volume(true);return {faces:r.faces.length,classes:r.totals.areaMm2,chipArea:r.totals.chip.areaMm2,chipVolModel:r.chipVolumeModelMm3,chipVolEst:r.totals.chip.volumeMm3,dv:+(v0-v1).toFixed(4),ms:r.ms,legend:document.querySelector('#tool3d-legend').textContent,hud:document.querySelector('#tool3d-view div').textContent,wrFaces:(Tool3D.wearResult&&Tool3D.wearResult.faces||[]).length,rows:document.querySelectorAll('#res tr[data-map3d]').length}})())`)));
-    const colour = async () => ev(`(()=>{const c=document.querySelector('#tool3d-view canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let f=0,ch=0,a=0;for(let i=0;i<d.length;i+=4){const r=d[i],g=d[i+1],b=d[i+2];if(r>150&&g>70&&g<190&&b<60)f++;else if(r>100&&g<60&&b>50&&b<160)ch++;else if(b>150&&r<90&&g<170)a++}return [f,ch,a]})()`);
+    Object.assign(M3, JSON.parse(await ev(`JSON.stringify((()=>{const r=Tool3D.map3d.mock();const v0=Tool3D.render.volume(false),v1=Tool3D.render.volume(true);return {faces:r.faces.length,classes:r.totals.areaMm2,chipArea:r.totals.chip.areaMm2,chipVolModel:r.chipVolumeModelMm3,chipVolEst:r.totals.chip.volumeMm3,dv:+(v0-v1).toFixed(4),v0,v1,ms:r.ms,legend:document.querySelector('#tool3d-legend').textContent,hud:document.querySelector('#tool3d-view div').textContent,wrFaces:(Tool3D.wearResult&&Tool3D.wearResult.faces||[]).length,rows:document.querySelectorAll('#res tr[data-map3d]').length}})())`)));
+    // STL export = the displayed (deformed) mesh: same closed volume as volume(true), i.e. the intact model (same rows) minus the chip volume
+    await ev(`window.__stlVol=()=>{const d=new DataView(Tool3D.render.stl()),n=d.getUint32(80,true);let v=0;for(let t=0;t<n;t++){const o=84+50*t+12,p=j=>d.getFloat32(o+4*j,true);v+=p(0)*(p(4)*p(8)-p(5)*p(7))-p(1)*(p(3)*p(8)-p(5)*p(6))+p(2)*(p(3)*p(7)-p(4)*p(6))}return Math.abs(v/6)};1`);
+    M3.stlVolMap = await ev(`__stlVol()`);
+    // pixels: grab the WebGL canvas (preserveDrawingBuffer) with and without the map from the same camera; the pixels the map changes
+    // are binned by hue (ACES tone mapping shifts the albedo, so no fixed RGB boxes): flank 0-60 deg, adhesion 180-240, chipping 270-360
+    await ev(`window.__grab=()=>{const c=document.querySelector('#tool3d-view canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);return x.getImageData(0,0,t.width,t.height).data};
+      window.__cmp=(A,B)=>{const o=[0,0,0];let n=0;for(let i=0;i<A.length;i+=4){if(Math.abs(A[i]-B[i])+Math.abs(A[i+1]-B[i+1])+Math.abs(A[i+2]-B[i+2])<40)continue;n++;const r=A[i]/255,g=A[i+1]/255,b=A[i+2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx-mn<.2*mx||mx<.15)continue;const h=60*(mx===r?((g-b)/(mx-mn)+6)%6:mx===g?(b-r)/(mx-mn)+2:(r-g)/(mx-mn)+4);if(h<60)o[0]++;else if(h>=270)o[1]++;else if(h>=180&&h<240)o[2]++}return {n,cls:o}};1`);
     const md = path.join(OUT, 'map3d'); fs.mkdirSync(md, {recursive: true});
-    for (const v of ['iso', 'tip', 'corner', 'side']) {
-      await ev(`Tool3D.render.view('${v}');1`); await sleep(1200);
-      M3['px_' + v] = await colour();
+    const snap = async name => {
       const b = await ev(`(()=>{const r=document.querySelector('#tool3d-view').getBoundingClientRect();return [r.x+scrollX,r.y+scrollY,r.width,r.height]})()`);
       const {data} = await s('Page.captureScreenshot', {format: 'png', clip: {x: b[0], y: b[1], width: b[2], height: b[3], scale: 1}, captureBeyondViewport: true});
-      fs.writeFileSync(path.join(md, 'mock-' + v + '.png'), Buffer.from(data, 'base64'));
+      fs.writeFileSync(path.join(md, name + '.png'), Buffer.from(data, 'base64'));
+    };
+    const wearBtn = `[...document.querySelectorAll('#tool3d-view button')].find(b=>b.textContent==='Wear').click();1`;
+    const views = [['iso', `'iso'`], ['tip', `'tip'`], ['corner', `'corner'`], ['face90', `'face',{angleDeg:90}`]];
+    const r0 = `Tool3D.render.setMap(null);1`, r1 = `Tool3D.render.setMap(Tool3D.map3dResult&&window.__m3r);1`;
+    await ev(`window.__m3r=Tool3D.render.map;1`);
+    for (const [v, arg] of views) {
+      await ev(`Tool3D.render.view(${arg});` + r0); await sleep(900); await ev(`window.__A=__grab();1`);
+      await ev(r1); await sleep(900); M3['px_' + v] = await ev(`__cmp(__grab(),__A)`); await snap('mock-' + v);
     }
-    const px = ['iso', 'tip', 'corner', 'side'].map(v => M3['px_' + v]);
+    // geometry alone (class colours off): the chip scoop must still change the corner / tip render
+    await ev(wearBtn);
+    for (const [v, arg] of views.slice(1, 3)) {
+      await ev(`Tool3D.render.view(${arg});` + r0); await sleep(900); await ev(`window.__A=__grab();1`);
+      await ev(r1); await sleep(900); M3['geo_' + v] = await ev(`__cmp(__grab(),__A)`).then(x => x.n); await snap('mock-geometry-' + v);
+    }
+    await ev(wearBtn);
+    await ev(r0); M3.stlDv = +(M3.v0 - M3.stlVolMap).toFixed(4); M3.stlVsModel = +(M3.stlVolMap - M3.v1).toFixed(5);
+    const px = views.map(([v]) => M3['px_' + v].cls);
     M3.ok = M3.faces === 5 && M3.chipArea > 0 && M3.chipVolModel > 0 && M3.dv > 0 && Math.abs(M3.dv - M3.chipVolModel) < 1e-3 &&
       Math.abs(M3.chipVolModel / M3.chipVolEst - 1) < .2 && /Flank wear/.test(M3.legend) && /Chipping/.test(M3.legend) && /Adhesion/.test(M3.legend) &&
-      M3.wrFaces === 5 && M3.rows >= 7 && px.some(p => p[0] > 50) && px.some(p => p[1] > 20) && px.some(p => p[2] > 20);
-    await ev(`Tool3D.render.setMap(null);Tool3D.render.view('iso');1`);
+      M3.wrFaces === 5 && M3.rows >= 7 && px.some(p => p[0] > 200) && px.some(p => p[1] > 200) && px.some(p => p[2] > 200) &&
+      M3.geo_tip > 300 && M3.geo_corner > 300 && Math.abs(M3.stlVsModel) < 2e-3 && Math.abs(M3.stlDv / M3.chipVolModel - 1) < .02 && / RH/.test(M3.hud);
+    await ev(`Tool3D.render.view('iso');1`);
   }
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
