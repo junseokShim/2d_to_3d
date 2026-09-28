@@ -1,0 +1,28 @@
+{
+  "name": "tool3d",
+  "version": "0.1.0",
+  "description": "절삭공구 2D 사진 -> 3D 모델 + 마모 측정",
+  "author": "junseokShim",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "exe": "electron-builder --win portable --publish never",
+    "apk": "cap sync android && cd android && gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.caicnc.tool3d",
+    "productName": "Tool3D",
+    "files": ["electron/**", "www/**"],
+    "win": { "target": "portable" }
+  }
+}

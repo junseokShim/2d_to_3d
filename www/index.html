@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Tool 2D→3D</title>
+<style>
+:root{--bg:#f5f6f8;--fg:#1d2330;--mut:#667;--line:#d5d9e0;--acc:#1f5fbf;--card:#fff}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;background:var(--bg);color:var(--fg)}
+main{display:grid;gap:16px;padding:16px;grid-template-columns:1fr}
+@media(min-width:1000px){main{grid-template-columns:280px 1fr 1.3fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+h2{font-size:17px;margin:0 0 12px}
+label.row{display:flex;align-items:center;gap:10px;margin:10px 0}
+label.row span{width:90px}
+select,button,.btn{font:inherit;padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--fg);cursor:pointer}
+button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+.hint{color:var(--mut);font-size:13px}
+#slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.slot{border:1px dashed var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;align-items:stretch;text-align:center;font-size:13px}
+.slot .th{height:110px;display:flex;align-items:center;justify-content:center;background:#eef0f3;border-radius:6px;color:var(--mut);overflow:hidden}
+.slot .th canvas{max-height:110px;max-width:100%}
+#gl{width:100%;height:420px;background:#20242c;border-radius:8px;touch-action:none;display:block}
+table{border-collapse:collapse;width:100%;font-size:14px;margin-top:10px}
+td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+#strips{display:flex;gap:6px;overflow-x:auto;margin-top:10px}#strips canvas{height:180px}
+.ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;font-size:13px}
+#msg{color:#b3261e;font-size:13px;min-height:1em;margin-top:8px}
+#cam{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9}
+#cam[hidden]{display:none}
+.camwrap{position:relative;display:inline-block}
+#video{display:block;max-width:100vw;max-height:calc(100vh - 90px)}
+#guide{position:absolute;inset:0;width:100%;height:100%}
+.gd{fill:none;stroke:#ffd400;stroke-width:3;stroke-dasharray:12 8;vector-effect:non-scaling-stroke}
+.cambar{display:flex;gap:16px;align-items:center;padding:12px;color:#fff}
+#shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h2>① 공구 정보</h2>
+    <label class="row"><span>날 수(flute)</span><select id="flutes"></select></label>
+    <label class="row"><span>공구경 φ</span><select id="dia"></select></label>
+    <p class="hint">날 수 2~6, 공구경 4~12 mm</p>
+  </section>
+
+  <section>
+    <h2>② 촬영 / 불러오기</h2>
+    <p class="hint">팁을 위로 두고 보조선에 공구 외곽을 맞춰 주세요. 날 수만큼 공구를 돌려가며 측면을 찍고, 마지막에 윗면(끝면)을 찍습니다.</p>
+    <div id="slots"></div>
+    <div class="ctl"><label class="btn">여러 장 한번에 불러오기<input id="multi" type="file" accept="image/*" multiple hidden></label>
+      <span class="hint">파일명 순서대로 측면 1…N, 윗면</span></div>
+  </section>
+
+  <section>
+    <h2>③ 3D 화</h2>
+    <button class="pri" id="run">3D 생성</button>
+    <div id="msg"></div>
+    <canvas id="gl"></canvas>
+    <div class="ctl">
+      <label>마모 민감도 <input id="sens" type="range" min="1" max="4" step="0.1" value="2.5"></label>
+      <label>검사 범위(×D) <input id="zone" type="range" min="0.2" max="1.5" step="0.1" value="0.5"></label>
+    </div>
+    <table id="res"></table>
+    <div class="ctl"><button id="dlStl">STL 저장</button><button id="dlTex">텍스처 PNG</button><button id="dlJson">결과 JSON</button></div>
+    <div id="strips"></div>
+  </section>
+</main>
+
+<div id="cam" hidden>
+  <div class="camwrap"><video id="video" playsinline muted></video><svg id="guide"></svg></div>
+  <div class="cambar"><button id="camClose">취소</button><button id="shutter" aria-label="촬영"></button><span id="camtxt"></span></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const S = 30;                          // 정규화 해상도 px/mm
+const CORE = {2: .55, 3: .6, 4: .65, 5: .7, 6: .72};  // 심압비 기본값(사진으로 측정 불가)
+const st = {k: 4, D: 10, shots: [], hints: []};
+let R = null;                          // 마지막 분석 결과
+
+// ---------- ① 입력 ----------
+for (let i = 2; i <= 6; i++) $('#flutes').add(new Option(i, i, i === 4, i === 4));
+for (let i = 4; i <= 12; i++) $('#dia').add(new Option(i + ' φ', i, i === 10, i === 10));
+$('#flutes').onchange = () => { st.shots = []; st.hints = []; renderSlots(); };
+$('#dia').onchange = renderSlots;
+
+// ---------- ② 촬영/불러오기 ----------
+const cv = (w, h) => Object.assign(document.createElement('canvas'), {width: w, height: h});
+const msg = t => $('#msg').textContent = t || '';
+
+function thumb(src) {
+  const W = src.naturalWidth || src.width, H = src.naturalHeight || src.height, c = cv(Math.round(110 * W / H), 110);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
+function renderSlots() {
+  st.k = +$('#flutes').value; st.D = +$('#dia').value;
+  const box = $('#slots'); box.innerHTML = '';
+  for (let i = 0; i <= st.k; i++) {
+    const d = document.createElement('div'); d.className = 'slot';
+    d.innerHTML = `<div class="th">없음</div><b>${i === st.k ? '윗면' : `측면 ${i + 1} (${Math.round(i * 360 / st.k)}°)`}</b>
+      <button>촬영</button><label class="btn">불러오기<input type="file" accept="image/*" hidden></label>`;
+    if (st.shots[i]) d.querySelector('.th').replaceChildren(thumb(st.shots[i]));
+    d.querySelector('button').onclick = () => openCam(i);
+    d.querySelector('input').onchange = e => loadFiles([...e.target.files], i);
+    box.append(d);
+  }
+}
+
+async function loadFiles(files, start) {
+  files.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+  for (let j = 0; j < files.length && start + j <= st.k; j++) {
+    const img = new Image(); img.src = URL.createObjectURL(files[j]); await img.decode();
+    st.shots[start + j] = img; st.hints[start + j] = null;
+  }
+  renderSlots();
+}
+$('#multi').onchange = e => loadFiles([...e.target.files], 0);
+
+let stream, camSlot;
+const guideOf = (i, w, h) => i === st.k
+  ? {type: 'top', cx: w / 2, cy: h / 2, r: 0.2 * Math.min(w, h)}
+  : {type: 'side', cx: w / 2, w: 0.3 * w, y0: 0.12 * h, y1: 0.88 * h};
+
+async function openCam(i) {
+  camSlot = i;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment', width: {ideal: 1920}, height: {ideal: 1080}}, audio: false});
+  } catch (e) { return msg('카메라를 열 수 없습니다: ' + e.message); }
+  const v = $('#video'); v.srcObject = stream; await v.play();
+  $('#cam').hidden = false;
+  const w = v.videoWidth, h = v.videoHeight, g = guideOf(i, w, h), svg = $('#guide');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.innerHTML = g.type === 'top'
+    ? `<circle class="gd" cx="${g.cx}" cy="${g.cy}" r="${g.r}"/>`
+    : `<path class="gd" d="M${g.cx - g.w / 2},${g.y1} V${g.y0 + g.w * .3} Q${g.cx},${g.y0 - g.w * .15} ${g.cx + g.w / 2},${g.y0 + g.w * .3} V${g.y1}"/>`;
+  $('#camtxt').textContent = i === st.k ? '끝면을 원 안에' : `측면 ${i + 1}: 외곽을 보조선에`;
+}
+function closeCam() { stream && stream.getTracks().forEach(t => t.stop()); $('#cam').hidden = true; }
+$('#camClose').onclick = closeCam;
+$('#shutter').onclick = () => {
+  const v = $('#video'), c = cv(v.videoWidth, v.videoHeight);
+  c.getContext('2d').drawImage(v, 0, 0);
+  st.shots[camSlot] = c; st.hints[camSlot] = guideOf(camSlot, c.width, c.height);
+  closeCam(); renderSlots();
+  if (camSlot < st.k && !st.shots[camSlot + 1]) openCam(camSlot + 1);   // 다음 면 이어서 촬영
+};
+
+// ---------- 영상 처리 공통 ----------
+function pix(src, maxDim) {
+  const W = src.naturalWidth || src.width, H = src.naturalHeight || src.height, s = Math.min(1, maxDim / Math.max(W, H));
+  const w = Math.round(W * s), h = Math.round(H * s), x = cv(w, h).getContext('2d', {willReadFrequently: true});
+  x.drawImage(src, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = .299 * d[4 * i] + .587 * d[4 * i + 1] + .114 * d[4 * i + 2];
+  return {w, h, d, g, s};
+}
+function sobel({w, h, g}) {
+  const gx = new Float32Array(w * h), gy = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    gx[i] = g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1];
+    gy[i] = g[i + w - 1] + 2 * g[i + w] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - w] - g[i - w + 1];
+  }
+  return {gx, gy};
+}
+const pct = (a, p) => { const b = Float32Array.from(a).sort(); return b[Math.min(b.length - 1, Math.floor(p / 100 * b.length))]; };
+const mean = a => a.reduce((s, v) => s + v, 0) / (a.length || 1);
+// 세로에 가까운 에지만 (헬릭스 무늬 등 사선 에지 배제)
+const vert = (gx, gy) => i => Math.abs(gy[i]) < .4 * Math.abs(gx[i]) ? Math.abs(gx[i]) : 0;
+const isSkin = (r, g, b) => r > 95 && g > 40 && b > 20 && r - g > 15 && r - b > 15;
+
+// 측면 사진: 회전각/중심/폭(스케일)/팁 위치 자동 검출 = Align 보정
+function detectSide(src, hint) {
+  const P = pix(src, 800), {w, h, d, s} = P, {gx, gy} = sobel(P), vx = vert(gx, gy);
+  const hc = hint ? hint.cx * s : w / 2, hw = hint ? hint.w * s : 0;
+  const [sepMin, sepMax] = hint ? [hw * .5, hw * 1.5] : [w * .06, w * .7];
+  const y0 = Math.round(hint ? hint.y0 * s : .05 * h), y1 = Math.round(hint ? y0 + .65 * (hint.y1 - hint.y0) * s : .7 * h);
+  const cand = [];
+  for (let a = -12; a <= 12; a++) {
+    const t = Math.tan(a * Math.PI / 180), P = new Float32Array(w);
+    for (let y = y0; y < y1; y += 2) {
+      const off = (y - h / 2) * t, row = y * w;
+      for (let x = 0; x < w; x++) { const xs = Math.round(x + off); if (xs > 0 && xs < w - 1) P[x] += vx(row + xs); }
+    }
+    const Q = P.map((_, i) => { let v = 0; for (let j = -2; j <= 2; j++) v += P[Math.min(w - 1, Math.max(0, i + j))]; return v; });
+    const mx = Math.max(...Q), pk = [];
+    for (let i = 1; i < w - 1; i++) if (Q[i] >= Q[i - 1] && Q[i] > Q[i + 1] && Q[i] > .3 * mx) pk.push(i);
+    pk.sort((p, q) => Q[q] - Q[p]).splice(12);
+    for (const l of pk) for (const r of pk) {
+      const sep = r - l;
+      if (sep < sepMin || sep > sepMax || Math.abs((l + r) / 2 - hc) > (hint ? hw * .5 : .3 * w)) continue;
+      cand.push({a, l, r, sep, sc: Math.min(Q[l], Q[r])});
+    }
+  }
+  if (!cand.length) return null;
+  const top = Math.max(...cand.map(c => c.sc));
+  let b = cand.filter(c => c.sc >= .6 * top).sort((p, q) => q.sep - p.sep)[0];       // 강한 쌍 중 가장 바깥 = 실루엣
+  b = cand.filter(c => Math.abs(c.sep - b.sep) < 4 && Math.abs(c.l + c.r - b.l - b.r) < 8).sort((p, q) => q.sc - p.sc)[0];
+  const t = b.a * Math.PI / 180, ct = Math.cos(t), sn = Math.sin(t), xc = (b.l + b.r) / 2, sepP = b.sep * ct;
+  const at = (u, v) => [Math.round(xc + u * ct + v * sn), Math.round(h / 2 - u * sn + v * ct)];
+  const edge = (u, v) => { let m = 0; for (let j = -2; j <= 2; j++) { const [x, y] = at(u + j, v); if (x > 0 && y > 0 && x < w - 1 && y < h - 1) m = Math.max(m, vx(y * w + x)); } return m; };
+  const vs = [], F = [], skin = [];
+  for (let v = -h / 2; v < h / 2; v++) {
+    const [x, y] = at(0, v); if (y < 1 || y >= h - 1) continue;
+    vs.push(v); F.push(Math.min(edge(-sepP / 2, v), edge(sepP / 2, v)));
+    let n = 0; for (let j = -7; j <= 7; j++) { const [x2, y2] = at(j * sepP / 20, v); const i = 4 * (y2 * w + x2); if (x2 >= 0 && x2 < w && isSkin(d[i], d[i + 1], d[i + 2])) n++; }
+    skin.push(n / 15);
+  }
+  const win = Math.max(3, Math.round(.15 * sepP)), body = pct(F, 90);   // 공구 몸통의 에지 세기 기준
+  let iT = 0; while (iT < F.length - win && mean(F.slice(iT, iT + win)) < .4 * body) iT++;
+  let iE = iT + Math.round(.5 * sepP); while (iE < F.length - 1 && skin[iE] < .3) iE++;
+  const ppm = sepP / st.D;
+  return {t, xc, sepP, vTip: vs[iT], s, h, Lmm: Math.min(3 * st.D, (vs[iE] - vs[iT]) / ppm)};
+}
+
+// 검출 결과로 공구 축을 세로, 스케일 S px/mm로 정규화한 스트립 이미지 생성
+function rectify(src, q, D, Lmm) {
+  const m = .15 * D, mt = .3 * D, W = Math.round((D + 2 * m) * S), H = Math.round((Lmm + mt) * S), c = cv(W, H);
+  const ppm = q.sepP / D, k = ppm / (S * q.s), ct = Math.cos(q.t), sn = Math.sin(q.t);
+  const u0 = -(m + D / 2) * ppm, v0 = q.vTip - mt * ppm;
+  const ox = (q.xc + ct * u0 + sn * v0) / q.s, oy = (q.h / 2 - sn * u0 + ct * v0) / q.s;
+  const a = ct / k, b = sn / k, cc = -sn / k, dd = ct / k, x = c.getContext('2d');
+  x.setTransform(a, b, cc, dd, -(a * ox + cc * oy), -(b * ox + dd * oy));
+  x.drawImage(src, 0, 0);
+  return c;
+}
+
+// 스트립 분석: 실측 외곽/팁, 결손(치핑) 깊이, 밝기 기반 마모, 헬릭스 텐서
+function analyzeStrip(c, D, sens, zone) {
+  const P = pix(c, 1e9), {w, h, d} = P, {gx, gy} = sobel(P), DS = D * S;
+  const xl0 = .15 * DS, xr0 = xl0 + DS, y0 = .3 * DS, win = Math.round(.12 * DS);
+  const xl = new Float32Array(h), xr = new Float32Array(h), sl = new Float32Array(h), sr = new Float32Array(h);
+  // 행마다 창 안에서 '가장 바깥쪽의 강한 에지' = 실루엣 (내부 헬릭스 무늬 에지 배제)
+  const G = (x, y) => { let v = 0; for (let j = -2; j <= 2; j++) v += Math.abs(gx[(y + j) * w + x]); return v; };  // 세로 평균으로 노이즈 억제
+  const outer = (y, a, b, dir) => {
+    let m = 0; for (let x = a; x !== b; x += dir) m = Math.max(m, G(x, y));
+    for (let x = a; x !== b; x += dir) if (G(x, y) >= .3 * m) return [x, m];
+    return [a, 0];
+  };
+  for (let y = 3; y < h - 3; y++) {
+    [xl[y], sl[y]] = outer(y, Math.max(1, Math.round(xl0 - win)), Math.round(xl0 + win), 1);
+    [xr[y], sr[y]] = outer(y, Math.min(w - 2, Math.round(xr0 + win)), Math.round(xr0 - win), -1);
+  }
+  const med = a => a.map((_, i) => pct(a.slice(Math.max(0, i - 3), i + 4), 50));   // 한두 줄짜리 오검출 제거
+  xl.set(med(xl)); xr.set(med(xr));
+  const bY = [...Array(h).keys()].filter(y => y > y0 + .5 * DS && y < h - 1);
+  const xlI = pct(bY.map(y => xl[y]), 5), xrI = pct(bY.map(y => xr[y]), 95);
+  const thL = pct(bY.map(y => xl[y] - xlI), 95) + 1, thR = pct(bY.map(y => xrI - xr[y]), 95) + 1;
+  const sTh = .3 * pct(bY.map(y => sl[y] + sr[y]), 50) / 2;
+  const tipY = new Float32Array(w);
+  for (let x = Math.round(xlI); x <= xrI; x++) {
+    const Gy = y => { let v = 0; for (let j = -2; j <= 2; j++) v += Math.abs(gy[y * w + x + j]); return v; };
+    const ya = Math.max(1, Math.round(y0 - .15 * DS)), yb = Math.round(y0 + .3 * DS);
+    let m = 0; for (let y = ya; y < yb; y++) m = Math.max(m, Gy(y));
+    for (let y = ya; y < yb; y++) if (Gy(y) >= .3 * m) { tipY[x] = y; break; }   // 가장 바깥(위쪽) 강한 에지 = 팁
+  }
+  tipY.set(med(tipY));
+  const cx = (xlI + xrI) / 2, hwI = (xrI - xlI) / 2;
+  const tI = pct(tipY.slice(Math.round(cx - .3 * hwI), Math.round(cx + .3 * hwI)), 10);
+  const zEnd = Math.min(h, Math.round(tI + zone * DS));
+  const mask = new Uint8Array(w * h), dep = [], defL = new Float32Array(h), defR = new Float32Array(h), defA = new Float32Array(w);
+  // 결손: 이상 외곽(날 부위 최외곽) 대비 안쪽으로 들어간 부분
+  for (let y = Math.ceil(tI); y < zEnd; y++) {
+    const dl = xl[y] - xlI, dr = xrI - xr[y];
+    if (sl[y] > sTh && dl > thL) { defL[y] = dl; dep.push(dl); for (let x = Math.round(xlI); x < xl[y]; x++) mask[y * w + x] = 2; }
+    if (sr[y] > sTh && dr > thR) { defR[y] = dr; dep.push(dr); for (let x = Math.round(xr[y]) + 1; x <= xrI; x++) mask[y * w + x] = 2; }
+  }
+  for (let x = Math.round(xlI) + 2; x <= xrI - 2; x++) {
+    const da = tipY[x] - tI;
+    if (da > 3) { defA[x] = da; dep.push(da); for (let y = Math.ceil(tI); y < tipY[x]; y++) mask[y * w + x] = 2; }
+  }
+  // 밝기 마모: 코팅 벗겨짐/치핑면은 몸통 기준보다 밝게 보임
+  const V = i => Math.max(d[4 * i], d[4 * i + 1], d[4 * i + 2]), ref = [];
+  for (let y = Math.max(zEnd, Math.round(tI + .5 * DS)); y < h - 1; y += 2)
+    for (let x = Math.round(xlI + .1 * DS); x < xrI - .1 * DS; x += 2) ref.push(V(y * w + x));
+  const mu = mean(ref), sd = Math.sqrt(mean(ref.map(v => (v - mu) ** 2))), thV = mu + sens * sd;
+  for (let y = Math.ceil(tI); y < zEnd; y++)
+    for (let x = Math.round(Math.max(xl[y], xlI)) + 1; x < Math.min(xr[y], xrI); x++)
+      if (y > tipY[x] && V(y * w + x) > thV) mask[y * w + x] = 1;
+  // 헬릭스: 중앙 띠의 지배적 에지 방향 (구조 텐서)
+  let Jxx = 0, Jyy = 0, Jxy = 0;
+  for (const y of bY) for (let x = Math.round(cx - .3 * DS); x < cx + .3 * DS; x++) {
+    const i = y * w + x; Jxx += gx[i] ** 2; Jyy += gy[i] ** 2; Jxy += gx[i] * gy[i];
+  }
+  // 오버레이
+  const o = cv(w, h), ox = o.getContext('2d'), im = new ImageData(new Uint8ClampedArray(d), w, h);
+  for (let i = 0; i < w * h; i++) if (mask[i]) { im.data[4 * i] = 255; im.data[4 * i + 1] *= .3; im.data[4 * i + 2] *= .3; }
+  ox.putImageData(im, 0, 0); ox.lineWidth = 1;
+  ox.strokeStyle = '#0ff'; ox.strokeRect(xlI, tI, xrI - xlI, h - tI);
+  ox.strokeStyle = '#ff0'; ox.beginPath(); ox.moveTo(0, zEnd); ox.lineTo(w, zEnd); ox.stroke();
+  return {w, h, d, mask, xlI, xrI, tI, zEnd, dep, defL, defR, defA, J: [Jxx, Jyy, Jxy], overlay: o};
+}
+
+// 윗면 사진: 끝면 원 검출 -> 캡 텍스처 + 밝기 마모
+function detectTop(src, hint, D, sens) {
+  const P = pix(src, 600), {w, h, s, d} = P, {gx, gy} = sobel(P), mn = Math.min(w, h);
+  const skin = (x, y) => { const i = 4 * (Math.round(y) * w + Math.round(x)); return isSkin(d[i], d[i + 1], d[i + 2]); };
+  const cx0 = hint ? hint.cx * s : w / 2, cy0 = hint ? hint.cy * s : h / 2;
+  const [r0, r1] = hint ? [hint.r * s * .6, hint.r * s * 1.4] : [.06 * mn, .45 * mn], rng = hint ? hint.r * s * .5 : .3 * mn;
+  const mag = new Float32Array(w * h).map((_, i) => Math.hypot(gx[i], gy[i])), T = .5 * pct(mag.filter((_, i) => i % 7 === 0), 95);
+  const score = (cx, cy, r) => {       // 원주 위에서 강한 반경방향 에지가 있는 비율
+    let v = 0;
+    for (let j = 0; j < 64; j++) {
+      const a = j * Math.PI / 32, c = Math.cos(a), sn = Math.sin(a), x = Math.round(cx + r * c), y = Math.round(cy + r * sn);
+      if (x > 4 && y > 4 && x < w - 5 && y < h - 5 && !skin(x + 4 * c, y + 4 * sn) && !skin(x - 4 * c, y - 4 * sn)
+        && Math.abs(gx[y * w + x] * c + gy[y * w + x] * sn) > T) v++;   // 손가락 경계는 제외
+    }
+    return v / 64;
+  };
+  let b = {v: -1}; const stp = Math.max(2, Math.round(rng / 12)), rs = Math.max(2, (r1 - r0) / 15);
+  for (let cy = cy0 - rng; cy <= cy0 + rng; cy += stp) for (let cx = cx0 - rng; cx <= cx0 + rng; cx += stp)
+    for (let r = r0; r <= r1; r += rs) { const v = score(cx, cy, r); if (v > b.v) b = {v, cx, cy, r}; }
+  const c0 = {...b};
+  for (let cy = c0.cy - stp; cy <= c0.cy + stp; cy++) for (let cx = c0.cx - stp; cx <= c0.cx + stp; cx++)
+    for (let r = c0.r - rs; r <= c0.r + rs; r++) { const v = score(cx, cy, r); if (v > b.v) b = {v, cx, cy, r}; }
+  const Cs = Math.round(D * S), cap = cv(Cs, Cs), x = cap.getContext('2d', {willReadFrequently: true});
+  x.drawImage(src, (b.cx - b.r) / s, (b.cy - b.r) / s, 2 * b.r / s, 2 * b.r / s, 0, 0, Cs, Cs);
+  const im = x.getImageData(0, 0, Cs, Cs), dd = im.data, inD = [], mask = new Uint8Array(Cs * Cs);
+  for (let y = 0; y < Cs; y++) for (let xx = 0; xx < Cs; xx++) if ((xx - Cs / 2) ** 2 + (y - Cs / 2) ** 2 < (.97 * Cs / 2) ** 2) inD.push(y * Cs + xx);
+  const V = i => Math.max(dd[4 * i], dd[4 * i + 1], dd[4 * i + 2]), vals = inD.map(V), mu = mean(vals);
+  const sd = Math.sqrt(mean(vals.map(v => (v - mu) ** 2)));
+  inD.forEach((i, j) => { if (vals[j] > mu + sens * sd) mask[i] = 1; });
+  return {Cs, im, mask};
+}
+
+// ---------- ③ 3D 화 ----------
+let det = null;       // 사진별 정렬 결과 (슬라이더 변경 시 재사용)
+$('#run').onclick = () => {
+  msg(); const {k, D} = st;
+  for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
+  const q = st.shots.slice(0, k).map((s, i) => detectSide(s, st.hints[i]));
+  const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
+  const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
+  det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
+  analyze();
+};
+$('#sens').onchange = $('#zone').onchange = () => det && analyze();
+
+function analyze() {
+  const {k, D} = st, sens = +$('#sens').value, zone = +$('#zone').value;
+  const A = det.strips.map(c => analyzeStrip(c, D, sens, zone));
+  const top = st.shots[k] ? detectTop(st.shots[k], st.hints[k], D, sens) : null;
+  // 원통 언랩 텍스처: 방위각마다 정면으로 본 사진에서 샘플
+  const Wt = Math.round(Math.PI * D * S), Hs = Math.floor(Math.min(...A.map(a => a.h - a.tI))), Cs = Math.round(D * S);
+  const atlas = cv(Wt, Hs + Cs), ax = atlas.getContext('2d'), im = ax.createImageData(Wt, Hs), tm = new Uint8Array(Wt * Hs);
+  const sec = 2 * Math.PI / k, col = az => ((Math.round(az / (2 * Math.PI) * Wt) % Wt) + Wt) % Wt;
+  for (let c = 0; c < Wt; c++) {
+    const az = (c + .5) / Wt * 2 * Math.PI, i = Math.round(az / sec) % k, al = az - i * sec - (az - i * sec > Math.PI ? 2 * Math.PI : 0), a = A[i];
+    const xs = Math.round((a.xlI + a.xrI) / 2 + (a.xrI - a.xlI) / 2 * Math.sin(al));
+    for (let r = 0; r < Hs; r++) {
+      const si = (Math.round(a.tI) + r) * a.w + xs, ti = r * Wt + c;
+      for (let j = 0; j < 3; j++) im.data[4 * ti + j] = a.d[4 * si + j];
+      im.data[4 * ti + 3] = 255; if (a.mask[si]) tm[ti] = 1;
+    }
+  }
+  // 실루엣 결손(치핑)은 해당 뷰의 좌/우 방위각에 표시
+  A.forEach((a, i) => {
+    const tI = Math.round(a.tI), R = (a.xrI - a.xlI) / 2, cx = (a.xlI + a.xrI) / 2;
+    for (let y = tI; y < a.zEnd; y++) for (const [dv, az] of [[a.defL[y], i * sec - Math.PI / 2], [a.defR[y], i * sec + Math.PI / 2]])
+      if (dv > 0 && y - tI < Hs) for (let j = -Math.ceil(dv / 2); j <= Math.ceil(dv / 2); j++) tm[(y - tI) * Wt + (col(az) + j + Wt) % Wt] = 1;
+    for (let x = 0; x < a.w; x++) if (a.defA[x] > 0) {
+      const c = col(i * sec + Math.asin(Math.max(-1, Math.min(1, (x - cx) / R))));
+      for (let r = 0; r < a.defA[x] && r < Hs; r++) tm[r * Wt + c] = 1;
+    }
+  });
+  // 헬릭스 각/방향: 구조 텐서, 날 위상: 텍스처 밝기의 k차 성분 (형상의 홈을 사진 무늬에 맞춤)
+  const J = A.reduce((s, a) => s.map((v, j) => v + a.J[j]), [0, 0, 0]);
+  const phi = .5 * Math.atan2(2 * J[2], J[0] - J[1]), coh = Math.hypot(J[0] - J[1], 2 * J[2]) / (J[0] + J[1]);
+  let beta = Math.abs(phi) * 180 / Math.PI; const hand = -Math.sign(phi) || 1;
+  if (coh < .1 || beta < 10 || beta > 60) beta = 30;
+  const sl = hand * Math.tan(beta * Math.PI / 180) / (D / 2);
+  let re = 0, ii = 0;
+  for (let r = 0; r < Hs; r += 2) for (let c = 0; c < Wt; c += 2) {
+    const v = im.data[4 * (r * Wt + c)], p = k * (2 * Math.PI * c / Wt - sl * r / S); re += v * Math.cos(p); ii += v * Math.sin(p);
+  }
+  const ph0 = Math.atan2(ii, re) / k;
+  const red = (D8, i) => { D8[4 * i] = 255; D8[4 * i + 1] *= .3; D8[4 * i + 2] *= .3; };
+  let nSide = 0; for (let i = 0; i < Wt * Hs; i++) if (tm[i]) { red(im.data, i); nSide++; }
+  ax.fillStyle = '#555'; ax.fillRect(0, Hs, Wt, Cs); ax.putImageData(im, 0, 0);
+  let nCap = 0;
+  if (top) { for (let i = 0; i < Cs * Cs; i++) if (top.mask[i]) { red(top.im.data, i); nCap++; } ax.putImageData(top.im, 0, Hs); }
+  // 수치
+  const dep = A.flatMap(a => a.dep).map(v => v / S), dMean = dep.length ? mean(dep) : 0;
+  const aS = nSide / S / S, aC = nCap / S / S, Lmm = Hs / S;
+  R = {
+    공구경_mm: D, 날수: k, 헬릭스각_추정_deg: +beta.toFixed(1), 분석길이_mm: +Lmm.toFixed(2),
+    정렬보정: det.q.map(v => ({회전_deg: +(v.t * 180 / Math.PI).toFixed(1), px_per_mm: +(v.sepP / D / v.s).toFixed(1)})),
+    마모면적_측면_mm2: +aS.toFixed(3), 마모면적_윗면_mm2: +aC.toFixed(3), 마모면적_합_mm2: +(aS + aC).toFixed(3),
+    평균결손깊이_mm: +dMean.toFixed(3), 최대결손깊이_mm: +(dep.length ? Math.max(...dep) : 0).toFixed(3),
+    마모체적_추정_mm3: +((aS + aC) * dMean).toFixed(4)
+  };
+  const rows = [['공구경', D + ' mm'], ['날 수', k], ['헬릭스각(추정)', R.헬릭스각_추정_deg + '°'], ['분석 길이', R.분석길이_mm + ' mm'],
+    ['정렬 보정(회전)', R.정렬보정.map(v => v.회전_deg + '°').join(', ')],
+    ['마모 면적 측면/윗면', `${R.마모면적_측면_mm2} / ${R.마모면적_윗면_mm2} mm²`], ['마모 면적 합', R.마모면적_합_mm2 + ' mm²'],
+    ['결손 깊이 평균/최대', `${R.평균결손깊이_mm} / ${R.최대결손깊이_mm} mm`], ['마모 체적(추정)', R.마모체적_추정_mm3 + ' mm³']];
+  $('#res').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+  $('#strips').replaceChildren(...A.map(a => a.overlay));
+  R.mesh = buildMesh(D, k, sl, ph0, Lmm, Wt, Hs, Cs);
+  R.atlas = atlas;
+  view.set(R.mesh, atlas, Lmm);
+}
+
+// 파라메트릭 엔드밀 메쉬 (표시 좌표: y=공구축, 팁이 위)
+function buildMesh(D, k, sl, ph0, L, Wt, Hs, Cs) {
+  const Rr = D / 2, core = CORE[k], M = 120, NZ = Math.max(20, Math.round(L * 4));
+  const rad = (a, z) => Rr * (core + (1 - core) * Math.pow((1 + Math.cos(k * (a - ph0 - sl * z))) / 2, .35));
+  const AW = Wt, AH = Hs + Cs, pos = [], uv = [], idx = [];
+  for (let j = 0; j <= NZ; j++) for (let m = 0; m <= M; m++) {
+    const z = L * j / NZ, a = 2 * Math.PI * m / M, r = rad(a, z);
+    pos.push(r * Math.sin(a), L / 2 - z, r * Math.cos(a)); uv.push(m / M, z * S / AH);
+  }
+  for (let j = 0; j < NZ; j++) for (let m = 0; m < M; m++) {
+    const i = j * (M + 1) + m; idx.push(i, i + M + 2, i + 1, i, i + M + 1, i + M + 2);
+  }
+  const cap = (z, y, flip, capUV) => {
+    const c = pos.length / 3; pos.push(0, y, 0); uv.push(capUV ? .5 * Cs / AW : .5 / AW, capUV ? (Hs + Cs / 2) / AH : (Hs - 1) / AH);
+    for (let m = 0; m <= M; m++) {
+      const a = 2 * Math.PI * m / M, r = rad(a, z), x = r * Math.sin(a), zz = r * Math.cos(a);
+      pos.push(x, y, zz); uv.push(capUV ? (Cs / 2 + x / D * Cs) / AW : .5 / AW, capUV ? (Hs + Cs / 2 + zz / D * Cs) / AH : (Hs - 1) / AH);
+      if (m < M) flip ? idx.push(c, c + m + 2, c + m + 1) : idx.push(c, c + m + 1, c + m + 2);
+    }
+  };
+  cap(0, L / 2, false, true); cap(L, -L / 2, true, false);
+  const nrm = new Float32Array(pos.length);
+  for (let t = 0; t < idx.length; t += 3) {
+    const [a, b, c] = [idx[t], idx[t + 1], idx[t + 2]].map(i => pos.slice(3 * i, 3 * i + 3));
+    const u = b.map((v, i) => v - a[i]), v = c.map((v, i) => v - a[i]);
+    const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    for (const i of [idx[t], idx[t + 1], idx[t + 2]]) for (let j = 0; j < 3; j++) nrm[3 * i + j] += n[j];
+  }
+  return {pos: new Float32Array(pos), nrm, uv: new Float32Array(uv), idx: new Uint16Array(idx), L};
+}
+
+// ---------- WebGL 뷰어 ----------
+const view = (() => {
+  const c = $('#gl'), gl = c.getContext('webgl', {preserveDrawingBuffer: true});
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+  const pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, `attribute vec3 p,n;attribute vec2 t;uniform mat4 M,Rm;varying vec2 vt;varying float l;
+    void main(){gl_Position=M*vec4(p,1.);l=.35+.65*abs(normalize((Rm*vec4(n,0.)).xyz).z);vt=t;}`));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, `precision mediump float;uniform sampler2D T;varying vec2 vt;varying float l;
+    void main(){gl_FragColor=vec4(texture2D(T,vt).rgb*l,1.);}`));
+  gl.linkProgram(pr); gl.useProgram(pr);
+  const buf = (loc, data, n) => { gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    const a = gl.getAttribLocation(pr, loc); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, n, gl.FLOAT, false, 0, 0); };
+  let yaw = 0, pitch = .35, zoom = 1, L = 1, n = 0;
+  function draw() {
+    if (!n) return;
+    c.width = c.clientWidth * devicePixelRatio; c.height = c.clientHeight * devicePixelRatio;
+    gl.viewport(0, 0, c.width, c.height); gl.clearColor(.13, .14, .17, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), asp = c.width / c.height, sc = 1.7 * zoom / L;
+    const Rw = [[cy, 0, sy], [sp * sy, cp, -sp * cy], [-cp * sy, sp, cp * cy]], f = [sc / asp, sc, -sc / 2];
+    const M = new Float32Array(16), Rm = new Float32Array(16);
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) { M[q * 4 + r] = Rw[r][q] * f[r]; Rm[q * 4 + r] = Rw[r][q]; }
+    M[15] = Rm[15] = 1;
+    gl.uniformMatrix4fv(gl.getUniformLocation(pr, 'M'), false, M); gl.uniformMatrix4fv(gl.getUniformLocation(pr, 'Rm'), false, Rm);
+    gl.drawElements(gl.TRIANGLES, n, gl.UNSIGNED_SHORT, 0);
+  }
+  const P = new Map(), dist = () => { const [a, b] = [...P.values()]; return Math.hypot(a[0] - b[0], a[1] - b[1]); };
+  c.onpointerdown = e => { c.setPointerCapture(e.pointerId); P.set(e.pointerId, [e.clientX, e.clientY]); };
+  c.onpointermove = e => {
+    if (!P.has(e.pointerId)) return;
+    const p = P.get(e.pointerId), d0 = P.size === 2 ? dist() : 0;
+    if (P.size === 1) { yaw += (e.clientX - p[0]) * .01; pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - p[1]) * .01)); }
+    P.set(e.pointerId, [e.clientX, e.clientY]);
+    if (d0) zoom *= dist() / d0;
+    draw();
+  };
+  c.onpointerup = c.onpointercancel = e => P.delete(e.pointerId);
+  c.onwheel = e => { e.preventDefault(); zoom *= Math.exp(-e.deltaY * .001); draw(); };
+  addEventListener('resize', draw);
+  return {
+    set(m, tex, len) {
+      buf('p', m.pos, 3); buf('n', m.nrm, 3); buf('t', m.uv, 2);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, m.idx, gl.STATIC_DRAW);
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture()); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, tex);
+      for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
+      n = m.idx.length; L = len; draw();
+    }
+  };
+})();
+
+// ---------- 저장 ----------
+function save(name, blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
+$('#dlStl').onclick = () => {
+  if (!R) return;
+  const {pos, idx, L} = R.mesh, n = idx.length / 3, b = new DataView(new ArrayBuffer(84 + 50 * n));
+  b.setUint32(80, n, true);
+  for (let t = 0; t < n; t++) for (let v = 0; v < 3; v++) {       // mm, z=공구축(팁 z=0)
+    const i = idx[3 * t + v], o = 84 + 50 * t + 12 + 12 * v;
+    b.setFloat32(o, pos[3 * i], true); b.setFloat32(o + 4, pos[3 * i + 2], true); b.setFloat32(o + 8, L / 2 - pos[3 * i + 1], true);
+  }
+  save('tool.stl', new Blob([b.buffer]));
+};
+$('#dlTex').onclick = () => R && R.atlas.toBlob(b => save('tool_texture.png', b));
+$('#dlJson').onclick = () => { if (R) { const {mesh, atlas, ...o} = R; save('result.json', new Blob([JSON.stringify(o, null, 2)])); } };
+
+renderSlots();
+</script>
+</body>
+</html>
