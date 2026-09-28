@@ -73,5 +73,28 @@ const mem = {}, store = {getItem: k => mem[k] || null, setItem: (k, v) => { mem[
 M.historyAdd(store, 'T-1', {t: 1, vbMax: .1}); M.historyAdd(store, 'T-1', {t: 2, vbMax: .15}); M.historyAdd(store, 'T-2', {t: 3, vbMax: .3});
 check('history per tool id', M.history(store, 'T-1').length === 2 && M.history(store, 'T-2').length === 1 && M.trend(M.history(store, 'T-1')).slope === .05);
 
+// 8. operator-assisted fallback on a degraded photo (low light x0.2: auto band empty): edge line from geometry, then
+//    the operator drags the wear boundary to the true front -> VBmax, mode 'operator-assisted', U from the manual sigma
+{
+  const synth = require('../wear/synth.js'), Dg = require('../wear/degrade.js'), DIA = 10, vbt = z => .3 * (1 - .35 * z / 3), hb = 30 * Math.PI / 180;
+  const img = Dg.lowLight(synth.sideReal({w: 420, h: 560, D: DIA, ppm: 20, tiltDeg: 2, axisDx: 0, tipV: -170, helixDeg: 30, flutes: 4, vb: vbt, zoneMm: 3, seed: 11, bg: 'dark'}), .2, 7);
+  const {result: R8, debug: d8} = W.measure({sides: [img], flutes: 1, diameterMm: DIA, helixDeg: 30}), st = d8.strips[0] && d8.strips[0].strip;
+  check('degraded: silhouette found, auto band empty', !!st && R8.perFlute[0].vbMaxMm === 0, JSON.stringify(R8.perFlute[0].vbMaxMm));
+  const F8 = M.assistFlute(st, DIA, {helixDeg: 30, zoneMm: 3}), Rmm = st.R / st.ppm, s0 = -3 * Math.tan(hb) / 2;
+  const truthX = r => st.cx + st.R * Math.sin((s0 + (r + .5) / st.ppm * Math.tan(hb)) / Rmm);
+  const mid = F8.n >> 1, gx = M.edgeX(F8, mid);
+  check('assisted: edge line pre-placed within 2 px of the true edge', F8.assist.guess && Math.abs(gx - truthX(mid)) <= 2, `got ${gx.toFixed(1)} want ${truthX(mid).toFixed(1)} side ${F8.edge}`);
+  let e8 = M.evaluate(F8, {helixDeg: 30});
+  check('assisted, unconfirmed: mode awaiting-operator, VB 0', e8.mode === 'awaiting-operator' && e8.vbMaxMm === 0, e8.mode);
+  const front = F8.edge === 'a' ? 'b' : 'a', sg = front === 'b' ? 1 : -1;
+  for (let i = 0; i < F8.nodeRows.length; i++) {
+    const r = F8.nodeRows[i], z = (r + .5) / st.ppm, sE = s0 + z * Math.tan(hb), xF = st.cx + st.R * Math.sin((sE + sg * vbt(z) / Math.cos(hb)) / Rmm);
+    M.setNode(F8, front, i, xF - M.edgeX(F8, Math.round(r)));
+  }
+  e8 = M.evaluate(F8, {helixDeg: 30});
+  near('operator-assisted VBmax = truth 0.3', e8.vbMaxMm, .3, .03);
+  check('operator-assisted: mode + U (manual sigma)', e8.mode === 'operator-assisted' && e8.q.vbMax.U > 0 && e8.sigmaPx === M.DEFAULTS.sigmaManualPx && e8.areaMm2 > 0 && e8.volumeMm3 > 0, JSON.stringify({mode: e8.mode, U: e8.q.vbMax.U, area: e8.areaMm2}));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
