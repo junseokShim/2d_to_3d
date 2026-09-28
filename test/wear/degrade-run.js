@@ -52,7 +52,7 @@ async function runCase(C, mode, seg) {
   const shots = [0, 1].map(i => C.make(i)), sides = shots.map(s => s.img);
   const args = {sides, flutes: 2, diameterMm: DIA, helixDeg: 30};
   let inp = args, q = null;
-  if (mode === 'enh') { const P = E.prepareShots(sides, {diameterMm: DIA}); inp = Object.assign({}, args, {sides: P.images}); q = P.quality; }
+  if (mode === 'enh') { const P = E.prepareShots(sides, {diameterMm: DIA}); inp = Object.assign({}, args, {enhanced: P.images}); q = P.quality; }
   const out = seg ? await W.measureAsync(inp, seg, 'ai') : W.measure(inp), {result: R, debug} = out;
   const st = shots.map((s, i) => stages(R.perFlute[i] && Object.assign({}, R.perFlute[i], {align: debug.sides[i] && debug.sides[i].align}), s.truth, debug.sides[i]));
   return {st, q, fails: st.map(s => ['silhouette', 'tip', 'edge', 'band'].filter(k => !s[k]))};

@@ -237,7 +237,7 @@
     const sides = shots.slice(0, k).filter(Boolean).map(W.toImage), top = shots[k] ? W.toImage(shots[k]) : null;
     if (sides.length < k) throw new Error(`wear: need ${k} side photos, got ${sides.length}`);
     const t0 = Date.now(), rt = await load(), seg = createSegmenter(ortRunner(rt), W);
-    const {result, debug} = await W.measureAsync(Object.assign({}, opts, {sides, top}), seg, 'ai');
+    const {result, debug} = await W.measureAsync(Object.assign({}, opts, {sides, top, enhanced: W.enhanceSides && W.enhanceSides(sides, opts)}), seg, 'ai');
     debug.aiMs = Date.now() - t0;
     T.wearResult = result; T.wearDebug = debug;
     window.dispatchEvent(new CustomEvent('tool3d:wear', {detail: result}));

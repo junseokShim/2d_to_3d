@@ -280,7 +280,9 @@
 
   // align + rectify one side photo. Tries the photo as given (tip up) first; if no tool is found, or the "tip" is at the
   // image border (the tool runs out of the frame there, so that end is the shank), tries 90/270/180 degree rotations.
-  function prepareSide(img, opts) {
+  // enh (optional): the same photo after Tool3D.enhance (same size). Geometry (silhouette, scale, tip) is always taken
+  // from the original photo; only the strip pixels used for segmentation come from the enhanced one (strip.raw = original).
+  function prepareSide(img, opts, enh) {
     const o = Object.assign({}, DEFAULTS, opts), D = o.diameterMm;
     if (!(D > 0)) throw new Error('diameterMm required');
     const tryRot = deg => {
@@ -295,13 +297,14 @@
     if (!best) return null;
     const {G, al} = best, zone = o.zoneMm || .8 * D;
     // o.stripMm: rectify a longer strip (more unworn body for a reference); rows past the photo end are trimmed
-    let strip = rectify(G, al, Math.max(zone + .6 * D, o.stripMm || 1.2 * D));
-    if (o.stripMm) { const {w, g, cx, top} = strip, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
+    const lenMm = Math.max(zone + .6 * D, o.stripMm || 1.2 * D), raw = rectify(G, al, lenMm);
+    let strip = enh && enh.width === img.width && enh.height === img.height ? Object.assign(rectify(gray(rotate(enh, best.deg)), al, lenMm), {raw}) : raw;
+    if (o.stripMm) { const {w, g, cx, top} = raw, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
     const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
     return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
   }
 
-  const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)});
+  const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)}, S.raw ? {raw: trimStrip(S.raw, h)} : {});
 
   function finishSide(P, seg, helixDeg) {
     const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
@@ -320,13 +323,13 @@
   }
 
   // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
-  function prepareAll({sides, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm};
+  function prepareAll({sides, enhanced, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}, E = enhanced || [];
     Object.keys(o).forEach(key => o[key] == null && delete o[key]);
-    let P = sides.slice(0, k).map(img => prepareSide(img, o));
+    let P = sides.slice(0, k).map((img, i) => prepareSide(img, o, E[i]));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
     const pp = P.filter(Boolean).map(p => p.al.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
-    if (pp.length >= 2) P = P.map((p, i) => !p || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed})) : p);
+    if (pp.length >= 2) P = P.map((p, i) => !p || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed}), E[i]) : p);
     return {k, o, P};
   }
 
