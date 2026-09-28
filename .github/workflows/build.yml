@@ -1,0 +1,32 @@
+name: build
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17, cache: gradle }
+      - uses: android-actions/setup-android@v3
+      - run: npm ci --ignore-scripts   # Electron 바이너리는 APK에 필요 없음
+      - run: chmod +x android/gradlew
+      - run: npm run apk
+      - uses: actions/upload-artifact@v4
+        with: { name: Tool3D-apk, path: dist/Tool3D-debug.apk, if-no-files-found: error }
+
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run exe
+      - uses: actions/upload-artifact@v4
+        with: { name: Tool3D-exe, path: dist/*.exe, if-no-files-found: error }

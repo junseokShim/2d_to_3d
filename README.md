@@ -12,10 +12,11 @@ HTML/JS 파일 하나(`www/index.html`, 외부 라이브러리 없음)로 만들
    - 저장: STL(mm, z축 = 공구축, 팁 z = 0), 텍스처 PNG, 결과 JSON
 
 ## 빌드
-- **자동(권장)**: `ci/build.yml`을 `.github/workflows/build.yml`로 옮긴 뒤 `main` 브랜치에 push하면 GitHub Actions가 APK와 EXE를 빌드합니다. 결과물은 Actions 실행 화면의 **Artifacts**에서 `Tool3D-apk`, `Tool3D-exe`로 받습니다.
+- **자동(권장)**: `.github/workflows/build.yml`이 `main` push, PR, 수동 실행(workflow_dispatch) 때 APK와 EXE를 빌드합니다. 결과물은 Actions 실행 화면의 **Artifacts**에서 `Tool3D-apk`(디버그 APK), `Tool3D-exe`로 받습니다.
+- **로컬 APK**: JDK 17과 Android SDK(Android Studio)를 설치하고 `JAVA_HOME`, `ANDROID_HOME`을 지정합니다. `npm install` → `npm run apk`를 실행하면 `dist/Tool3D-debug.apk`가 생깁니다. 도구가 없으면 무엇이 빠졌는지 알려 주고 멈춥니다.
 - **로컬 EXE**: Node 20을 설치한 뒤 `npm install` → `npm run exe`를 실행합니다. `dist/`에 포터블 exe가 생깁니다.
 - **로컬 실행**: `npm start`로 Electron을 실행하거나, `www/index.html`을 Chrome에서 엽니다.
-- **로컬 APK**: Android Studio(JDK 17)가 필요합니다. `npx cap add android`를 실행하고, AndroidManifest에 CAMERA 권한을 추가한 뒤 `npm run apk`를 실행합니다.
+- `android/`는 저장소에 포함되어 있습니다(CAMERA 권한 포함). `www/`를 고친 뒤에는 `npm run apk`가 자동으로 `cap sync`를 합니다.
 
 ## 촬영 팁 (정확도에 가장 큰 영향)
 - 공구와 대비되는 **단색 배경**을 씁니다. 어두운 공구라면 밝은 무광 종이가 좋습니다.
@@ -27,5 +28,5 @@ HTML/JS 파일 하나(`www/index.html`, 외부 라이브러리 없음)로 만들
 - 심압, 칩 포켓 형상은 날 수별 기본값을 씁니다. 사진으로는 측정할 수 없습니다.
 - 헬릭스각과 날 위상은 사진에서 추정합니다.
 - 마모 체적은 추정치입니다.
-- Android 앱에서는 파일 저장 버튼이 동작하지 않습니다. 결과는 화면으로 확인하고, 파일 저장은 PC(EXE)에서 합니다.
+- Android 앱에서 저장 버튼을 누르면 공유 시트가 열립니다. 파일, Drive, 메신저 등으로 보내 저장합니다(`www/native/android-save.js`).
 - 실제 공구 원본 사진으로 임계값 튜닝이 더 필요합니다.
