@@ -78,9 +78,63 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   } else res.checks.exportZip = 'missing: ' + fs.readdirSync(dl).join(',');
   await ev(`const e=document.querySelector('#sens');e.value='3';e.dispatchEvent(new Event('change'));1`); await sleep(2000);
   res.checks.afterSlider = await ev(`Tool3D.render.params.helixDeg+' rows='+document.querySelectorAll('#res tr').length`);
+  // ---------- ④ metrology panel (js/metro) ----------
+  const mouse = async (type, [x, y], buttons = 1) => s('Input.dispatchMouseEvent', {type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : buttons, clickCount: 1});
+  const clickAt = async p => { await mouse('mouseMoved', p, 0); await mouse('mousePressed', p); await mouse('mouseReleased', p); await sleep(150); };
+  await ev(`document.querySelector('#metro').scrollIntoView({block:'start'});Tool3D.metro.select(0);1`); await sleep(400);
+  const m = res.checks.metro = {};
+  m.rows = await ev(`document.querySelectorAll('#mtTable tr[data-row]').length`);
+  m.badge = await ev(`document.querySelector('#mtOverall').textContent`);
+  m.matchesWear = await ev(`(()=>{const s=Tool3D.metro.summary(),w=Tool3D.wearResult;return s.flutes.every((e,i)=>!e||Math.abs(e.vbMaxMm-w.perFlute[i].vbMaxMm)<1e-4&&Math.abs(e.vbAvgMm-w.perFlute[i].vbAvgMm)<1e-4)})()`);
+  m.hasU = await ev(`Tool3D.metro.summary().flutes.every(e=>!e||e.q.vbMax.U>0&&e.q.vbb.U>0)`);
+  // 2-point distance: two image points 20 px apart on the rectified strip -> 20 / (px/mm); kept inside the fitted view (strip can be short and zoomed ~9x)
+  await ev(`Tool3D.metro.setTool('dist');1`);
+  const [p1, p2, ppm] = await ev(`(()=>{const F=Tool3D.metro.state.F[0],t=F.strip.top+4,x=F.strip.cx-6;return [Tool3D.metro.imgToClient(x,t),Tool3D.metro.imgToClient(x+12,t+16),F.strip.ppm]})()`);
+  await clickAt(p1); m.distAfter1 = await ev(`JSON.stringify({n:Tool3D.metro.state.pts.length,tool:Tool3D.metro.state.tool,p1:${JSON.stringify(p1)},r:(()=>{const r=document.querySelector('#mtCanvas').getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()})`); await clickAt(p2);
+  m.dist = await ev(`JSON.stringify(Tool3D.metro.state.manual.map(x=>[x.kind,x.mm,x.U]))`);
+  const dm = JSON.parse(m.dist)[0]; m.distOk = !!dm && dm[0] === 'distance' && Math.abs(dm[1] - 20 / ppm) < .02 * 20 / ppm && dm[2] > 0;
+  // VB caliper: point 10 px from the cutting-edge line toward the wear front
+  await ev(`Tool3D.metro.setTool('vb');1`);
+  const cp = await ev(`(()=>{const F=Tool3D.metro.state.F[0],r=F.n>>1,[x,y]=Tool3D.metro.edgePoint(r);return Tool3D.metro.imgToClient(x+(F.edge==='a'?10:-10),y)})()`);
+  await clickAt(cp);
+  m.caliper = await ev(`JSON.stringify(Tool3D.metro.state.manual.filter(x=>x.kind==='caliper').map(x=>[x.mm,x.U]))`);
+  const cm = JSON.parse(m.caliper)[0]; m.caliperOk = !!cm && cm[0] > .5 * 10 / ppm && cm[0] < 1.2 * 10 / ppm && cm[1] > 0;
+  m.readout = await ev(`document.querySelector('#mtReadout').textContent`);
+  const {data: mshot} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const r=document.querySelector('#metro').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`), captureBeyondViewport: true});
+  fs.writeFileSync(path.join(OUT, 'metro-measure.png'), Buffer.from(mshot, 'base64'));
+  // drag-to-correct: move a wear-front node 8 px outward -> VB of flute 1 grows, 3D contract updated
+  await ev(`Tool3D.metro.setTool('edit');1`);
+  const before = await ev(`Tool3D.metro.summary().flutes[0].areaMm2`);
+  const [n0, dx] = await ev(`(()=>{const S=Tool3D.metro.state,F=S.F[0],side=F.edge==='a'?'b':'a',i=F.nodeRows.length>>1;return [Tool3D.metro.nodeClient(side,i),(side==='b'?8:-8)*S.view.s]})()`);
+  await mouse('mouseMoved', n0, 0); await mouse('mousePressed', n0);
+  for (let j = 1; j <= 4; j++) await mouse('mouseMoved', [n0[0] + dx * j / 4, n0[1]]);
+  await mouse('mouseReleased', [n0[0] + dx, n0[1]]); await sleep(300);
+  m.edit = await ev(`JSON.stringify({area:Tool3D.metro.summary().flutes[0].areaMm2,wrArea:Tool3D.wearResult.perFlute[0].areaMm2,vb:Tool3D.metro.summary().flutes[0].vbMaxMm,edited:Tool3D.metro.summary().flutes[0].edited,contract:Tool3D.wearResult.metro,wr:Tool3D.wearResult.perFlute[0].vbMaxMm})`);
+  const me = JSON.parse(m.edit); m.editOk = me.edited === true && me.area > before && Math.abs(me.wr - me.vb) < 1e-4 && Math.abs(me.wrArea - me.area) < 1e-4 && me.contract && me.contract.edited === true; m.areaBefore = before;
+  // report + CSV + HTML + history
+  await ev(`document.querySelector('#mtTool').value='E2E-01';document.querySelector('#mtTool').dispatchEvent(new Event('input'));document.querySelector('#mtOp').value='e2e';document.querySelector('#mtOp').dispatchEvent(new Event('input'));1`);
+  const waitFile = async re => { for (let t = 0; t < 30; t++) { const f = fs.readdirSync(dl).find(n => re.test(n) && !/crdownload$/.test(n)); if (f) return path.join(dl, f); await sleep(300); } return null; };
+  await ev(`document.querySelector('#mtPdf').click();1`); const pf = await waitFile(/^tool3d-report-E2E-01-.*\.pdf$/);
+  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count 1/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t)}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
+  await ev(`document.querySelector('#mtCsv').click();1`); const cf = await waitFile(/^tool3d-E2E-01-.*\.csv$/);
+  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length}))(fs.readFileSync(cf, 'utf8')) : 'missing';
+  await ev(`document.querySelector('#mtHtml').click();1`); const hf = await waitFile(/^tool3d-report-E2E-01-.*\.html$/);
+  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length}))(fs.readFileSync(hf, 'utf8')) : 'missing';
+  if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
+  await ev(`document.querySelector('#mtSave').click();document.querySelector('#mtSave').click();1`);
+  m.history = await ev(`JSON.parse(localStorage.getItem('tool3d.metro.history')||'{}')['E2E-01']?.length||0`);
+  const shotEl = async (sel, name) => { const clip = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`); const {data} = await s('Page.captureScreenshot', {format: 'png', clip, captureBeyondViewport: true}); fs.writeFileSync(path.join(OUT, name), Buffer.from(data, 'base64')); };
+  await shotEl('#metro', 'metro-edit.png');
+  await s('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 2, mobile: true}); await sleep(800);
+  await ev(`Tool3D.metro.setTool('vb');Tool3D.metro.fit();1`); await sleep(300);
+  m.mobileNoHScroll = await ev(`document.documentElement.scrollWidth<=innerWidth+1`);
+  await shotEl('#metro', 'metro-mobile.png');
+  await s('Emulation.setDeviceMetricsOverride', {width: 1280, height: 1600, deviceScaleFactor: 1, mobile: false}); await sleep(500);
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
-    wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true};
+    wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
+    metroPanel: m.rows === 4 && m.matchesWear === true && m.hasU === true && /VBmax/.test(m.badge), metroDistance: m.distOk, metroCaliper: m.caliperOk, metroEdit: m.editOk,
+    metroReport: !!(m.pdf && m.pdf.ok && m.csv && m.csv.ok && m.html && m.html.ok), metroHistory: m.history === 2};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

@@ -1,0 +1,55 @@
+/* Tool3D metrology panel (www/js/metro). Clean industrial look; stacks on phones. */
+#metro{grid-column:1/-1;--mt-ink:#1d2330;--mt-mut:#667788;--mt-line:#d5d9e0;--mt-dark:#1f2a36;--mt-acc:#1f5fbf;padding:0;overflow:hidden}
+#metro h2{margin:0;font-size:17px}#metro h2 small{font-weight:400;color:#c8d2dc;font-size:12px;margin-left:6px}
+.mt-head{background:var(--mt-dark);color:#fff;padding:12px 16px}
+.mt-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.mt-badge{padding:6px 12px;border-radius:4px;font-weight:700;font-size:13px;background:#889;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.mt-fields{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px}
+.mt-f{display:flex;flex-direction:column;font-size:11px;color:#c8d2dc;gap:2px}
+.mt-f input{width:120px;font:inherit;font-size:13px;padding:5px 7px;border:1px solid #3b4a5a;border-radius:4px;background:#2a3846;color:#fff}
+.mt-f input[type=number]{width:92px}
+.mt-empty{padding:16px}
+.mt-grid{display:grid;grid-template-columns:1fr;gap:14px;padding:14px}
+.mt-grid[hidden]{display:none}
+@media(min-width:1000px){.mt-grid{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}}
+.mt-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.mt-seg{display:inline-flex;border:1px solid var(--mt-line);border-radius:6px;overflow:hidden}
+.mt-seg button{border:0;border-radius:0;border-right:1px solid var(--mt-line);padding:6px 10px;font-size:13px;background:#fff}
+.mt-seg button:last-child{border-right:0}
+.mt-seg button.on{background:var(--mt-dark);color:#fff}
+.mt-seg button[data-fl]{box-shadow:inset 0 -3px 0 var(--c)}
+.mt-seg button:disabled{opacity:.4}
+.mt-ghost{background:transparent;border:1px solid var(--mt-line);font-size:12px;padding:4px 8px}
+.mt-cwrap{position:relative;border-radius:6px;overflow:hidden;background:#15181d}
+#mtCanvas{display:block;width:100%;height:min(62vh,560px);min-height:340px;touch-action:none;cursor:grab}
+#mtLoupe{position:absolute;width:160px;height:160px;border:2px solid #fff;border-radius:50%;box-shadow:0 2px 10px rgba(0,0,0,.6);pointer-events:none}
+#mtLoupe[hidden]{display:none}
+.mt-legend{position:absolute;left:8px;bottom:6px;font-size:11px;color:#dde;display:flex;gap:6px;align-items:center;background:rgba(0,0,0,.45);padding:3px 6px;border-radius:4px;pointer-events:none}
+.mt-legend i{display:inline-block;width:14px;height:3px;margin-left:4px}
+.mt-readout{font-size:12.5px;margin:6px 0;min-height:1.4em;font-variant-numeric:tabular-nums;color:var(--mt-ink)}
+.mt-man{margin-top:4px;font-size:12.5px}.mt-man td{padding:3px 4px}
+.mt-lights{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.mt-light{display:grid;grid-template-columns:auto auto;gap:0 6px;align-items:center;border:1px solid var(--mt-line);border-radius:6px;padding:5px 9px;font-size:12px;min-width:92px}
+.mt-light i{grid-row:span 2;width:16px;height:16px;border-radius:50%;box-shadow:inset 0 -2px 3px rgba(0,0,0,.25)}
+.mt-light span{font-variant-numeric:tabular-nums}.mt-light em{grid-column:2;font-style:normal;color:var(--mt-mut);font-size:10.5px}
+.mt-light.green i{background:#1e9e4a}.mt-light.amber i{background:#e0a100}.mt-light.red i{background:#d0342c}
+.mt-light.red{border-color:#d0342c}.mt-light.amber{border-color:#e0a100}
+.mt-tab{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:0}
+.mt-tab th{background:#eef1f5;font-weight:600;text-align:right;padding:5px 4px;border-bottom:1px solid var(--mt-line)}
+.mt-tab th:first-child,.mt-tab td:first-child{text-align:left}
+.mt-tab td{text-align:right;font-variant-numeric:tabular-nums;padding:4px}
+.mt-tab td small{color:var(--mt-mut)}
+.mt-tab tr[data-row]{cursor:pointer}.mt-tab tr.sel{background:#eaf2ff}
+.mt-tab .mt-foot td{text-align:left;font-size:11px;color:var(--mt-mut);border-bottom:0}
+.mt-dot{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:middle}
+.mt-ed{color:var(--mt-acc)}
+.mt-card{border:1px solid var(--mt-line);border-radius:6px;padding:8px 10px;margin-top:10px}
+.mt-h{font-weight:600;font-size:13px;margin-bottom:6px}.mt-h small{font-weight:400;color:var(--mt-mut)}
+#mtChart{width:100%;height:200px;display:block}
+#mtSpark{width:100%;height:60px;display:block}
+.mt-kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12.5px}.mt-kv span{color:var(--mt-mut)}.mt-kv b{font-weight:600;font-variant-numeric:tabular-nums}
+.mt-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px;font-size:12.5px}
+.mt-row input{width:70px;font:inherit;padding:3px 5px;border:1px solid var(--mt-line);border-radius:4px}
+.mt-bud td,.mt-bud th{font-size:12px}
+.mt-exp{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+@media(max-width:600px){.mt-f input,.mt-f input[type=number]{width:calc(50vw - 40px)}.mt-tab{font-size:11.5px}.mt-tab td small{display:block}#mtCanvas{height:56vh}}
