@@ -162,6 +162,61 @@
     return coh < .1 || beta < 10 || beta > 60 ? null : beta;
   }
 
+  // ---------- helix angle (v0.6) ----------
+  // Two estimates on a long strip (tip region + 0.3 D down to where the tool leaves the frame or a finger covers it):
+  //  (a) orientation on the unwrapped cylinder: s = R asin(u/R), so dg/ds = dg/du * cos(a). On the unwrapped surface every
+  //      flute edge is a straight line at the helix angle from the axis wherever it is (no foreshortening bias, so the
+  //      whole visible width |u| < 0.85 R is used). Gradients are clipped at their 90th percentile so glints do not vote.
+  //  (b) flute crossings at the silhouette edges: at a fixed azimuth the k flutes pass every p = pi D / (k tan(helix))
+  //      along the axis; p = first autocorrelation peak of the grey profile just inside each edge (needs ~1.5 p visible).
+  // Result clamped to 15..55 deg; confidence 'high' when (a) is coherent and (b) agrees within 6 deg, 'medium' when only
+  // (a) is coherent, else 'low' (then the UI asks for the catalogue value).
+  const HELIX_RANGE = [15, 55];
+  function helixEstimate(G, al, D, k) {
+    const ppm = al.pxPerMm, S = rectify(G, al, 5 * D), {w, g, cx, R, rgb} = S, Rmm = R / ppm;
+    const y0 = S.top + Math.round(.3 * D * ppm); let h = S.h;
+    for (let y = y0; y < S.h; y++) {   // stop at the photo end or where a finger (skin hue) covers a fifth of the row
+      let nan = 0, skin = 0; for (let x = Math.round(cx - .8 * R); x <= cx + .8 * R; x++) { const i = y * w + x; if (Number.isNaN(g[i])) nan++; else if (rgb && rgb[3 * i] > rgb[3 * i + 1] + 18 && rgb[3 * i] > rgb[3 * i + 2] + 25) skin++; }
+      if (nan > .2 * 1.6 * R || skin > .2 * 1.6 * R) { h = y; break; }
+    }
+    const lenMm = (h - y0) / ppm; if (lenMm < .5 * D) return null;
+    // (a) structure tensor on the unwrapped surface
+    const gs = [], gz = [];
+    for (let y = y0 + 1; y < h - 1; y++) for (let x = Math.ceil(cx - .85 * R); x <= cx + .85 * R; x++) {
+      const i = y * w + x, a = (g[i + 1] - g[i - 1]) / 2, b = (g[i + w] - g[i - w]) / 2; if (Number.isNaN(a) || Number.isNaN(b)) continue;
+      const ca = Math.sqrt(Math.max(0, 1 - ((x + .5 - cx) / R) ** 2)); gs.push(a * ca); gz.push(b);
+    }
+    const mags = gs.map((v, i) => Math.hypot(v, gz[i])), clip = quant(mags, .9) || 1;
+    let Jss = 0, Jzz = 0, Jsz = 0;
+    for (let i = 0; i < gs.length; i++) { const f = mags[i] > clip ? clip / mags[i] : 1, a = gs[i] * f, b = gz[i] * f; Jss += a * a; Jzz += b * b; Jsz += a * b; }
+    const phi = .5 * Math.atan2(2 * Jsz, Jss - Jzz), coherence = Math.hypot(Jss - Jzz, 2 * Jsz) / ((Jss + Jzz) || 1);
+    const tensorDeg = Math.abs(phi) / DEG, hand = phi > 0 ? 'L' : 'R';
+    // (b) crossing period at both silhouette edges
+    let periodDeg = null, periodMm = null;
+    if (k > 0) {
+      const lag0 = Math.round(Math.PI * D / (k * Math.tan(HELIX_RANGE[1] * DEG)) * ppm), lag1 = Math.round(Math.PI * D / (k * Math.tan(HELIX_RANGE[0] * DEG)) * ppm);
+      const ac = new Float64Array(lag1 + 2); let used = 0;
+      for (const sd of [-1, 1]) {
+        const pr = []; for (let y = y0; y < h; y++) { let m = 0, n = 0; for (let x = Math.round(cx + sd * .88 * R) - 1; x <= Math.round(cx + sd * .88 * R) + 1; x++) { const v = g[y * w + x]; if (!Number.isNaN(v)) { m += v; n++; } } pr.push(n ? m / n : NaN); }
+        const mu = pr.filter(v => !Number.isNaN(v)).reduce((p, q) => p + q, 0) / pr.length, d = pr.map(v => Number.isNaN(v) ? 0 : v - mu), n = d.length;
+        if (n < 1.5 * lag0) continue;
+        const v0 = d.reduce((p, q) => p + q * q, 0) || 1;
+        for (let L = 1; L <= Math.min(lag1, n - 1); L++) { let c = 0; for (let i = 0; i + L < n; i++) c += d[i] * d[i + L]; ac[L] += c / v0 * n / (n - L); }
+        used++;
+      }
+      if (used) {
+        let best = -1, bl = 0;
+        for (let L = Math.max(2, lag0); L <= Math.min(lag1, Math.floor((h - y0) / 1.5)); L++) if (ac[L] > ac[L - 1] && ac[L] >= ac[L + 1] && ac[L] / used > .15 && ac[L] > best) { best = ac[L]; bl = L; }
+        if (bl) { periodMm = bl / ppm; periodDeg = Math.atan(Math.PI * D / (k * periodMm)) / DEG; }
+      }
+    }
+    const coh = coherence >= .15, agree = periodDeg != null && Math.abs(periodDeg - tensorDeg) <= 6;
+    const raw = coh ? (agree ? (tensorDeg + periodDeg) / 2 : tensorDeg) : periodDeg;
+    const deg = raw == null ? null : Math.max(HELIX_RANGE[0], Math.min(HELIX_RANGE[1], raw));
+    const confidence = raw == null ? 'none' : coh && agree && raw === deg ? 'high' : coh && raw === deg ? 'medium' : 'low';
+    return {deg: deg && r4(deg), confidence, tensorDeg: r4(tensorDeg), coherence: r4(coherence), hand, periodDeg: periodDeg && r4(periodDeg), periodMm: periodMm && r4(periodMm), lengthMm: r4(lenMm), clamped: raw != null && raw !== deg};
+  }
+
   // ---------- 2. wear band segmentation on the flank land ----------
   function segment(strip, zoneRows, sens) {
     const {w, h, g, cx, R, top} = strip, inTool = x => Math.abs(x - cx) < .96 * R;
@@ -406,8 +461,8 @@
     const lenMm = Math.max(zone + .6 * D, o.stripMm || 1.2 * D), raw = rectify(G, al, lenMm);
     let strip = enh && enh.width === img.width && enh.height === img.height ? Object.assign(rectify(gray(rotate(enh, best.deg)), al, lenMm), {raw}) : raw;
     if (o.stripMm) { const {w, g, cx, top} = raw, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
-    const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
-    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
+    const hx = helixEstimate(G, al, D, o.flutes), hEst = hx && hx.confidence !== 'none' ? hx.deg : null;
+    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, helix: hx, rotateDeg: best.deg};
   }
 
   const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)}, S.raw ? {raw: trimStrip(S.raw, h)} : {});
@@ -443,7 +498,7 @@
 
   // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
   function prepareAll({sides, enhanced, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}, E = enhanced || [];
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm, flutes: k}, E = enhanced || [];
     Object.keys(o).forEach(key => o[key] == null && delete o[key]);
     let P = sides.slice(0, k).map((img, i) => prepareSide(img, o, E[i]));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
@@ -527,6 +582,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, GLINT, MIN_PPM, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, MIN_PPM, HELIX_RANGE, helixEstimate, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });
