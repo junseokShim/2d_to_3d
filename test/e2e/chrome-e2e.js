@@ -174,6 +174,28 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   A.ok = !A.msg && !!B.assist && /no-band/.test(B.assist.reason) && B.assist.guess === true && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
     B.modes.every(x => x === 'awaiting-operator') && B.decision === 'indeterminate' && Af.mode === 'operator-assisted' && Af.vb > 0 && Af.U > 0 && Af.banner === 'operator-assisted' &&
     /operator-assisted/.test(Af.table) && Af.contract === 'operator-assisted' && Math.abs(Af.wr - Af.vb) < 1e-4 && A.csv.mode && A.csv.oa && A.html === true && A.pdf === true;
+  // engine faceSeg (board contract, as seg-wear.js will publish): toTool-only faces built from this run's strips + a top face with a
+  // chipped end tooth; published after the analysis via 'tool3d:faceseg'. Then: partial seg (2 sides) merges with the pipeline,
+  // invalid entries are rejected (the inputs at this point are the degraded assist set, whose run may have no top photo), and a stale faceSeg (new wearResult, no new seg) falls back to the pipeline.
+  {
+    const E = res.checks.map3dSeg = JSON.parse(await ev(`JSON.stringify((()=>{
+      const C=Tool3D.map3dCore,q=Tool3D.render.params,R=q.diameterMm/2,k=q.flutes,out={};
+      const contract=f=>{const g=C.normalizeFace(f,R);return {face:f.face,angleDeg:f.angleDeg,w:f.w,h:f.h,mask:f.mask,pxPerMm:f.pxPerMm,toTool:g.toTool,source:'seg-test'}};
+      const sides=Tool3D.wearDebug.strips.slice(0,k).map((e,i)=>contract(C.faceFromStrip(e,i,k,q.diameterMm)));
+      const ppm=20,N=Math.ceil(2.2*R*ppm),m=new Uint8Array(N*N);
+      for(let y=0;y<N;y++)for(let x=0;x<N;x++){const X=(x+.5-N/2)/ppm,Y=(y+.5-N/2)/ppm,r=Math.hypot(X,Y);if(r>R)continue;m[y*N+x]=r>.5*R&&r<.8*R&&Math.abs(Math.atan2(Y,X)-.6)<.2?3:1}
+      const top=contract({face:'top',angleDeg:0,w:N,h:N,mask:m,pxPerMm:ppm,cx:N/2,cy:N/2});
+      const bad={face:'side2',angleDeg:90,w:10,h:10,mask:new Uint8Array(5),pxPerMm:20,axisX:5,tipY:0};
+      const pick=()=>{const r=Tool3D.map3dResult;return {src:r.totals.source,names:r.faces.map(f=>f.face),srcs:r.faces.map(f=>f.source),top:r.faces.find(f=>f.face==='top'),rej:(r.rejected||[]).map(x=>x.why),rows:document.querySelectorAll('#res tr[data-map3d]').length,deform:!!(Tool3D.render.map&&Tool3D.render.volume(false)-Tool3D.render.volume(true)>0)}};
+      Tool3D.faceSeg=sides.concat([top]);window.dispatchEvent(new Event('tool3d:faceseg'));out.full=pick();
+      Tool3D.faceSeg=sides.slice(0,2).concat([bad]);window.dispatchEvent(new Event('tool3d:faceseg'));out.partial=pick();
+      Tool3D.wearResult=Object.assign({},Tool3D.wearResult);window.dispatchEvent(new Event('tool3d:faceseg'));out.stale=pick();
+      return out})())`));
+    const F = E.full, P = E.partial, St = E.stale;
+    E.ok = F.src === 'seg-test' && F.names.join() === 'side1,side2,side3,side4,top' && F.srcs.every(x => x === 'seg-test') && F.top && F.top.areasMm2[3] > .3 && F.deform && F.rows >= 7 &&
+      P.src === 'seg-test + wear-pipeline' && P.srcs.slice(0, 4).join() === 'seg-test,seg-test,wear-pipeline,wear-pipeline' && P.rej.join() === 'mask size != w*h' &&
+      St.src === 'wear-pipeline' && St.srcs.every(x => x === 'wear-pipeline');
+  }
   // map3d deformation: synthetic masks on the current model (mock) -> class colours, chip removes material (render + STL), legend
   {
     const M3 = res.checks.map3d = {};
@@ -222,7 +244,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
-    map3dDeform: !!(c.map3d && c.map3d.ok)};
+    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok)};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));
