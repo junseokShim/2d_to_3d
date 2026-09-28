@@ -1,0 +1,49 @@
+{
+ "appTotalVolumeMm3": 2.879,
+ "meshTotalVolumeMm3": 2.82749,
+ "diffPct": -1.789,
+ "tolPct": 2.0,
+ "pass": true,
+ "clearanceDeg": 8.0,
+ "helixDegResult": 27.1659,
+ "helixDegFromStl": 27.15,
+ "hand": "RH",
+ "perFlute": [
+  {
+   "flute": 0,
+   "edgeAzimuthDeg": 82.71,
+   "meshVolumeMm3": 0.41621,
+   "formulaMm3": 0.42377,
+   "appVolumeMm3": 0.4238
+  },
+  {
+   "flute": 1,
+   "edgeAzimuthDeg": 172.71,
+   "meshVolumeMm3": 0.68914,
+   "formulaMm3": 0.70113,
+   "appVolumeMm3": 0.7011
+  },
+  {
+   "flute": 2,
+   "edgeAzimuthDeg": -97.29,
+   "meshVolumeMm3": 0.37698,
+   "formulaMm3": 0.38158,
+   "appVolumeMm3": 0.3816
+  },
+  {
+   "flute": 3,
+   "edgeAzimuthDeg": -7.29,
+   "meshVolumeMm3": 1.34516,
+   "formulaMm3": 1.37254,
+   "appVolumeMm3": 1.3725
+  }
+ ],
+ "toolMesh": {
+  "triangles": 165360,
+  "verts_welded": 83106,
+  "nonManifoldEdges": 848,
+  "volumeMm3": null
+ },
+ "blender": "4.5.10 LTS",
+ "method": "wear solid rebuilt as closed wedge prisms swept along the STL helix; bmesh.calc_volume"
+}
