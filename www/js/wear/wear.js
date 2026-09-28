@@ -16,6 +16,8 @@
     return x.getImageData(0, 0, w, h);
   }
 
+  W.toImage = toImage;
+
   W.run = function (shots, opts) {
     const k = opts.flutes, sides = shots.slice(0, k).filter(Boolean).map(toImage), top = shots[k] ? toImage(shots[k]) : null;
     if (sides.length < k) throw new Error(`wear: need ${k} side photos, got ${sides.length}`);
