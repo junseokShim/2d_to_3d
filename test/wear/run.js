@@ -40,6 +40,13 @@ console.log('\n# no wear -> VB ~ 0');
 {
   const r = W.analyzeSide(synth.side(Object.assign({}, cases[0], {vb: () => 0})), {diameterMm: 10});
   near('VBmax mm', r.vbMaxMm, 0, .03);
+  // background above the tip must never read as wear (v0.5.4 did on 9 of these 30)
+  const fp = [];
+  for (let seed = 1; seed <= 10; seed++) for (const t of [-4, 0, 3]) {
+    const q = W.analyzeSide(synth.side(Object.assign({}, cases[0], {vb: () => 0, tiltDeg: t, seed})), {diameterMm: 10});
+    if (!q || q.vbMaxMm > .03) fp.push(`seed ${seed} tilt ${t}: ${q && q.vbMaxMm}`);
+  }
+  check('no wear, 10 seeds x 3 tilts: VBmax <= 0.03', !fp.length, fp.join('; '));
 }
 
 console.log('\n# full measure(): 4 sides + top -> board contract');

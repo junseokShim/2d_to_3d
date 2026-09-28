@@ -229,13 +229,8 @@
     return b;
   }
 
-  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
-  function colorModel(strip, rows, K = 8) {
-    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
-    for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
-      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
-    }
-    if (S.length < 50) return null;
+  // k-means (luminance-ordered init) over RGB samples; dist(i) = distance of strip pixel i to the nearest centre
+  function kmeans(S, K, rgb) {
     const L = S.map(p => p[0] + p[1] + p[2]), ord = L.map((_, i) => i).sort((a, b) => L[a] - L[b]);
     let C = Array.from({length: K}, (_, k) => S[ord[Math.floor((k + .5) / K * S.length)]].slice());
     const near = p => { let b = 1e9, bi = 0; for (let k = 0; k < C.length; k++) { const d = (p[0] - C[k][0]) ** 2 + (p[1] - C[k][1]) ** 2 + (p[2] - C[k][2]) ** 2; if (d < b) { b = d; bi = k; } } return [bi, b]; };
@@ -244,9 +239,43 @@
       for (const p of S) { const a = acc[near(p)[0]]; a[0] += p[0]; a[1] += p[1]; a[2] += p[2]; a[3]++; }
       C = acc.map((a, k) => a[3] ? [a[0] / a[3], a[1] / a[3], a[2] / a[3]] : C[k]);
     }
-    const dist = i => Math.sqrt(near([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]])[1]);
+    return {C, near, dist: i => Math.sqrt(near([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]])[1])};
+  }
+
+  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
+  function colorModel(strip, rows, K = 8) {
+    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
+    for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
+      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
+    }
+    if (S.length < 50) return null;
+    const {C, near, dist} = kmeans(S, K, rgb);
     const tau = Math.max(12, quant(S.map(p => Math.sqrt(near(p)[1])), .995));
     return {C, dist, tau};
+  }
+
+  // Tool mask: 1 where the tool is. Background colours are learnt from the strip margins (beside the silhouette, above the
+  // tip); background-coloured pixels connected to that background are not tool. The flood may enter the tool outline only
+  // in the tip region (end teeth, corner radius, chipped corners stand above/below the found tip line), never along the
+  // flank, so a grey worn land on the face of the tool is never taken for background.
+  function toolMask(strip) {
+    if (strip.tool) return strip.tool;
+    const {w, h, g, cx, R, top} = strip, rgb = strip.rgb, px = i => rgb ? [rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]] : [g[i], g[i], g[i]];
+    const outside = (x, y) => Math.abs(x + .5 - cx) > 1.04 * R || y < top - 2, S = [];
+    const step = Math.max(1, Math.round(Math.sqrt(w * h / 8000)));
+    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) { const i = y * w + x; if (outside(x, y) && !Number.isNaN(g[i])) S.push(px(i)); }
+    const tool = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) tool[i] = Number.isNaN(g[i]) ? 0 : 1;
+    if (S.length < 30) return (strip.tool = tool);
+    const flat = new Uint8ClampedArray(3 * w * h); for (let i = 0; i < w * h; i++) flat.set(px(i), 3 * i);
+    const km = kmeans(S, 3, flat), tau = Math.max(6, quant(S.map(p => Math.sqrt(km.near(p)[1])), .95));
+    const yTip = top + Math.round(.25 * R), st = [];
+    const can = i => { const x = i % w, y = i / w | 0; return tool[i] && (outside(x, y) || y < yTip || Math.abs(x + .5 - cx) > .96 * R) && km.dist(i) <= tau; };
+    for (let i = 0; i < w * h; i++) if (outside(i % w, i / w | 0) && can(i)) { tool[i] = 0; st.push(i); }
+    while (st.length) {
+      const p = st.pop(), x = p % w;
+      for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * h && Math.abs(q % w - x) <= 1 && can(q)) { tool[q] = 0; st.push(q); }
+    }
+    return (strip.tool = tool);
   }
 
   // Classic v2: a pixel is worn when its colour is unlike every colour of the unworn body (either brighter or darker).
@@ -255,10 +284,10 @@
   function segmentColor(strip, zoneRows, o) {
     const rows = strip.rgb && refRows(strip, zoneRows), cm = rows && colorModel(strip, rows);
     if (!cm) return segment(strip, zoneRows, o.sens);
-    const {w, h, g, cx, R, top} = strip, gl = glintMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
+    const {w, h, cx, R, top} = strip, gl = glintMask(strip), tm = toolMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
     const score = new Float32Array(w * h);
     for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || Number.isNaN(g[i]) || gl[i]) continue;
+      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || !tm[i] || gl[i]) continue;
       score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
     }
     return Object.assign(refineBand(strip, bandFromMask(strip, raw), score), {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color'});
@@ -432,6 +461,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, GLINT, glintMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, glintMask, toolMask, kmeans, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });
