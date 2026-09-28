@@ -88,7 +88,9 @@
     addEventListener('resize', () => S.ready && (sizeCanvas(), draw(), drawChart()));
     addEventListener('keydown', e => {
       if (!S.ready || !S.selNode || !/Arrow(Left|Right)/.test(e.key) || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-      const F = S.F[S.sel], {side, i} = S.selNode; M.setNode(F, side, i, F.nodes[side][i] + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 2 : .25)); e.preventDefault(); recompute();
+      const F = S.F[S.sel], {i} = S.selNode, [pa, pb] = [nodePos(F, 'a', i), nodePos(F, 'b', i)];
+      if (Math.abs(pa[0] - pb[0]) < .01) S.selNode.side = e.key === 'ArrowLeft' ? 'a' : 'b';   // coincident nodes: direction picks the boundary
+      const {side} = S.selNode; M.setNode(F, side, i, F.nodes[side][i] + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 2 : .25)); e.preventDefault(); recompute();
     });
     return true;
   }
@@ -332,6 +334,8 @@
   function hitNode(sx, sy, touch) {
     const F = S.F[S.sel], R = touch ? 22 : 12; let best = null;
     for (const side of ['a', 'b']) for (let i = 0; i < F.nodeRows.length; i++) { const [x, y] = toScr(...nodePos(F, side, i)), d = Math.hypot(x - sx, y - sy); if (d < R && (!best || d < best.d)) best = {side, i, d}; }
+    // unworn rows: edge and wear-front nodes coincide -> let the drag direction pick (left = a, right = b)
+    if (best) { const o = best.side === 'a' ? 'b' : 'a', [x, y] = toScr(...nodePos(F, o, best.i)); best.tie = Math.hypot(x - sx, y - sy) - best.d < 1; }
     return best;
   }
   function pointer() {
@@ -352,6 +356,7 @@
       if (pinch && P.size === 2) { const [a, b] = [...P.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]); S.view.s = pinch.s; zoomAt(d / pinch.d, pinch.c[0], pinch.c[1]); return; }
       S.hoverScr = e.pointerType === 'touch' ? [s[0], s[1] - 40] : s; S.hover = toImg(...s);
       const [ix, iy] = S.hover, F = S.F[S.sel];
+      if (S.drag && S.drag.node && S.drag.node.tie) { if (Math.abs(ix - S.drag.x0) < .05) { draw(); return; } const nd = S.drag.node; nd.side = ix > S.drag.x0 ? 'b' : 'a'; nd.tie = false; S.drag.d0 = F.nodes[nd.side][nd.i]; S.selNode = {side: nd.side, i: nd.i}; }
       if (S.drag && S.drag.node) { M.setNode(F, S.drag.node.side, S.drag.node.i, S.drag.d0 + ix - S.drag.x0); recompute(); return; }
       if (S.drag && S.drag.pan) { const dx = s[0] - S.drag.s0[0], dy = s[1] - S.drag.s0[1]; S.drag.moved = Math.max(S.drag.moved, Math.hypot(dx, dy)); if (S.tool === 'pan' || S.drag.moved > 6) { S.view.ox = S.drag.v0.ox - dx / S.view.s; S.view.oy = S.drag.v0.oy - dy / S.view.s; } }
       if (S.src === 'strip' && F) { const z = (iy - F.strip.top) / F.strip.ppm * scaleNow(); if (!S.drag) readoutHover(z, ix); }

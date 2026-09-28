@@ -87,12 +87,12 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   m.badge = await ev(`document.querySelector('#mtOverall').textContent`);
   m.matchesWear = await ev(`(()=>{const s=Tool3D.metro.summary(),w=Tool3D.wearResult;return s.flutes.every((e,i)=>!e||Math.abs(e.vbMaxMm-w.perFlute[i].vbMaxMm)<1e-4&&Math.abs(e.vbAvgMm-w.perFlute[i].vbAvgMm)<1e-4)})()`);
   m.hasU = await ev(`Tool3D.metro.summary().flutes.every(e=>!e||e.q.vbMax.U>0&&e.q.vbb.U>0)`);
-  // 2-point distance: two image points 50 px apart on the rectified strip -> 50 / (px/mm)
+  // 2-point distance: two image points 20 px apart on the rectified strip -> 20 / (px/mm); kept inside the fitted view (strip can be short and zoomed ~9x)
   await ev(`Tool3D.metro.setTool('dist');1`);
-  const [p1, p2, ppm] = await ev(`(()=>{const F=Tool3D.metro.state.F[0],t=F.strip.top+40,x=F.strip.cx-25;return [Tool3D.metro.imgToClient(x,t),Tool3D.metro.imgToClient(x+30,t+40),F.strip.ppm]})()`);
+  const [p1, p2, ppm] = await ev(`(()=>{const F=Tool3D.metro.state.F[0],t=F.strip.top+4,x=F.strip.cx-6;return [Tool3D.metro.imgToClient(x,t),Tool3D.metro.imgToClient(x+12,t+16),F.strip.ppm]})()`);
   await clickAt(p1); m.distAfter1 = await ev(`JSON.stringify({n:Tool3D.metro.state.pts.length,tool:Tool3D.metro.state.tool,p1:${JSON.stringify(p1)},r:(()=>{const r=document.querySelector('#mtCanvas').getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()})`); await clickAt(p2);
   m.dist = await ev(`JSON.stringify(Tool3D.metro.state.manual.map(x=>[x.kind,x.mm,x.U]))`);
-  const dm = JSON.parse(m.dist)[0]; m.distOk = !!dm && dm[0] === 'distance' && Math.abs(dm[1] - 50 / ppm) < .02 * 50 / ppm && dm[2] > 0;
+  const dm = JSON.parse(m.dist)[0]; m.distOk = !!dm && dm[0] === 'distance' && Math.abs(dm[1] - 20 / ppm) < .02 * 20 / ppm && dm[2] > 0;
   // VB caliper: point 10 px from the cutting-edge line toward the wear front
   await ev(`Tool3D.metro.setTool('vb');1`);
   const cp = await ev(`(()=>{const F=Tool3D.metro.state.F[0],r=F.n>>1,[x,y]=Tool3D.metro.edgePoint(r);return Tool3D.metro.imgToClient(x+(F.edge==='a'?10:-10),y)})()`);
