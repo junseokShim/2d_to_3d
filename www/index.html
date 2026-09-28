@@ -40,6 +40,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 .cambar{display:flex;gap:16px;align-items:center;padding:12px;color:#fff}
 #shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
 </style>
+<link rel="stylesheet" href="css/metro.css">
 <script src="native/android-save.js"></script>
 </head>
 <body>
@@ -73,6 +74,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <div class="ctl"><button id="dlStl">STL 저장</button><button id="dlTex">텍스처 PNG</button><button id="dlJson">결과 JSON</button><button id="dlInputs">입력 내보내기 (Export inputs)</button></div>
     <div id="strips"></div>
   </section>
+  <section id="metro"></section>
 </main>
 
 <div id="cam" hidden>
@@ -81,6 +83,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 </div>
 
 <script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script>
+<script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -367,6 +370,7 @@ $('#run').onclick = async () => {
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
+  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine});   // ④ 측정 패널 (js/metro)
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 
