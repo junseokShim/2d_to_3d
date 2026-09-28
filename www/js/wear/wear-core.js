@@ -331,6 +331,7 @@
       warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean)
         .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean)),
       strips: S2.map(s => s && {strip: s.strip, band: s.band}),
+      ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
       model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
     };
     return {result, debug};
