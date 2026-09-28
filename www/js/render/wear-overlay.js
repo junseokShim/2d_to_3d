@@ -1,10 +1,13 @@
 // Tool3D render: flank wear overlay. Reads window.Tool3D.wearResult (contract in board.md):
 // { flutes, diameterMm, helixDeg, perFlute:[{vbMaxMm, vbAvgMm, areaMm2, volumeMm3, profile:[{zMm, vbMm}]}], totals }
-// Paints each flute's flank land red from the cutting edge back to VB(z). Never measures anything.
+// Resamples each flute's VB(z) profile into one row of a small texture (linear interp + light Gaussian
+// smoothing, so coarse photo profiles do not show as stair steps). The surface shader paints the flank land
+// from the cutting edge back to VB(z) with a soft boundary. Never measures anything.
 (function () {
   'use strict';
   const T3 = window.Tool3D = window.Tool3D || {};
   const NS = T3._render = T3._render || {};
+  const W = 256, ROWS = 8;                                   // 256 x 8 RGBA8 = 8 KB
 
   // Placeholder until worker-wear publishes real data. Clearly flagged as mock.
   function mock(flutes, D) {
@@ -34,34 +37,34 @@
     return 0;
   }
 
-  // Base scanner shading per region: ground lands bright, pocket darker (like an Alicona albedo).
-  const BASE = {0: .50, 1: .42, 2: .28, 3: .30, 4: .13, 5: .46};   // linear albedo
-  const RED = [.72, .02, .015];
+  const data = new Uint8Array(W * ROWS * 4);
+  const tex = new THREE.DataTexture(data, W, ROWS, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Writes a 'color' attribute on the geometry. Returns covered-area estimate for the HUD.
-  function paint(geom, wear, show) {
-    const m = geom.userData.meta, n = m.length / 4;
-    let col = geom.getAttribute('color');
-    if (!col) { col = new THREE.BufferAttribute(new Float32Array(n * 3), 3); geom.setAttribute('color', col); }
-    const c = col.array, vbMax = wear && wear.totals ? Math.max(1e-6, wear.totals.vbMaxMm) : 1;
-    for (let i = 0; i < n; i++) {
-      const tooth = m[4 * i], s = m[4 * i + 1], reg = m[4 * i + 2], z = m[4 * i + 3];
-      const b = reg >= 0 ? BASE[reg] : .7;
-      let r = b, g = b, bl = b * 1.02;
-      if (show && wear && wear.perFlute && s >= 0 && tooth >= 0) {
-        const pf = wear.perFlute[tooth % wear.perFlute.length];
-        const vb = pf ? vbAt(pf.profile, z) : 0;
-        if (vb > 0 && s <= vb) {
-          const k = .55 + .45 * Math.min(1, vb / vbMax);        // deeper red where VB is larger
-          const edge = Math.min(1, (vb - s) / .015);             // soft 15 um boundary
-          const w = k * edge;
-          r = b * (1 - w) + RED[0] * w; g = b * (1 - w) + RED[1] * w; bl = b * (1 - w) + RED[2] * w;
-        }
+  // Fills the texture; returns uniforms-ready numbers {zMax, vbMax, rows}.
+  function texture(wear) {
+    data.fill(0);
+    const pf = wear && wear.perFlute || [];
+    let zMax = 0, vbMax = 1e-6;
+    for (const f of pf) for (const p of f.profile || []) { zMax = Math.max(zMax, p.zMm); vbMax = Math.max(vbMax, p.vbMm); }
+    zMax = zMax * 1.02 + 1e-3;
+    const dz = zMax / (W - 1), row = new Float32Array(W), sm = new Float32Array(W);
+    pf.slice(0, ROWS).forEach((f, r) => {
+      const prof = f.profile || [];
+      const step = prof.length > 1 ? (prof[prof.length - 1].zMm - prof[0].zMm) / (prof.length - 1) : dz;
+      const sig = Math.max(1, .45 * step / dz), rad = Math.ceil(2.5 * sig);   // ~half a profile step
+      for (let i = 0; i < W; i++) row[i] = vbAt(prof, i * dz);
+      for (let i = 0; i < W; i++) {
+        let a = 0, n = 0;
+        for (let j = -rad; j <= rad; j++) { const k = i + j; if (k < 0 || k >= W) continue; const g = Math.exp(-.5 * (j / sig) ** 2); a += g * row[k]; n += g; }
+        sm[i] = a / n;
       }
-      c[3 * i] = r; c[3 * i + 1] = g; c[3 * i + 2] = bl;
-    }
-    col.needsUpdate = true;
+      for (let i = 0; i < W; i++) data[4 * (r * W + i)] = Math.round(255 * Math.min(1, sm[i] / vbMax));
+    });
+    tex.needsUpdate = true;
+    return {zMax, vbMax, rows: ROWS};
   }
 
-  NS.wear = {mock, vbAt, paint};
+  NS.wear = {mock, vbAt, texture, tex};
 })();

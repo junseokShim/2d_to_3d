@@ -1,5 +1,5 @@
 // Tool3D E2E via Chrome DevTools Protocol over --remote-debugging-pipe (no npm deps).
-// Usage: hive/bin/runtime/node.cmd test/e2e/chrome-e2e.js <repo-abs-path> <out-dir>   (writes iso/tip/side/page.png, e2e.json, dl/)
+// Usage: hive/bin/runtime/node.cmd test/e2e/chrome-e2e.js <repo-abs-path> <out-dir>   (writes iso/tip/side/corner/page.png, e2e.json, dl/)
 const {spawn} = require('child_process'), fs = require('fs'), path = require('path');
 const REPO = process.argv[2], OUT = process.argv[3];
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -52,7 +52,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     const {data} = await s('Page.captureScreenshot', {format: 'png', clip: {x: b[0], y: b[1], width: b[2], height: b[3], scale: 1}, captureBeyondViewport: true});
     fs.writeFileSync(path.join(OUT, name + '.png'), Buffer.from(data, 'base64'));
   };
-  for (const v of ['iso', 'tip', 'side']) await shotView(v);
+  for (const v of ['iso', 'tip', 'side', 'corner']) await shotView(v);
   const {data} = await s('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true});
   fs.writeFileSync(path.join(OUT, 'page.png'), Buffer.from(data, 'base64'));
   await ev(`document.querySelector('#dlStl').click();1`); await sleep(2000);
