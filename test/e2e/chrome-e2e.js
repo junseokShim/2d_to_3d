@@ -37,7 +37,13 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   const smp = ['side1', 'side2', 'side3', 'side4', 'top'].map(n => path.join(REPO, 'test/wear/samples', n + '.png').replace(/\//g, '\\'));
   await s('DOM.setFileInputFiles', {nodeId, files: smp}); await sleep(1500);
   res.checks.slotsFilled = await ev(`[...document.querySelectorAll('#slots .th')].filter(t=>t.querySelector('canvas')).length`);
-  await ev(`document.querySelector('#run').click();1`); await sleep(4000);
+  await ev(`window.__busySeen=false;new MutationObserver(()=>{if(!document.querySelector('#busy').hidden)window.__busySeen=true}).observe(document.querySelector('#busy'),{attributes:true});document.querySelector('#run').click();1`);
+  const tRun = Date.now();
+  while (Date.now() - tRun < 240000 && !(await ev(`document.querySelector('#engine').textContent`))) await sleep(500);   // AI wear: model load + inference
+  res.checks.runMs = Date.now() - tRun; await sleep(1500); res.checks.spinnerShown = await ev(`window.__busySeen===true&&document.querySelector('#busy').hidden`);
+  res.checks.engine = await ev(`document.querySelector('#engine').textContent`);
+  res.checks.engineRow = await ev(`[...document.querySelectorAll('#res tr')].some(r=>/엔진/.test(r.textContent)&&/AI \\(PatchCore\\)|classic/.test(r.textContent))`);
+  res.checks.wearDebugEngine = await ev(`Tool3D.wearDebug&&Tool3D.wearDebug.engine`);
   res.checks.msg = await ev(`document.querySelector('#msg').textContent`);
   res.checks.resRows = await ev(`document.querySelectorAll('#res tr').length`);
   res.checks.wearResult = await ev(`JSON.stringify(window.Tool3D&&Tool3D.wearResult&&{fl:Tool3D.wearResult.flutes,D:Tool3D.wearResult.diameterMm,n:Tool3D.wearResult.perFlute.length,totals:Tool3D.wearResult.totals,mock:Tool3D.wearResult.mock})`);
@@ -61,9 +67,23 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   else res.checks.stl = 'missing: ' + fs.readdirSync(dl).join(',');
   await ev(`document.querySelector('#dlJson').click();1`); await sleep(1500);
   const jf = path.join(dl, 'result.json'); res.checks.jsonHasWear = fs.existsSync(jf) && !!JSON.parse(fs.readFileSync(jf, 'utf8')).wear;
+  await ev(`document.querySelector('#dlInputs').click();1`);
+  const zf = path.join(dl, 'tool3d-inputs.zip'); for (let t = 0; t < 20 && !fs.existsSync(zf); t++) await sleep(500);
+  if (fs.existsSync(zf)) {   // walk the central directory of the store-only zip; check CRC-free structure + params.json
+    const b = fs.readFileSync(zf), e = b.lastIndexOf(Buffer.from([0x50, 0x4b, 5, 6])), n = b.readUInt16LE(e + 10), names = [];
+    for (let o = b.readUInt32LE(e + 16), i = 0; i < n; i++) { const L = b.readUInt16LE(o + 28); names.push(b.toString('utf8', o + 46, o + 46 + L)); o += 46 + L + b.readUInt16LE(o + 30) + b.readUInt16LE(o + 32); }
+    const pi = names.indexOf('params.json'), lo = pi < 0 ? -1 : b.readUInt32LE(e + 16) && (() => { let o = b.readUInt32LE(e + 16); for (let i = 0; i < pi; i++) o += 46 + b.readUInt16LE(o + 28) + b.readUInt16LE(o + 30) + b.readUInt16LE(o + 32); return b.readUInt32LE(o + 42); })();
+    const params = lo < 0 ? null : JSON.parse(b.toString('utf8', lo + 30 + b.readUInt16LE(lo + 26), lo + 30 + b.readUInt16LE(lo + 26) + b.readUInt32LE(lo + 22)));
+    res.checks.exportZip = {bytes: b.length, names, ok: names.length === 6 && /^side1\./.test(names[0]) && /^top\./.test(names[4]) && params && params.flutes === 4 && params.diameterMm === 10};
+  } else res.checks.exportZip = 'missing: ' + fs.readdirSync(dl).join(',');
   await ev(`const e=document.querySelector('#sens');e.value='3';e.dispatchEvent(new Event('change'));1`); await sleep(2000);
   res.checks.afterSlider = await ev(`Tool3D.render.params.helixDeg+' rows='+document.querySelectorAll('#res tr').length`);
+  const c = res.checks;
+  res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
+    wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true};
+  res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));
-  ch.kill(); process.exit(0);
+  console.log('E2E ' + (res.ok ? 'PASS' : 'FAIL') + ' ' + JSON.stringify(res.pass) + ' engine=' + JSON.stringify(c.engine) + ' runMs=' + c.runMs);
+  ch.kill(); process.exit(res.ok ? 0 : 1);
 })().catch(e => { console.error(e); console.log(JSON.stringify(res, null, 1)); ch.kill(); process.exit(1); });

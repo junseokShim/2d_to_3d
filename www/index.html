@@ -26,6 +26,10 @@ table{border-collapse:collapse;width:100%;font-size:14px;margin-top:10px}
 td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 #strips{display:flex;gap:6px;overflow-x:auto;margin-top:10px}#strips canvas{height:180px}
 .ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;font-size:13px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+#busy{font-size:13px;color:#555}#busy[hidden]{display:none}
+#run:disabled{opacity:.6}
 #msg{color:#b3261e;font-size:13px;min-height:1em;margin-top:8px}
 #cam{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9}
 #cam[hidden]{display:none}
@@ -57,15 +61,16 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 
   <section>
     <h2>③ 3D 화</h2>
-    <button class="pri" id="run">3D 생성</button>
+    <button class="pri" id="run">3D 생성</button> <span id="busy" hidden><i class="spin"></i> 마모 분석 중… (AI 모델 첫 로드는 수 초 걸립니다)</span>
     <div id="msg"></div>
     <canvas id="gl"></canvas>
     <div class="ctl">
       <label>마모 민감도 <input id="sens" type="range" min="1" max="4" step="0.1" value="2.5"></label>
       <label>검사 범위(×D) <input id="zone" type="range" min="0.2" max="1.5" step="0.1" value="0.5"></label>
     </div>
+    <div id="engine" class="hint"></div>
     <table id="res"></table>
-    <div class="ctl"><button id="dlStl">STL 저장</button><button id="dlTex">텍스처 PNG</button><button id="dlJson">결과 JSON</button></div>
+    <div class="ctl"><button id="dlStl">STL 저장</button><button id="dlTex">텍스처 PNG</button><button id="dlJson">결과 JSON</button><button id="dlInputs">입력 내보내기 (Export inputs)</button></div>
     <div id="strips"></div>
   </section>
 </main>
@@ -75,7 +80,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
   <div class="cambar"><button id="camClose">취소</button><button id="shutter" aria-label="촬영"></button><span id="camtxt"></span></div>
 </div>
 
-<script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script>
+<script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -332,15 +337,35 @@ function detectTop(src, hint, D, sens) {
 
 // ---------- ③ 3D 화 ----------
 let det = null;       // 사진별 정렬 결과 (슬라이더 변경 시 재사용)
-$('#run').onclick = () => {
-  msg(); const {k, D} = st;
+let engine = '';      // 결과 표에 표시할 마모 측정 엔진
+const AI_TIMEOUT_MS = 180000;
+// 마모 측정: AI(PatchCore) 우선, 모델 로드 실패/시간 초과/모든 면 AI 실패(신뢰도 낮음)면 기존(classic) 경로
+async function measureWear(shots, opts) {
+  const W = window.Tool3D?.wear; if (!W) return 'none';
+  if (W.ai && W.run) try {
+    const t = new Promise((_, bad) => setTimeout(() => bad(new Error('AI timeout')), AI_TIMEOUT_MS));
+    await Promise.race([W.ai.run(shots, opts), t]);
+    const errs = Tool3D.wearDebug?.aiErrors || [], nAi = errs.filter(e => !e).length;
+    if (nAi > 0) return 'AI (PatchCore)' + (nAi < errs.length ? ` · classic on side ${errs.map((e, i) => e ? i + 1 : 0).filter(Boolean).join(', ')}` : '');
+    console.warn('wear AI: every side fell back', errs);
+  } catch (e) { console.warn('wear AI unavailable, classic used:', e); }
+  try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
+}
+$('#run').onclick = async () => {
+  msg(); const {k, D} = st, btn = $('#run');
+  if (btn.disabled) return;
   for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
-  const q = st.shots.slice(0, k).map((s, i) => detectSide(s, st.hints[i]));
-  const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
-  const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
-  det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
-  if (window.Tool3D) Tool3D.wearResult = undefined;    // 이전 실행 결과가 남지 않도록
-  try { window.Tool3D?.wear?.run?.(st.shots, {flutes: k, diameterMm: D}); } catch (e) { console.warn('wear:', e); }   // -> Tool3D.wearResult
+  btn.disabled = true; $('#busy').hidden = false; $('#engine').textContent = '';
+  await new Promise(ok => requestAnimationFrame(() => setTimeout(ok, 0)));   // 무거운 계산 전에 스피너를 먼저 그림
+  try {
+    const q = st.shots.slice(0, k).map((s, i) => detectSide(s, st.hints[i]));
+    const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
+    const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
+    det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
+    if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
+    engine = await measureWear(st.shots, {flutes: k, diameterMm: D});        // -> Tool3D.wearResult
+  } finally { btn.disabled = false; $('#busy').hidden = true; }
+  $('#engine').textContent = 'Engine: ' + engine;
   analyze();
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
@@ -411,6 +436,7 @@ function analyze() {
     for (const r of rows.slice(8)) r[0] += ' [v0.1]';
     if (wr.helixDeg) rows[2][1] = `${(+wr.helixDeg).toFixed(1)}° (v0.1: ${R.헬릭스각_추정_deg}°)`;
   }
+  R.engine = engine; if (engine) rows.unshift(['마모 측정 엔진', engine]);
   $('#res').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
   $('#strips').replaceChildren(...A.map(a => a.overlay));
   R.mesh = buildMesh(D, k, sl, ph0, Lmm, Wt, Hs, Cs);
@@ -513,6 +539,42 @@ $('#dlStl').onclick = () => {
 };
 $('#dlTex').onclick = () => R && R.atlas.toBlob(b => save('tool_texture.png', b));
 $('#dlJson').onclick = () => { if (R) { const {mesh, atlas, ...o} = R; save('result.json', new Blob([JSON.stringify(o, null, 2)])); } };
+
+// 입력 내보내기: 모든 사진 + params.json 을 zip(무압축 store) 하나로. Android 는 native/android-save.js 가 저장/공유 처리
+const CRC = new Uint32Array(256).map((_, n) => { let c = n; for (let j = 0; j < 8; j++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c; });
+function zipStore(files) {   // files: [{name, data: Uint8Array}] -> Blob (application/zip)
+  const enc = new TextEncoder(), parts = [], cen = [], dt = new Date();
+  const time = dt.getHours() << 11 | dt.getMinutes() << 5 | dt.getSeconds() >> 1, date = (dt.getFullYear() - 1980) << 9 | (dt.getMonth() + 1) << 5 | dt.getDate();
+  let off = 0;
+  for (const {name, data} of files) {
+    const nm = enc.encode(name); let c = ~0; for (let i = 0; i < data.length; i++) c = CRC[(c ^ data[i]) & 255] ^ (c >>> 8); c = ~c >>> 0;
+    const hdr = (sig, cd) => { const b = new DataView(new ArrayBuffer(cd ? 46 : 30)); let o = 0; const u32 = v => { b.setUint32(o, v, true); o += 4; }, u16 = v => { b.setUint16(o, v, true); o += 2; };
+      u32(sig); if (cd) u16(20); u16(20); u16(0x800); u16(0); u16(time); u16(date); u32(c); u32(data.length); u32(data.length); u16(nm.length); u16(0);
+      if (cd) { u16(0); u16(0); u16(0); u32(0); u32(off); } return new Uint8Array(b.buffer); };
+    const lh = hdr(0x04034b50, false); parts.push(lh, nm, data); cen.push(hdr(0x02014b50, true), nm);
+    off += lh.length + nm.length + data.length;
+  }
+  const cdLen = cen.reduce((s, b) => s + b.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cdLen, true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(end.buffer)], {type: 'application/zip'});
+}
+async function shotBytes(s) {   // 불러온 파일은 원본 바이트 그대로, 카메라 촬영(canvas)은 JPEG
+  const b = s.src ? await (await fetch(s.src)).blob() : await new Promise(ok => s.toBlob(ok, 'image/jpeg', .95));
+  return {data: new Uint8Array(await b.arrayBuffer()), ext: (/png/.test(b.type) ? 'png' : /webp/.test(b.type) ? 'webp' : 'jpg')};
+}
+$('#dlInputs').onclick = async () => {
+  const {k, D} = st, files = [], names = [];
+  for (let i = 0; i <= k; i++) if (st.shots[i]) {
+    const {data, ext} = await shotBytes(st.shots[i]), name = (i < k ? `side${i + 1}` : 'top') + '.' + ext;
+    files.push({name, data}); names.push(name);
+  }
+  if (!files.length) return msg('내보낼 사진이 없습니다.');
+  const params = {app: 'Tool3D', exportedAt: new Date().toISOString(), flutes: k, diameterMm: D, sens: +$('#sens').value, zoneXD: +$('#zone').value,
+    shots: names, hints: st.hints.slice(0, k + 1), engine: engine || null};
+  files.push({name: 'params.json', data: new TextEncoder().encode(JSON.stringify(params, null, 2))});
+  save('tool3d-inputs.zip', zipStore(files));
+};
+setTimeout(() => window.Tool3D?.wear?.ai?.load?.().catch(e => console.warn('wear AI preload:', e)), 1500);   // 첫 실행 대기 줄이기
 
 renderSlots();
 </script>

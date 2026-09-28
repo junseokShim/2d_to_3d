@@ -22,7 +22,7 @@
   function gray(img) {
     const {width: w, height: h, data: d} = img, g = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) g[i] = .299 * d[4 * i] + .587 * d[4 * i + 1] + .114 * d[4 * i + 2];
-    return {w, h, g};
+    return {w, h, g, img};
   }
   function sobel({w, h, g}) {
     const gx = new Float32Array(w * h), gy = new Float32Array(w * h);
@@ -111,11 +111,16 @@
   function rectify(G, al, lenMm) {
     const ppm = al.pxPerMm, R = al.sepPx / 2, m = Math.ceil(.1 * al.sepPx), W = Math.ceil(2 * R) + 2 * m;
     const top = Math.ceil(.1 * al.sepPx), H = Math.ceil(lenMm * ppm) + top, g = new Float32Array(W * H);
+    const rgb = G.img ? new Uint8ClampedArray(W * H * 3) : null, d = G.img && G.img.data, iw = G.w;
     for (let r = 0; r < H; r++) for (let col = 0; col < W; col++) {
-      const [x, y] = al.toImg(al.uC - R - m + col + .5, al.vTip - top + r);
-      g[r * W + col] = bilinear(G.g, G.w, G.h, x, y);
+      const [x, y] = al.toImg(al.uC - R - m + col + .5, al.vTip - top + r), i = r * W + col;
+      g[i] = bilinear(G.g, G.w, G.h, x, y);
+      if (rgb && !Number.isNaN(g[i])) {            // colour, bilinear (same weights as the grey sample)
+        const x0 = Math.min(G.w - 2, Math.floor(x)), y0 = Math.min(G.h - 2, Math.floor(y)), fx = x - x0, fy = y - y0, j = 4 * (y0 * iw + x0);
+        for (let c = 0; c < 3; c++) rgb[3 * i + c] = (d[j + c] * (1 - fx) + d[j + 4 + c] * fx) * (1 - fy) + (d[j + 4 * iw + c] * (1 - fx) + d[j + 4 * iw + 4 + c] * fx) * fy;
+      }
     }
-    return {w: W, h: H, g, cx: m + R - .5, R, top, ppm};
+    return {w: W, h: H, g, rgb, cx: m + R - .5, R, top, ppm};
   }
 
   // helix angle from the dominant edge orientation in the central band of the body (structure tensor)
@@ -139,6 +144,12 @@
     const med = quant(ref, .5), mad = quant(ref.map(v => Math.abs(v - med)), .5), sig = Math.max(4, 1.4826 * mad), thr = med + sens * sig;
     const y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
     for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) if (inTool(x) && g[y * w + x] > thr) raw[y * w + x] = 1;
+    return {band: bandFromMask(strip, raw), thr, med, sig, y1, method: 'bright'};
+  }
+
+  // raw candidate mask -> wear band: 2x2 opening, then the largest connected region
+  function bandFromMask(strip, raw) {
+    const {w, h} = strip;
     // morphological opening with a 2x2 element: removes 1-px glints, keeps bands >= 2 px wide
     const er = new Uint8Array(w * h), mask = new Uint8Array(w * h);
     for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) { const i = y * w + x; er[i] = raw[i] & raw[i + 1] & raw[i + w] & raw[i + w + 1]; }
@@ -156,7 +167,75 @@
     let best = 0; for (let i = 1; i <= n; i++) if (sizes[i] > (sizes[best] || 0)) best = i;
     const band = new Uint8Array(w * h);
     if (best && sizes[best] >= 4) for (let i = 0; i < w * h; i++) if (lab[i] === best) band[i] = 1;
-    return {band, thr, med, sig, y1};
+    return band;
+  }
+
+  // Detection uses a low threshold (score > 1); the band edge is then placed at half contrast (score > half the
+  // band's median score), i.e. at the 50 % point of the blurred body->wear transition, as for an edge in a gauge.
+  function refineBand(strip, band, score, minMm2 = .004) {
+    const v = []; for (let i = 0; i < band.length; i++) if (band[i]) v.push(score[i]);
+    if (v.length < minMm2 * strip.ppm * strip.ppm) return {band: new Uint8Array(band.length), coreScore: 0};
+    const core = quant(v, .5), t2 = Math.max(1, .5 * core), raw = new Uint8Array(band.length);
+    for (let i = 0; i < band.length; i++) if (band[i] && score[i] > t2) raw[i] = 1;
+    return {band: bandFromMask(strip, raw), coreScore: r4(core)};
+  }
+
+  // Reference rows = unworn body beyond the wear zone (same tool, same light, same photo).
+  function refRows(strip, zoneRows) {
+    const {h, R, top} = strip, y0 = top + zoneRows + Math.round(.1 * 2 * R);
+    return h - y0 >= .15 * 2 * R ? [y0, h] : null;
+  }
+
+  // Specular glints: near-white, unsaturated pixels (every channel > GLINT), grown by 2 px to take the blended rim that
+  // bilinear resampling leaves between a glint and the dark flute (those rim pixels have wear-like mid-grey colours).
+  // Worn carbide is bright but never saturated white under a diffuse light; a glint is never wear.
+  const GLINT = 225;
+  function glintMask(strip) {
+    if (strip.glint) return strip.glint;
+    const {w, h, rgb, g} = strip, m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10) m[i] = 1;
+    return (strip.glint = dilateMask(m, w, h, 2));
+  }
+  function dilateMask(m, w, h, r) {
+    const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) { let last = -1e9; for (let x = 0; x < w; x++) { if (m[y * w + x]) last = x; if (x - last <= r) a[y * w + x] = 1; } last = 1e9; for (let x = w - 1; x >= 0; x--) { if (m[y * w + x]) last = x; if (last - x <= r) a[y * w + x] = 1; } }
+    for (let x = 0; x < w; x++) { let last = -1e9; for (let y = 0; y < h; y++) { if (a[y * w + x]) last = y; if (y - last <= r) b[y * w + x] = 1; } last = 1e9; for (let y = h - 1; y >= 0; y--) { if (a[y * w + x]) last = y; if (last - y <= r) b[y * w + x] = 1; } }
+    return b;
+  }
+
+  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
+  function colorModel(strip, rows, K = 8) {
+    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
+    for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
+      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
+    }
+    if (S.length < 50) return null;
+    const L = S.map(p => p[0] + p[1] + p[2]), ord = L.map((_, i) => i).sort((a, b) => L[a] - L[b]);
+    let C = Array.from({length: K}, (_, k) => S[ord[Math.floor((k + .5) / K * S.length)]].slice());
+    const near = p => { let b = 1e9, bi = 0; for (let k = 0; k < C.length; k++) { const d = (p[0] - C[k][0]) ** 2 + (p[1] - C[k][1]) ** 2 + (p[2] - C[k][2]) ** 2; if (d < b) { b = d; bi = k; } } return [bi, b]; };
+    for (let it = 0; it < 8; it++) {
+      const acc = C.map(() => [0, 0, 0, 0]);
+      for (const p of S) { const a = acc[near(p)[0]]; a[0] += p[0]; a[1] += p[1]; a[2] += p[2]; a[3]++; }
+      C = acc.map((a, k) => a[3] ? [a[0] / a[3], a[1] / a[3], a[2] / a[3]] : C[k]);
+    }
+    const dist = i => Math.sqrt(near([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]])[1]);
+    const tau = Math.max(12, quant(S.map(p => Math.sqrt(near(p)[1])), .995));
+    return {C, dist, tau};
+  }
+
+  // Classic v2: a pixel is worn when its colour is unlike every colour of the unworn body (either brighter or darker).
+  // Robust to a bimodal body (dark flutes + bright margins), to glints (they also occur on the body) and to wear that
+  // is not the brightest thing in the photo. Falls back to the brightness threshold when there is no reference body.
+  function segmentColor(strip, zoneRows, o) {
+    const rows = strip.rgb && refRows(strip, zoneRows), cm = rows && colorModel(strip, rows);
+    if (!cm) return segment(strip, zoneRows, o.sens);
+    const {w, h, g, cx, R, top} = strip, gl = glintMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
+    const score = new Float32Array(w * h);
+    for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || Number.isNaN(g[i]) || gl[i]) continue;
+      score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
+    }
+    return Object.assign(refineBand(strip, bandFromMask(strip, raw), score), {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color'});
   }
 
   // ---------- 3. VB profile along the cutting edge + area + volume ----------
@@ -188,20 +267,95 @@
     };
   }
 
-  function analyzeSide(img, opts) {
+  // rotate an RGBA image by 90/180/270 degrees clockwise (photos taken sideways or tip down)
+  function rotate(img, deg) {
+    if (!deg) return img;
+    const {width: w, height: h, data: d} = img, W = deg === 180 ? w : h, H = deg === 180 ? h : w, o = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const [X, Y] = deg === 90 ? [h - 1 - y, x] : deg === 180 ? [w - 1 - x, h - 1 - y] : [y, w - 1 - x];
+      o.set(d.subarray(4 * (y * w + x), 4 * (y * w + x) + 4), 4 * (Y * W + X));
+    }
+    return {width: W, height: H, data: o};
+  }
+
+  // align + rectify one side photo. Tries the photo as given (tip up) first; if no tool is found, or the "tip" is at the
+  // image border (the tool runs out of the frame there, so that end is the shank), tries 90/270/180 degree rotations.
+  function prepareSide(img, opts) {
     const o = Object.assign({}, DEFAULTS, opts), D = o.diameterMm;
     if (!(D > 0)) throw new Error('diameterMm required');
-    const G = gray(img), al = align(G, sobel(G), D, o.expectPxPerMm && o.expectPxPerMm * D);
-    if (!al) return null;
-    const zone = o.zoneMm || .8 * D, strip = rectify(G, al, Math.max(zone + .3 * D, 1.2 * D));
+    const tryRot = deg => {
+      const im = rotate(img, deg), G = gray(im), al = align(G, sobel(G), D, o.expectPxPerMm && o.expectPxPerMm * D);
+      if (!al) return null;
+      const [, ty] = al.tipPx, [tx] = al.tipPx, edge = Math.min(ty, tx, G.w - 1 - tx) < .02 * al.sepPx + 2;
+      return {G, al, deg, edge};
+    };
+    const rots = o.rotateDeg != null ? [o.rotateDeg] : [0, 90, 270, 180];
+    let best = null;
+    for (const deg of rots) { const r = tryRot(deg); if (r && !r.edge) { best = r; break; } if (r && !best) best = r; }
+    if (!best) return null;
+    const {G, al} = best, zone = o.zoneMm || .8 * D;
+    // o.stripMm: rectify a longer strip (more unworn body for a reference); rows past the photo end are trimmed
+    let strip = rectify(G, al, Math.max(zone + .6 * D, o.stripMm || 1.2 * D));
+    if (o.stripMm) { const {w, g, cx, top} = strip, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
     const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
-    const helixDeg = o.helixDeg || hEst || 30;
-    const seg = segment(strip, Math.round(zone * strip.ppm), o.sens);
-    const m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
+    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
+  }
+
+  const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)});
+
+  function finishSide(P, seg, helixDeg) {
+    const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
     return Object.assign(m, {
-      align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4)},
-      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), strip, band: seg.band
+      align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
+      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band
     });
+  }
+
+  // classic segmenter (sync): colour model vs the unworn body; legacy brightness threshold with o.method = 'bright'
+  const classicSegment = P => P.o.method === 'bright' ? segment(P.strip, P.zoneRows, P.o.sens) : segmentColor(P.strip, P.zoneRows, P.o);
+
+  function analyzeSide(img, opts) {
+    const P = prepareSide(img, opts); if (!P) return null;
+    return finishSide(P, classicSegment(P), P.o.helixDeg || P.hEst || 30);
+  }
+
+  // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
+  function prepareAll({sides, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm};
+    Object.keys(o).forEach(key => o[key] == null && delete o[key]);
+    let P = sides.slice(0, k).map(img => prepareSide(img, o));
+    // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
+    const pp = P.filter(Boolean).map(p => p.al.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
+    if (pp.length >= 2) P = P.map((p, i) => !p || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed})) : p);
+    return {k, o, P};
+  }
+
+  function assemble({k, P}, segs, {diameterMm, helixDeg, top, sens}, engine) {
+    const hs = P.filter(Boolean).map(p => p.hEst).filter(Boolean).sort((a, b) => a - b);
+    const helixUsed = helixDeg || (hs.length ? hs[hs.length >> 1] : 30);
+    const S2 = P.map((p, i) => p && finishSide(p, segs[i], helixUsed));
+    const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
+    const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));
+    const result = {
+      flutes: k, diameterMm, helixDeg: r4(helixUsed), perFlute,
+      totals: {
+        vbMaxMm: r4(Math.max(0, ...perFlute.map(f => f.vbMaxMm))),
+        areaMm2: r4(perFlute.reduce((p, f) => p + f.areaMm2, 0)),
+        volumeMm3: r4(perFlute.reduce((p, f) => p + f.volumeMm3, 0))
+      }
+    };
+    const topRes = top ? analyzeTop(top, {diameterMm, sens}) : null;
+    const debug = {
+      engine,
+      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated}),
+      failedSides: S2.map((s, i) => s ? -1 : i).filter(i => i >= 0), top: topRes,
+      warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean)
+        .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean)),
+      strips: S2.map(s => s && {strip: s.strip, band: s.band}),
+      ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
+      model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
+    };
+    return {result, debug};
   }
 
   // ---------- top photo: end-face circle -> scale check + bright (worn) area on the end face ----------
@@ -234,38 +388,21 @@
   }
 
   // ---------- full run -> board contract ----------
-  function measure({sides, top, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens};
-    Object.keys(o).forEach(key => o[key] == null && delete o[key]);
-    let S = sides.slice(0, k).map(img => analyzeSide(img, o));
-    // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
-    const pp = S.filter(Boolean).map(s => s.align.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
-    if (pp.length >= 2) S = S.map((s, i) => !s || Math.abs(s.align.pxPerMm / ppMed - 1) > .2 ? analyzeSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed})) : s);
-    const ok = S.filter(Boolean);
-    const hs = ok.map(s => s.helixDegEstimated).filter(Boolean).sort((a, b) => a - b);
-    const helixUsed = helixDeg || (hs.length ? hs[hs.length >> 1] : 30);
-    // re-run with one common helix angle so every flute uses the same geometry
-    const S2 = S.map((s, i) => s && (s.helixDegUsed === helixUsed ? s : analyzeSide(sides[i], Object.assign({}, o, {helixDeg: helixUsed, expectPxPerMm: s.align.pxPerMm}))));
-    const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
-    const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));
-    const result = {
-      flutes: k, diameterMm, helixDeg: r4(helixUsed), perFlute,
-      totals: {
-        vbMaxMm: r4(Math.max(0, ...perFlute.map(f => f.vbMaxMm))),
-        areaMm2: r4(perFlute.reduce((p, f) => p + f.areaMm2, 0)),
-        volumeMm3: r4(perFlute.reduce((p, f) => p + f.volumeMm3, 0))
-      }
-    };
-    const topRes = top ? analyzeTop(top, {diameterMm, sens}) : null;
-    const debug = {
-      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated}),
-      failedSides: S2.map((s, i) => s ? -1 : i).filter(i => i >= 0), top: topRes,
-      warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean),
-      strips: S2.map(s => s && {strip: s.strip, band: s.band}),
-      model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
-    };
-    return {result, debug};
+  function measure(args) {
+    const A = prepareAll(args);
+    return assemble(A, A.P.map(p => p && classicSegment(p)), args, 'classic');
+  }
+  // segmenter(prep, sideIndex) -> Promise<seg> (e.g. the AI stage); a side it rejects falls back to the classic segmenter
+  // segmenter.prepare(args) may ask for other prepare options (the AI stage wants a longer strip of unworn body)
+  async function measureAsync(args, segmenter, engine) {
+    const A = prepareAll(segmenter.prepare ? Object.assign({}, args, segmenter.prepare(args)) : args);
+    const fallback = (p, e) => { const s = classicSegment(p); s.aiError = String(e && e.message || e); return s; };
+    const segs = segmenter.batch   // batch: all sides of the tool at once (e.g. one memory bank pooled over every side)
+      ? (await segmenter.batch(A.P).catch(e => A.P.map(() => e))).map((s, i) => !A.P[i] ? null : !s || s instanceof Error ? fallback(A.P[i], s) : s)
+      : await Promise.all(A.P.map(async (p, i) => { if (!p) return null; try { return await segmenter(p, i); } catch (e) { return fallback(p, e); } }));
+    return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, gray, sobel, align, rectify, segment, measureBand, analyzeSide, analyzeTop, measure};
+  return {DEFAULTS, GLINT, glintMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+    prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });
