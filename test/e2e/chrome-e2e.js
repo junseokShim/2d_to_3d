@@ -236,6 +236,11 @@ const res = {console: [], errors: [], requests: [], checks: {}};
       M3.geo_tip > 300 && M3.geo_corner > 300 && Math.abs(M3.stlVsModel) < 2e-3 && Math.abs(M3.stlDv / M3.chipVolModel - 1) < .02 && / RH/.test(M3.hud);
     await ev(`Tool3D.render.view('iso');1`);
   }
+  // helix hand: default RH (the photo-texture guess is not applied); the toolbar toggle switches to LH (user) and the map follows the new model
+  res.checks.hand = JSON.parse(await ev(`JSON.stringify((()=>{const hud=()=>document.querySelector('#tool3d-view div').textContent.split('\n')[0],btn=()=>[...document.querySelectorAll('#tool3d-view button')].find(b=>/^(RH|LH)$/.test(b.textContent));
+    const o={def:hud(),btn0:btn().textContent};Tool3D.map3d.mock();btn().click();o.user=hud();o.btn1=btn().textContent;o.hand1=Tool3D.render.params.hand;o.mapAfter=!!Tool3D.render.map&&Tool3D.map3dResult.faces.length;
+    Tool3D.render.hand(null);o.back=hud();o.hand2=Tool3D.render.params.hand;Tool3D.render.setMap(null);return o})())`));
+  { const H = res.checks.hand; H.ok = /RH \(default\)/.test(H.def) && H.btn0 === 'RH' && /LH \(user\)/.test(H.user) && H.btn1 === 'LH' && H.hand1 === -1 && H.mapAfter === 5 && /RH \(default\)/.test(H.back) && H.hand2 === 1; }
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
@@ -244,7 +249,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
-    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok)};
+    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok)};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));
