@@ -339,8 +339,9 @@ $('#run').onclick = () => {
   const bad = q.findIndex(v => !v); if (bad >= 0) return msg(`측면 ${bad + 1}에서 공구 외곽을 찾지 못했습니다. 보조선에 맞춰 다시 찍어 주세요.`);
   const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
   det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
-  analyze();
+  if (window.Tool3D) Tool3D.wearResult = undefined;    // 이전 실행 결과가 남지 않도록
   try { window.Tool3D?.wear?.run?.(st.shots, {flutes: k, diameterMm: D}); } catch (e) { console.warn('wear:', e); }   // -> Tool3D.wearResult
+  analyze();
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 
@@ -401,12 +402,21 @@ function analyze() {
     ['정렬 보정(회전)', R.정렬보정.map(v => v.회전_deg + '°').join(', ')],
     ['마모 면적 측면/윗면', `${R.마모면적_측면_mm2} / ${R.마모면적_윗면_mm2} mm²`], ['마모 면적 합', R.마모면적_합_mm2 + ' mm²'],
     ['결손 깊이 평균/최대', `${R.평균결손깊이_mm} / ${R.최대결손깊이_mm} mm`], ['마모 체적(추정)', R.마모체적_추정_mm3 + ' mm³']];
+  const wr = window.Tool3D?.wearResult;   // ISO 8688-2 측정(js/wear) 결과가 우선, 위 v0.1 픽셀 추정은 참고용
+  if (wr && wr.totals) {
+    R.wear = wr;
+    rows.splice(5, 0, ['VBmax / VBavg (ISO 8688-2)', `${wr.totals.vbMaxMm.toFixed(3)} / ${(wr.perFlute.reduce((s, f) => s + f.vbAvgMm, 0) / wr.perFlute.length).toFixed(3)} mm`],
+      ['VB 날별 max', wr.perFlute.map(f => f.vbMaxMm.toFixed(3)).join(', ') + ' mm'],
+      ['마모 면적 / 체적 (ISO)', `${wr.totals.areaMm2.toFixed(3)} mm² / ${wr.totals.volumeMm3.toFixed(4)} mm³`]);
+    for (const r of rows.slice(8)) r[0] += ' [v0.1]';
+    if (wr.helixDeg) rows[2][1] = `${(+wr.helixDeg).toFixed(1)}° (v0.1: ${R.헬릭스각_추정_deg}°)`;
+  }
   $('#res').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
   $('#strips').replaceChildren(...A.map(a => a.overlay));
   R.mesh = buildMesh(D, k, sl, ph0, Lmm, Wt, Hs, Cs);
   R.atlas = atlas;
   view.set(R.mesh, atlas, Lmm);
-  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: beta, hand, phaseRad: ph0});   // render hook
+  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: wr && wr.helixDeg || beta, hand, phaseRad: ph0});   // render hook
 }
 
 // 파라메트릭 엔드밀 메쉬 (표시 좌표: y=공구축, 팁이 위)
