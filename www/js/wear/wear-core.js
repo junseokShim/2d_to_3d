@@ -42,45 +42,71 @@
   const r4 = v => Math.round(v * 1e4) / 1e4;
 
   // ---------- 1. auto align: tilt, silhouette, scale, tip ----------
+  // ---------- 1. auto align: tilt, silhouette, scale, tip ----------
   // Frame: u across the tool, v along the axis (down = toward shank). Image point = c + u*n + v*a,
   // n = (cos t, -sin t), a = (sin t, cos t), c = image centre.
+  // Silhouette search (v0.6). Candidate lines = peaks of the COUNT of edge pixels (horizontal non-max suppressed, gradient
+  // across the line) per u, so a long continuous line beats a short high-contrast one. A pair is scored by
+  //   min(support of both lines) x (busy inside - quiet outside) contrast x framing prior (tool near the centre, ~0.3 w wide),
+  // then each line is pushed outward to a weaker parallel edge when the region beyond it is quiet background (a dark tool
+  // on a dark mat has a faint silhouette and a strong flute edge just inside it).
+  // v0.5.4 took the outermost strong magnitude peaks: at a wrong tilt a helical flute edge projects as strongly as the
+  // silhouette, which gave tilts of -9..-12 deg and strips of background on real photos (docs/debug-vb0.md).
   function align(G, grad, diameterMm, expectSepPx) {
-    const {w, h} = G, {gx, gy} = grad, cx0 = w / 2, cy0 = h / 2;
+    const {w, h} = G, {gx, gy} = grad, cx0 = w / 2, cy0 = h / 2, T = 40;
     const mag = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) mag[i] = Math.hypot(gx[i], gy[i]);
-    const thr = quant(mag.filter((_, i) => i % 5 === 0), .85);
-    const E = [];                                   // strong edge pixels only (speed)
-    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (mag[i] > thr) E.push(i); }
+    const E = [];                                   // edge pixels: above T and a local max along x (tilt is within +-15 deg)
+    for (let y = 1; y < h - 1; y++) for (let x = 2; x < w - 2; x++) { const i = y * w + x; if (mag[i] >= T && mag[i] >= mag[i - 1] && mag[i] >= mag[i + 1]) E.push(i); }
+    // busyness = local mean gradient magnitude (tool: flutes, lands, glints; background: fine texture), sampled on a grid
+    const rb = Math.max(2, Math.round(Math.max(w, h) / 120)), I = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let s = 0; for (let x = 0; x < w; x++) { s += Math.min(300, mag[y * w + x]); I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + s; } }
+    const busy = (x, y) => { const x0 = Math.max(0, x - rb), x1 = Math.min(w, x + rb + 1), y0 = Math.max(0, y - rb), y1 = Math.min(h, y + rb + 1); return (I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]) / ((x1 - x0) * (y1 - y0)); };
+    const gs = Math.max(1, Math.round(Math.sqrt(w * h / 60000))), Bp = [];
+    for (let y = 0; y < h; y += gs) for (let x = 0; x < w; x += gs) Bp.push(x - cx0, y - cy0, busy(x, y));
     const U = Math.ceil(Math.hypot(w, h)), off = U / 2;
     const project = t => {
-      const c = Math.cos(t), s = Math.sin(t), P = new Float32Array(U + 1);
+      const c = Math.cos(t), s = Math.sin(t), C = new Float32Array(U + 1), Bs = new Float64Array(U + 2), Bn = new Float64Array(U + 2);
       for (const i of E) {
-        const x = i % w - cx0, y = (i / w | 0) - cy0, gu = gx[i] * c - gy[i] * s, gv = gx[i] * s + gy[i] * c;
-        if (Math.abs(gu) > 2.5 * Math.abs(gv)) P[Math.round(x * c - y * s + off)] += Math.abs(gu);
+        const gu = gx[i] * c - gy[i] * s, gv = gx[i] * s + gy[i] * c;
+        if (Math.abs(gu) >= T && Math.abs(gu) >= 2 * Math.abs(gv)) C[Math.round((i % w - cx0) * c - ((i / w | 0) - cy0) * s + off)]++;
       }
-      const Q = new Float32Array(U + 1);            // light smoothing
-      for (let i = 1; i < U; i++) Q[i] = .25 * P[i - 1] + .5 * P[i] + .25 * P[i + 1];
-      return Q;
+      for (let j = 0; j < Bp.length; j += 3) { const k = Math.round(Bp[j] * c - Bp[j + 1] * s + off) + 1; Bs[k] += Bp[j + 2]; Bn[k]++; }
+      for (let k = 1; k <= U + 1; k++) { Bs[k] += Bs[k - 1]; Bn[k] += Bn[k - 1]; }
+      const Q = new Float32Array(U + 1); for (let i = 1; i < U; i++) Q[i] = C[i - 1] + C[i] + C[i + 1];
+      const mb = (p, q) => { p = Math.max(0, Math.round(p)); q = Math.min(U + 1, Math.round(q)); const n = Bn[q] - Bn[p]; return n > 5 ? (Bs[q] - Bs[p]) / n : NaN; };
+      return {Q, mb};
     };
-    const pair = Q => {                             // outermost strong peaks = silhouette
-      let mx = 0; for (const q of Q) mx = Math.max(mx, q);
-      const pk = []; for (let i = 1; i < Q.length - 1; i++) if (Q[i] >= Q[i - 1] && Q[i] > Q[i + 1] && Q[i] > .35 * mx) pk.push(i);
-      if (pk.length < 2) return null;
-      if (expectSepPx) {                            // scale known from the other photos: best pair of about that width
-        let b = null;
-        for (const l of pk) for (const r of pk) if (r > l && Math.abs(r - l - expectSepPx) < .15 * expectSepPx && (!b || Q[l] + Q[r] > b.score)) b = {l, r, score: Q[l] + Q[r]};
-        return b;
+    const pair = ({Q, mb}) => {
+      const pk = []; for (let i = 1; i < U; i++) if (Q[i] >= Q[i - 1] && Q[i] > Q[i + 1]) pk.push(i);
+      pk.sort((p, q) => Q[q] - Q[p]).splice(14);
+      let b = null;
+      for (const l of pk) for (const r of pk) {
+        const sp = r - l;
+        if (expectSepPx ? Math.abs(sp - expectSepPx) >= .15 * expectSepPx : sp < Math.max(8, .03 * Math.min(w, h)) || sp > .85 * w) continue;
+        const bi = mb(l + .1 * sp, r - .1 * sp), bl = mb(l - .3 * sp, l - .06 * sp), br = mb(r + .06 * sp, r + .3 * sp);
+        const bo = Math.max(Number.isNaN(bl) ? 0 : bl, Number.isNaN(br) ? 0 : br), con = (bi - bo) / (bi + bo);
+        if (!(con > 0)) continue;
+        const pc = (l + r) / 2 - off, prior = Math.exp(-.5 * (pc / (.3 * w)) ** 2 - (expectSepPx ? 0 : .5 * (Math.log(sp / (.3 * w)) / .7) ** 2));
+        const score = Math.min(Q[l], Q[r]) / h * con * prior;
+        if (!b || score > b.score) b = {l, r, score, con};
       }
-      const l = pk[0], r = pk[pk.length - 1];
-      return r - l < .03 * Math.min(w, h) ? null : {l, r, score: Q[l] + Q[r]};
+      return b;
     };
     let best = null;
-    const tryT = t => { const p = pair(project(t)); if (p && (!best || p.score > best.score)) best = {t, ...p}; };
+    const tryT = t => { const P = project(t), p = pair(P); if (p && (!best || p.score > best.score)) best = Object.assign({t, P}, p); };
     for (let a = -15; a <= 15; a += 1) tryT(a * DEG);
     if (!best) return null;
-    const t1 = best.t; for (let a = -1; a <= 1.001; a += .1) tryT(t1 + a * DEG);
+    const t1 = best.t; for (let a = -.9; a <= .901; a += .1) tryT(t1 + a * DEG);
+    { // outward to the true silhouette: a parallel edge within 15 % of the width, >= 30 % of the support, quiet beyond it
+      const {Q, mb} = best.P, sp = best.r - best.l, qi = mb(best.l + .1 * sp, best.r - .1 * sp);
+      if (!expectSepPx) {
+        for (let u = best.l - 1; u >= best.l - .15 * sp; u--) if (Q[u] >= Q[u - 1] && Q[u] > Q[u + 1] && Q[u] >= .3 * Q[best.l] && mb(u - .3 * sp, u - .04 * sp) < .6 * qi) best.l = u;
+        for (let u = best.r + 1; u <= best.r + .15 * sp; u++) if (Q[u] >= Q[u - 1] && Q[u] > Q[u + 1] && Q[u] >= .3 * Q[best.r] && mb(u + .04 * sp, u + .3 * sp) < .6 * qi) best.r = u;
+      }
+    }
     // sub-pixel peak position (parabola)
-    const Q = project(best.t), sub = i => { const d = Q[i - 1] - 2 * Q[i] + Q[i + 1]; return d < 0 ? i + .5 * (Q[i - 1] - Q[i + 1]) / d : i; };
+    const Q = best.P.Q, sub = i => { const d = Q[i - 1] - 2 * Q[i] + Q[i + 1]; return d < 0 ? i + .5 * (Q[i - 1] - Q[i + 1]) / d : i; };
     const uL = sub(best.l) - off, uR = sub(best.r) - off, t = best.t, c = Math.cos(t), s = Math.sin(t);
     const sep = uR - uL, ppm = sep / diameterMm, uC = (uL + uR) / 2;
     const toImg = (u, v) => [cx0 + u * c + v * s, cy0 - u * s + v * c];
