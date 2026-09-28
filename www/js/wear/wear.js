@@ -17,11 +17,13 @@
   }
 
   W.toImage = toImage;
+  // opts.enhance: segment on Tool3D.enhance output (geometry still from the original photo); null when not available
+  W.enhanceSides = (sides, opts) => opts && opts.enhance && T.enhance && T.enhance.enhance ? sides.map(s => s && T.enhance.enhance(s)) : null;
 
   W.run = function (shots, opts) {
     const k = opts.flutes, sides = shots.slice(0, k).filter(Boolean).map(toImage), top = shots[k] ? toImage(shots[k]) : null;
     if (sides.length < k) throw new Error(`wear: need ${k} side photos, got ${sides.length}`);
-    const {result, debug} = W.measure(Object.assign({}, opts, {sides, top}));
+    const {result, debug} = W.measure(Object.assign({}, opts, {sides, top, enhanced: W.enhanceSides(sides, opts)}));
     T.wearResult = result; T.wearDebug = debug;
     window.dispatchEvent(new CustomEvent('tool3d:wear', {detail: result}));
     return result;

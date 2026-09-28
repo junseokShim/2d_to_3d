@@ -61,7 +61,7 @@
     const cols = [['Flute', 34], ['VBmax', 70], ['VBB avg', 70], ['VBC corner', 70], ['VBN notch', 70], ['Area mm2', 50], ['Vol. mm3', 52], ['Decision', 107]];
     P.rect(L, y - 10, R - L, 14, '#e8edf2'); let x = L + 4; cols.forEach(([h, w]) => { P.text(x, y, h, 8, {bold: true}); x += w; }); y += 14;
     d.flutes.forEach((e, i) => {
-      const q = e.q, cells = ['F' + (i + 1) + (e.edited ? '*' : ''), f3(q.vbMax.v) + ' +- ' + f3(q.vbMax.U), f3(q.vbb.v) + ' +- ' + f3(q.vbb.U), f3(q.vbc.v) + ' +- ' + f3(q.vbc.U), f3(q.vbn.v) + ' +- ' + f3(q.vbn.U),
+      const q = e.q, cells = ['F' + (i + 1) + (e.edited ? '*' : '') + ({'operator-assisted': ' (OA)', 'awaiting-operator': ' (unconfirmed)'}[e.mode] || ''), f3(q.vbMax.v) + ' +- ' + f3(q.vbMax.U), f3(q.vbb.v) + ' +- ' + f3(q.vbb.U), f3(q.vbc.v) + ' +- ' + f3(q.vbc.U), f3(q.vbn.v) + ' +- ' + f3(q.vbn.U),
         e.failed ? '-' : e.areaMm2.toFixed(3), e.failed ? '-' : e.volumeMm3.toFixed(4), e.failed ? 'not measured' : DEC[e.status.decision]];
       x = L + 4; cells.forEach((c, j) => { P.text(x, y, c, 8.5, {bold: j === 1}); x += cols[j][1]; });
       P.rect(R - 12, y - 7, 8, 8, light[e.status.light]); P.line(L, y + 4, R, y + 4, .3, '#d5d9e0'); y += 14;
@@ -145,7 +145,7 @@ h2{font-size:13px;margin:12px 0 4px}.note{font-size:10px;color:#445}footer{margi
 <div><span>Diameter</span>Ø ${d.D} mm</div><div><span>Flutes</span>${d.k}</div><div><span>Helix</span>${(+d.helixDeg).toFixed(1)}°</div>
 <div><span>Engine</span>${esc(d.engine || '-')}</div><div><span>Scale</span>${d.calib.pxPerMm.toFixed(2)} ± ${d.calib.U_pxPerMm.toFixed(2)} px/mm (${d.calib.method})</div><div><span>Limit</span>${f3(d.limitMm)} mm (warn ${Math.round(d.warnFrac * 100)} %)</div></div>
 <table><tr><th>Flute</th><th>VBmax</th><th>VBB avg</th><th>VBC corner</th><th>VBN notch</th><th>Area mm²</th><th>Vol. mm³</th><th>Decision</th></tr>
-${d.flutes.map((e, i) => `<tr><td>F${i + 1}${e.edited ? '*' : ''}</td>${q(e)}<td>${e.failed ? '-' : e.areaMm2.toFixed(3)}</td><td>${e.failed ? '-' : e.volumeMm3.toFixed(4)}</td><td>${DEC[e.status.decision]} <i class="dot" style="background:${light[e.status.light]}"></i></td></tr>`).join('')}</table>
+${d.flutes.map((e, i) => `<tr><td>F${i + 1}${e.edited ? '*' : ''}${e.mode === 'operator-assisted' || e.mode === 'awaiting-operator' ? ` <small>${e.mode}</small>` : ''}</td>${q(e)}<td>${e.failed ? '-' : e.areaMm2.toFixed(3)}</td><td>${e.failed ? '-' : e.volumeMm3.toFixed(4)}</td><td>${DEC[e.status.decision]} <i class="dot" style="background:${light[e.status.light]}"></i></td></tr>`).join('')}</table>
 <p class="note">mm, value ± U (k=2). * = corrected by the operator.</p>
 <div class="imgs">${strips}${snap ? `<figure class="snap"><img src="${snap.toDataURL('image/jpeg', .88)}"><figcaption>3D model with mapped wear</figcaption></figure>` : ''}</div>
 <h2>VB(z) profile along the cutting edge</h2>${svg}

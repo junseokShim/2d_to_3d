@@ -21,6 +21,9 @@ button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
 .slot{border:1px dashed var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;align-items:stretch;text-align:center;font-size:13px}
 .slot .th{height:110px;display:flex;align-items:center;justify-content:center;background:#eef0f3;border-radius:6px;color:var(--mut);overflow:hidden}
 .slot .th canvas{max-height:110px;max-width:100%}
+.qb{font-size:12px;font-weight:600;border-radius:6px;padding:2px 6px}
+.qb.q-pass{background:#e3f5e9;color:#16723a}.qb.q-warn{background:#fff4d6;color:#8a6200}.qb.q-fail{background:#fde4e2;color:#a8261e}.qb.q-run{background:#eef0f3;color:var(--mut)}
+.qadv{margin:0;padding-left:16px;text-align:left;font-size:11px;color:var(--mut)}
 #gl{width:100%;height:420px;background:#20242c;border-radius:8px;touch-action:none;display:block}
 table{border-collapse:collapse;width:100%;font-size:14px;margin-top:10px}
 td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
@@ -83,6 +86,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 </div>
 
 <script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script>
+<script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
 <script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
 <script>
 const $ = s => document.querySelector(s);
@@ -115,10 +119,35 @@ function renderSlots() {
     d.innerHTML = `<div class="th">없음</div><b>${i === st.k ? '윗면' : `측면 ${i + 1} (${Math.round(i * 360 / st.k)}°)`}</b>
       <button>촬영</button><label class="btn">불러오기<input type="file" accept="image/*" hidden></label>`;
     if (st.shots[i]) d.querySelector('.th').replaceChildren(thumb(st.shots[i]));
+    if (st.shots[i] && i < st.k) d.querySelector('.th').after(qualityBadge(i));
     d.querySelector('button').onclick = () => openCam(i);
     d.querySelector('input').onchange = e => loadFiles([...e.target.files], i);
     box.append(d);
   }
+}
+
+// 촬영 품질 배지 (js/enhance/quality.js): 사진을 불러오자마자 측면마다 pass/warn/fail + 재촬영 조언
+const qCache = new WeakMap();           // shot -> {D, r}
+const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '✕ 재촬영 권장'};
+function shotQuality(i) {
+  const s = st.shots[i], Q = window.Tool3D?.enhance?.quality, W = window.Tool3D?.wear; if (!s || !Q || !W?.toImage) return null;
+  const c = qCache.get(s); if (c && c.D === st.D) return c.r;
+  let r = null; try { r = Q.assess(W.toImage(s), {diameterMm: st.D}); } catch (e) { console.warn('quality:', e); }
+  qCache.set(s, {D: st.D, r}); return r;
+}
+function qualityBadge(i) {
+  const box = document.createElement('div'); box.className = 'qbox'; box.dataset.q = i;
+  const fill = r => {
+    if (!r) { box.innerHTML = ''; return; }
+    box.dataset.verdict = r.verdict;
+    const bad = r.checks.filter(c => c.level !== 'ok');
+    box.innerHTML = `<div class="qb q-${r.verdict}" title="${bad.map(c => c.msg).join(' · ')}">${Q_LBL[r.verdict]}</div>` +
+      (r.advice.length ? `<ul class="qadv">${r.advice.map(a => `<li>${a}</li>`).join('')}</ul>` : '');
+  };
+  const c = qCache.get(st.shots[i]);
+  if (c && c.D === st.D) fill(c.r);
+  else { box.innerHTML = '<div class="qb q-run">품질 확인 중…</div>'; setTimeout(() => fill(shotQuality(i)), 30 + 30 * i); }   // 무거운 계산은 썸네일을 그린 뒤
+  return box;
 }
 
 async function loadFiles(files, start) {
@@ -370,7 +399,7 @@ $('#run').onclick = async () => {
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
-  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine});   // ④ 측정 패널 (js/metro)
+  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine, quality: st.shots.slice(0, k).map((_, i) => shotQuality(i))});   // ④ 측정 패널 (js/metro)
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 

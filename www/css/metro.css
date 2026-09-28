@@ -53,3 +53,9 @@
 .mt-bud td,.mt-bud th{font-size:12px}
 .mt-exp{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 @media(max-width:600px){.mt-f input,.mt-f input[type=number]{width:calc(50vw - 40px)}.mt-tab{font-size:11.5px}.mt-tab td small{display:block}#mtCanvas{height:56vh}}
+.mt-assist{margin:6px 0;padding:8px 10px;border-radius:6px;background:#fff4d6;border:1px solid #e0a100;color:#5a4200;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.mt-assist[hidden]{display:none}
+.mt-assist[data-mode="operator-assisted"]{background:#e3f5e9;border-color:#1e9e4a;color:#16723a}
+.mt-assist button{margin-left:auto}
+.mt-mode{font-size:10.5px;padding:1px 4px;border-radius:4px;background:#fff4d6;color:#8a6200;white-space:nowrap}
+.mt-mode.operator-assisted{background:#e3f5e9;color:#16723a}

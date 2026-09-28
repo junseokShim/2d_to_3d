@@ -65,6 +65,55 @@
     for (let i = 0; i < N; i++) nodeRows[i] = i * (n - 1) / (N - 1);
     return {strip, D, n, a0, b0, has, edge, nodeRows, nodes: {a: new Float32Array(N), b: new Float32Array(N)}, edited: false};
   }
+  // ---------- operator-assisted fallback (auto band failed / low confidence) ----------
+  // Cutting-edge line from geometry: on the rectified strip a helical edge at arc position s(z) = s0 + sgn*z*tan(helix)
+  // projects to x = cx + R*sin(s/Rmm). s0 and the hand (sgn) are searched for the strongest consistent step along that
+  // curve (the edge is the sharpest long feature on the flank side: groove/margin vs land). The flank (wear) side is the
+  // brighter one; the flute groove ahead of the edge is dark. The operator then drags the wear boundary (and the edge
+  // line if needed); nothing here measures VB.
+  function edgeGuess(strip, D, o) {
+    o = opt(o, D);
+    const {w, h, g, cx, R, top, ppm} = strip, n = Math.max(1, Math.min(h, top + Math.round(o.zoneMm * ppm)) - top), Rmm = R / ppm;
+    const tb = Math.tan((o.helixDeg == null ? 30 : o.helixDeg) * DEG), at = (x, y) => {
+      const x0 = Math.floor(x), f = x - x0; if (x0 < 0 || x0 >= w - 1) return NaN;
+      return g[y * w + x0] * (1 - f) + g[y * w + x0 + 1] * f;
+    };
+    const X = (s0, sgn, r) => { const a = (s0 + sgn * (r + .5) / ppm * tb) / Rmm; return Math.abs(a) > 1.15 ? NaN : cx + R * Math.sin(a); };
+    const rs = []; for (let r = 0; r < n; r += Math.max(1, Math.round(n / 60))) rs.push(r);
+    let best = null;
+    for (const sgn of [1, -1]) for (let s0 = -1.15 * Rmm; s0 <= 1.15 * Rmm; s0 += .5 / ppm) {
+      let sum = 0, m = 0, pos = 0;
+      for (const r of rs) {
+        const x = X(s0, sgn, r); if (Number.isNaN(x)) continue;
+        const y = top + r, d = (at(x + 1, y) + at(x + 2, y) - at(x - 1, y) - at(x - 2, y)) / 2; if (Number.isNaN(d)) continue;
+        sum += d; pos += Math.abs(d); m++;
+      }
+      if (m < .6 * rs.length) continue;
+      const sc = (Math.abs(sum) + pos) / 2 / m;   // mean step, favouring a consistent sign along the edge
+      if (!best || sc > best.score) best = {score: sc, s0, sgn};
+    }
+    if (!best) return null;
+    const x = new Float32Array(n); for (let r = 0; r < n; r++) { const v = X(best.s0, best.sgn, r); x[r] = Number.isNaN(v) ? (r ? x[r - 1] : cx) : v; }
+    // side: mean grey 0.05..0.15 D either side of the line; the dark one is the groove, the band grows the other way
+    const win = side => { let s = 0, c = 0; for (const r of rs) for (let k = .05 * D * ppm; k <= .15 * D * ppm; k += 1) { const v = at(x[r] + side * k, top + r); if (!Number.isNaN(v)) { s += v; c++; } } return c ? s / c : NaN; };
+    const L = win(-1), Rr = win(1), edge = Number.isNaN(L) || Number.isNaN(Rr) ? 'a' : L < Rr ? 'a' : 'b', fs = edge === 'a' ? 1 : -1;
+    // bright margin / edge glint: groove -> bright ridge (< 0.4 mm) -> land. The edge is the ridge's flank-side border.
+    const stepAt = t => { let s = 0, c = 0; for (const r of rs) { const xx = x[r] + fs * t, y = top + r, d = fs * (at(xx + 1, y) + at(xx + 2, y) - at(xx - 1, y) - at(xx - 2, y)) / 2; if (!Number.isNaN(d)) { s += d; c++; } } return c ? s / c : 0; };
+    const up = stepAt(0); let ridge = null;
+    if (up > 0) for (let t = 2; t <= .4 * ppm; t += .5) { const d = -stepAt(t); if (d > .3 * up && (!ridge || d > ridge.d)) ridge = {t, d}; }
+    if (ridge) for (let r = 0; r < n; r++) x[r] += fs * ridge.t;
+    return {x, edge, n, score: r4(best.score), s0Mm: r4(best.s0), hand: best.sgn, contrast: r4(Math.abs(L - Rr) || 0), ridgeMm: ridge ? r4(ridge.t / ppm) : 0};
+  }
+  // flute model for the assisted path: zero-width band on the guessed edge line (drag the wear boundary to open it)
+  function assistFlute(strip, D, o, reason) {
+    const F = flute(strip, new Uint8Array(strip.w * strip.h), D, o), G = edgeGuess(strip, D, o);
+    if (G) { F.edge = G.edge; for (let r = 0; r < F.n; r++) { F.a0[r] = G.x[r] + .5; F.b0[r] = G.x[r] - .5; } }
+    F.assist = {reason: reason || 'no-band', guess: !!G, score: G ? G.score : 0};
+    return F;
+  }
+  // result mode: auto | edited | awaiting-operator (assisted, not yet confirmed) | operator-assisted
+  const mode = F => F.assist ? (F.edited ? 'operator-assisted' : 'awaiting-operator') : F.edited ? 'edited' : 'auto';
+
   function delta(F, side, r) {
     const R = F.nodeRows, d = F.nodes[side], N = R.length;
     if (r <= R[0]) return d[0]; if (r >= R[N - 1]) return d[N - 1];
@@ -121,7 +170,7 @@
     return {
       q, vbMaxMm: q.vbMax.v, vbAvgMm: q.vbAvg.v, areaMm2: r4(area), volumeMm3: r4(vol), profile, wornLengthMm: r4(worn.length * dz),
       zAtMaxMm: worn.length ? r4(z(argmax(worn))) : null, rows: {vb, A, B, dz}, zones: {cornerMm: o.cornerMm, apMm: o.apMm, notchHalfMm: o.notchHalfMm, zoneMm: r4(n * dz)},
-      edited: F.edited, edge: F.edge, sigmaPx: sig
+      edited: F.edited, edge: F.edge, sigmaPx: sig, mode: mode(F), assist: F.assist ? F.assist.reason : null
     };
   }
 
@@ -178,8 +227,8 @@
     row(['scale_px_per_mm', rep.calib.pxPerMm]); row(['scale_method', rep.calib.method]); row(['scale_U_rel_k2', r4(2 * rep.calib.uRel)]);
     row(['limit_VB_mm', rep.limitMm]); row(['decision_rule', 'ISO 14253-1: conform if VB+U<limit, nonconform if VB-U>limit']);
     row([]);
-    row(['flute', 'VBmax_mm', 'U_VBmax', 'VBavg_mm', 'U_VBavg', 'VBB_mm', 'U_VBB', 'VBBmax_mm', 'U_VBBmax', 'VBC_mm', 'U_VBC', 'VBN_mm', 'U_VBN', 'area_mm2', 'volume_mm3', 'z_at_max_mm', 'edited', 'decision', 'light']);
-    rep.flutes.forEach((e, i) => { const q = e.q; row([i + 1, q.vbMax.v, q.vbMax.U, q.vbAvg.v, q.vbAvg.U, q.vbb.v, q.vbb.U, q.vbbMax.v, q.vbbMax.U, q.vbc.v, q.vbc.U, q.vbn.v, q.vbn.U, e.areaMm2, e.volumeMm3, e.zAtMaxMm, e.edited ? 1 : 0, e.status.decision, e.status.light]); });
+    row(['flute', 'VBmax_mm', 'U_VBmax', 'VBavg_mm', 'U_VBavg', 'VBB_mm', 'U_VBB', 'VBBmax_mm', 'U_VBBmax', 'VBC_mm', 'U_VBC', 'VBN_mm', 'U_VBN', 'area_mm2', 'volume_mm3', 'z_at_max_mm', 'edited', 'decision', 'light', 'mode']);
+    rep.flutes.forEach((e, i) => { const q = e.q; row([i + 1, q.vbMax.v, q.vbMax.U, q.vbAvg.v, q.vbAvg.U, q.vbb.v, q.vbb.U, q.vbbMax.v, q.vbbMax.U, q.vbc.v, q.vbc.U, q.vbn.v, q.vbn.U, e.areaMm2, e.volumeMm3, e.zAtMaxMm, e.edited ? 1 : 0, e.status.decision, e.status.light, e.mode || 'auto']); });
     row([]);
     row(['z_mm'].concat(rep.flutes.map((_, i) => 'VB_F' + (i + 1) + '_mm')));
     const nz = Math.max(...rep.flutes.map(e => e.profile.length));
@@ -246,6 +295,6 @@
     return {slope: r4(slope), per: p.some(e => e.cutMin != null) ? 'min' : 'measurement'};
   }
 
-  return {DEFAULTS, opt, flute, delta, bounds, edgeX, setNode, resetNodes, evaluate, status, calibration, dist, caliper, manualU, csv, PdfPage, pdfBytes,
+  return {DEFAULTS, opt, flute, edgeGuess, assistFlute, mode, delta, bounds, edgeX, setNode, resetNodes, evaluate, status, calibration, dist, caliper, manualU, csv, PdfPage, pdfBytes,
     HKEY, history, historyAdd, historyAll, trend, r4};
 });
