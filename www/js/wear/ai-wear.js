@@ -18,7 +18,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
   const NET_TOOL_PX = 320;   // tool diameter in network pixels (one feature cell = D/40)
-  const STRIDE = 8, PAD = 32, PROJ = 128, BANK = 2000;
+  const STRIDE = 8, PAD = 32, PROJ = 128, BANK = 2000, COLW = 2, AIK = 1.5, HOLD = 4, MINSEP = 25;
 
   function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
   const quant = (a, p) => { const b = Float32Array.from(a).sort(); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : 0; };
@@ -61,34 +61,53 @@
   }
   const sample = (a, n, seed) => { if (a.length <= n) return a; const r = rng(seed), b = a.slice(); for (let i = 0; i < n; i++) { const j = i + Math.floor(r() * (b.length - i)); [b[i], b[j]] = [b[j], b[i]]; } return b.slice(0, n); };
 
-  // features {data (C x fh x fw), C, fh, fw} + strip -> anomaly score per cell (1 = the body's own 99th percentile)
-  function anomalyCells(feat, strip, zoneRows, refRows, cellFn) {
-    const {C, fh, fw, data} = feat, n = fh * fw, Z = project(data, C, n), {g, w, cx, R, top} = strip;
-    const kind = new Int8Array(n), rowOf = new Int32Array(n);   // 1 = query (wear zone), 2 = reference body
+  // one side: features -> projected patch vectors, cell kind (1 = query in the wear zone, 2 = unworn body reference),
+  // cell row and column key (column relative to the tool axis, in cells; same key = same place on the cylinder)
+  function cellsOf(feat, strip, zoneRows, refRows, cellFn) {
+    const {C, fh, fw, data} = feat, n = fh * fw, Z = project(data, C, n), {g, w, cx, R, top} = strip, cw = STRIDE * 2 * R / NET_TOOL_PX;
+    const kind = new Int8Array(n), rowOf = new Int32Array(n), col = new Int16Array(n);
     for (let i = 0; i < fh; i++) for (let j = 0; j < fw; j++) {
-      const [xs, ys] = cellFn(i, j), c = i * fw + j; rowOf[c] = i;
+      const [xs, ys] = cellFn(i, j), c = i * fw + j; rowOf[c] = i; col[c] = Math.round((xs - cx) / cw);
       const xi = Math.round(xs), yi = Math.round(ys);
       if (Math.abs(xs - cx) >= R || yi >= strip.h || xi < 0 || xi >= w) continue;
-      if (yi >= top - 2 && yi < top + zoneRows) kind[c] = 1;
+      if (ys >= top && yi < top + zoneRows) kind[c] = 1;   // mirrored rows above the tip are padding, never queried
       // reference: fully inside the photo (cell +-1 cell) and beyond the zone
       else if (refRows && yi >= refRows[0] && yi < refRows[1] - STRIDE) {
         let ok = true; for (const dy of [-6, 0, 6]) for (const dx of [-6, 0, 6]) { const yy = Math.round(ys + dy / (NET_TOOL_PX / (2 * R))), xx = Math.round(xs + dx / (NET_TOOL_PX / (2 * R))); if (yy < 0 || yy >= strip.h || xx < 0 || xx >= w || Number.isNaN(g[yy * w + xx])) ok = false; }
         if (ok) kind[c] = 2;
       }
     }
-    const ref = [], qry = []; for (let c = 0; c < n; c++) { if (kind[c] === 2) ref.push(c); else if (kind[c] === 1) qry.push(c); }
-    if (ref.length < 60) throw new Error(`AI: too little unworn body in the photo for a reference (${ref.length} cells)`);
-    // calibration: body cells scored against a bank built from the other block of rows (blocks of 4 cell rows)
-    const A = ref.filter(c => (rowOf[c] >> 2) % 2 === 0), B = ref.filter(c => (rowOf[c] >> 2) % 2 === 1), self = [];
-    if (A.length >= 20 && B.length >= 20) {
-      const bA = sample(A, BANK, 1), bB = sample(B, BANK, 2);
-      for (const c of sample(B, 400, 3)) self.push(nn(Z, c, Z, bA));
-      for (const c of sample(A, 400, 4)) self.push(nn(Z, c, Z, bB));
-    }
-    const tau = Math.max(1e-6, self.length ? quant(self, .99) : 1), bank = sample(ref, BANK, 5), score = new Float32Array(n);
-    for (const c of qry) score[c] = nn(Z, c, Z, bank) / tau;
-    return {score, kind, tau, nRef: ref.length, nQuery: qry.length};
+    return {Z, kind, rowOf, col, n};
   }
+
+  // PatchCore with a memory bank built at run time from the unworn body of the SAME tool: the body rows of every side
+  // photo beyond the wear zone, pooled over all sides (each side shows the flutes at another helix phase). A query patch is
+  // compared only with bank patches of its own column band (+-COLW cells): same curvature, silhouette and background.
+  // Score = nearest-neighbour distance / tau, tau = 99th percentile of body-vs-body distances with the bank rows within
+  // +-HOLD cell rows of the probe held out on every side (other flutes repeat the same rows, so holding out a side is not enough).
+  function anomalyPooled(sides) {
+    const E = [];   // bank entries: side, cell, column, cell row
+    sides.forEach((S, s) => { for (let c = 0; c < S.n; c++) if (S.kind[c] === 2) E.push({s, c, col: S.col[c], row: S.rowOf[c]}); });
+    if (E.length < 60) throw new Error(`AI: too little unworn body in the photos for a reference (${E.length} cells)`);
+    const Zb = new Float32Array(E.length * PROJ);
+    E.forEach((e, k) => Zb.set(sides[e.s].Z.subarray(e.c * PROJ, (e.c + 1) * PROJ), k * PROJ));
+    const byCol = new Map();
+    E.forEach((e, k) => { for (let d = -COLW; d <= COLW; d++) { const q = e.col + d; if (!byCol.has(q)) byCol.set(q, []); byCol.get(q).push(k); } });
+    const self = [];
+    for (const k of sample(E.map((_, k) => k), 800, 3)) {
+      const e = E[k], b = (byCol.get(e.col) || []).filter(m => Math.abs(E[m].row - e.row) >= HOLD);
+      if (b.length >= 8) self.push(nn(Zb, k, Zb, sample(b, BANK, k)));
+    }
+    const tau = Math.max(1e-6, self.length >= 40 ? quant(self, .99) : 1), banks = new Map();
+    for (const [c, b] of byCol) banks.set(c, sample(b, BANK, 5 + c));
+    return sides.map(S => {
+      const score = new Float32Array(S.n); let nQuery = 0;
+      for (let c = 0; c < S.n; c++) if (S.kind[c] === 1) { const b = banks.get(S.col[c]); nQuery++; score[c] = b && b.length ? nn(S.Z, c, Zb, b) / tau : 0; }
+      return {score, tau, nRef: E.length, nQuery};
+    });
+  }
+  // single photo (bank = its own body only)
+  const anomalyCells = (feat, strip, zoneRows, refRows, cellFn) => anomalyPooled([cellsOf(feat, strip, zoneRows, refRows, cellFn)])[0];
 
   // cell scores -> per-pixel map on the strip (bilinear between cell centres)
   function upsample(score, fh, fw, strip, sc) {
@@ -104,33 +123,51 @@
   }
 
   // runFeatures(x Float32Array, H, W) -> Promise<{data, C, fh, fw}>;  core = wear-core api
+  // Returns segmentAI(P) (one photo, own bank) with segmentAI.batch(Ps) (all sides of one tool, pooled bank; measureAsync uses it).
   function createSegmenter(runFeatures, core, opts = {}) {
-    const aiK = opts.aiK || 1;
-    return async function segmentAI(P) {
-      const {strip, zoneRows, o} = P;
+    const aiK = opts.aiK || AIK;
+    async function featuresOf(P) {
+      const {strip, zoneRows} = P;
       if (!strip.rgb) throw new Error('AI: colour strip missing');
       const inp = netInput(strip), feat = await runFeatures(inp.x, inp.Hn, inp.Wn);
-      const rows = core.refRows(strip, zoneRows);
-      const an = anomalyCells(feat, strip, zoneRows, rows, inp.cell);
+      return {P, inp, feat, cells: cellsOf(feat, strip, zoneRows, core.refRows(strip, zoneRows), inp.cell)};
+    }
+    function finish({P: {strip, zoneRows, o}, inp, feat}, an) {
       const {w, h, g, cx, R, top} = strip, up = upsample(an.score, feat.fh, feat.fw, strip, inp.sc), y1 = Math.min(h, top + zoneRows);
       const region = new Uint8Array(w * h);
       for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && up[i] > aiK) region[i] = 1; }
-      // pixel boundary: colour score of the classic model, restricted to the AI region grown by one feature cell
-      const cls = core.segmentColor(strip, zoneRows, o), grow = Math.ceil(STRIDE / inp.sc);
+      // pixel boundary (the AI map is one feature cell = D/40 coarse): nearest-prototype colour split inside the AI region
+      // grown by one cell. Wear prototype = median colour of the region's highest-scoring third; body prototypes = the
+      // k-means colours of the unworn body (classic colour model). A pixel is worn when it is nearer the wear prototype.
+      const cls = core.segmentColor(strip, zoneRows, o), grow = Math.ceil(STRIDE / inp.sc), cm = cls.colorModel, rgb = strip.rgb;
       let seg;
-      if (cls.score) {
-        const near = dilate(region, w, h, grow), raw = new Uint8Array(w * h);
-        let nr = 0, ni = 0; for (let i = 0; i < w * h; i++) { if (region[i]) nr++; if (near[i] && cls.score[i] > .5) { raw[i] = 1; ni++; } }
-        if (nr && ni >= .25 * nr) {   // wear shows colour contrast: pixel-accurate edge (half contrast)
-          const sc2 = new Float32Array(w * h); for (let i = 0; i < w * h; i++) sc2[i] = raw[i] ? Math.max(cls.score[i], 1.0001) : 0;
-          seg = core.refineBand(strip, core.bandFromMask(strip, raw), sc2);
-          seg.edge = 'color';
+      if (cm) {
+        const idx = []; for (let i = 0; i < w * h; i++) if (region[i]) idx.push(i);
+        idx.sort((a, b) => up[b] - up[a]);
+        const hi = idx.slice(0, Math.max(1, Math.ceil(idx.length / 3))), med = c => quant(hi.map(i => rgb[3 * i + c]), .5), P0 = [med(0), med(1), med(2)];
+        const d2 = (p, q) => (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2, px = i => [rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]];
+        const dBody = p => Math.min(...cm.C.map(q => d2(p, q))), sep = Math.sqrt(dBody(P0));
+        if (idx.length && sep >= MINSEP) {   // wear has its own colour: pixel-accurate edge
+          const near = dilate(region, w, h, grow), raw = new Uint8Array(w * h);
+          for (let i = 0; i < w * h; i++) if (near[i]) { const p = px(i); if (d2(p, P0) < dBody(p)) raw[i] = 1; }
+          seg = {band: core.bandFromMask(strip, raw), edge: 'color', wearRGB: P0.map(Math.round), sep: Math.round(sep)};
         }
       }
       if (!seg) { seg = {band: core.bandFromMask(strip, region), edge: 'ai-map'}; }   // texture-only wear: AI map boundary
+      let mx = 0; for (const v of an.score) if (v > mx) mx = v;
       return Object.assign(seg, {thr: an.tau, med: 0, sig: 0, y1, method: 'ai', classicBand: cls.band,
-        ai: {tau: an.tau, nRef: an.nRef, nQuery: an.nQuery, fh: feat.fh, fw: feat.fw, maxScore: Math.max(0, ...an.score), cells: an.score, sc: inp.sc}});
+        ai: {tau: an.tau, nRef: an.nRef, nQuery: an.nQuery, fh: feat.fh, fw: feat.fw, maxScore: mx, cells: an.score, sc: inp.sc}});
+    }
+    const segmentAI = async P => { const F = await featuresOf(P); return finish(F, anomalyPooled([F.cells])[0]); };
+    // all sides of one tool: features one after another (one wasm session), one pooled bank; an Error per failed side
+    segmentAI.batch = async Ps => {
+      const F = [];
+      for (const P of Ps) F.push(P ? await featuresOf(P).catch(e => e) : null);
+      const ok = F.filter(f => f && !(f instanceof Error));
+      let an; try { an = anomalyPooled(ok.map(f => f.cells)); } catch (e) { return F.map(f => f && e); }
+      return F.map(f => !f ? null : f instanceof Error ? f : finish(f, an[ok.indexOf(f)]));
     };
+    return segmentAI;
   }
   function dilate(m, w, h, r) {
     const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
@@ -181,5 +218,5 @@
     return result;
   }
 
-  return {createSegmenter, netInput, anomalyCells, upsample, load, run, NET_TOOL_PX};
+  return {createSegmenter, netInput, cellsOf, anomalyPooled, anomalyCells, upsample, load, run, NET_TOOL_PX};
 });

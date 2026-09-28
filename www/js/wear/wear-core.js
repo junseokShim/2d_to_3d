@@ -374,10 +374,10 @@
   // segmenter(prep, sideIndex) -> Promise<seg> (e.g. the AI stage); a side it rejects falls back to the classic segmenter
   async function measureAsync(args, segmenter, engine) {
     const A = prepareAll(args);
-    const segs = await Promise.all(A.P.map(async (p, i) => {
-      if (!p) return null;
-      try { return await segmenter(p, i); } catch (e) { const s = classicSegment(p); s.aiError = String(e && e.message || e); return s; }
-    }));
+    const fallback = (p, e) => { const s = classicSegment(p); s.aiError = String(e && e.message || e); return s; };
+    const segs = segmenter.batch   // batch: all sides of the tool at once (e.g. one memory bank pooled over every side)
+      ? (await segmenter.batch(A.P).catch(e => A.P.map(() => e))).map((s, i) => !A.P[i] ? null : !s || s instanceof Error ? fallback(A.P[i], s) : s)
+      : await Promise.all(A.P.map(async (p, i) => { if (!p) return null; try { return await segmenter(p, i); } catch (e) { return fallback(p, e); } }));
     return assemble(A, segs, args, engine);
   }
 
