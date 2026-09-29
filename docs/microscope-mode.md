@@ -12,6 +12,25 @@ Test: `node test/micro/run.js`; E2E step "microscope" in `test/e2e/chrome-e2e.js
 5. 3D 생성 runs the network, then the metrology panel (④) shows an edge-aligned strip per flute; drag the wear boundary to correct it.
    CSV / PDF / HTML reports carry `input_mode=microscope` and the magnification.
 
+## View routing: flank close-up vs side view of the whole tool
+Step ① **영상 종류** (default 자동 감지) decides where the images go; each flute slot shows the detected view.
+- **절삭날 근접 (여유면)**: one cutting edge fills the frame (Keyence VHX, MUDESTREDA) -> measured here (below).
+- **공구 전체 측면**: a low-magnification USB-microscope photo of the whole tool side (tip at the top, silhouette, like a phone
+  photo) -> the camera side-view pipeline (wear-core alignment -> seg-wear -> VB / VBC at the tip) at the magnification's
+  calibrated px/mm (`window.runCameraPath`). Before this, micro-core turned these photos 180°, fitted the tip line as the
+  cutting edge and reported VB 0 (no-wear) on all.
+- Auto detection uses the field of view in tool diameters: long image side / calibrated px/mm >= 0.4 x D -> side view
+  (`VIEW_FOV`, micro-core `detectView`). Human USB photos 0.43-2.07 D (27/27 side), Keyence 0.1-0.3 D at D 10 (5/5 close-up),
+  MUDESTREDA <= 0.19 D (408/408). A small tool at low magnification near the boundary: set the view by hand.
+  Mixed views on one run are all measured as close-ups (message shown).
+- Human USB side views (`node test/micro/route.js`, report vs human_gt): labelled damage read as a silent 0 on 22/24 sides
+  before, 3/24 after; |VB - labelled max(VBC, VBmax)| mean 1.74 mm before, 0.86 mm after.
+
+## Photo quality check (never blocks)
+The quality badge (js/enhance/quality.js) advises only: verdict pass | warn (`severe` marks a check at fail level) and the
+measurement always runs. A known px/mm (microscope calibration) replaces the silhouette estimate; close-ups skip the
+whole-tool silhouette check instead of asking for a re-shoot.
+
 ## Calibration (px/mm never comes from the tool diameter)
 - **µm/px 입력**: type the microscope's own µm/px for this magnification. Assumed tolerance 1 % (rectangular).
 - **기준 영상으로 교정** (stage micrometer or any known length): load an image of the reference, pick both ends of a line,
@@ -52,5 +71,5 @@ under-states the real error; treat U as the measurement's internal spread, not a
 - The network is the phone model (MUDESTREDA fine-tune ft4). On Keyence VHX colour images of a coated insert it finds no wear (flag `no-wear`): measure those from a hand mask or the metrology panel. A microscope fine-tune was tried and not shipped (research/keyence-reference.md, 'Microscope fine-tune'); the app looks for `models/wear-seg-micro.onnx.js` and falls back to the phone model.
 - Trained on one dataset (MUDESTREDA, one microscope and lighting). Other microscopes, coatings or lighting may read differently: check with the metrology panel.
 - The edge must be roughly straight in the image; strong corner radii in view are fitted as one line.
-- The tool must be on one side of the edge with background on the other (no silhouette/through-light images).
+- Close-ups: the tool must be on one side of the edge with background on the other (whole-tool side views are routed to the camera pipeline).
 - Adhesion is not counted as wear. Very small lands (a few px) are below the network's resolution: use a higher magnification.
