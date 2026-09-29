@@ -301,7 +301,8 @@
     let strip = enh && enh.width === img.width && enh.height === img.height ? Object.assign(rectify(gray(rotate(enh, best.deg)), al, lenMm), {raw}) : raw;
     if (o.stripMm) { const {w, g, cx, top} = raw, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
     const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
-    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
+    // img: the photo as aligned (rotated tip up) for segmenters that work on the photo itself (seg-wear.js)
+    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg, img: best.G.img};
   }
 
   const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)}, S.raw ? {raw: trimStrip(S.raw, h)} : {});

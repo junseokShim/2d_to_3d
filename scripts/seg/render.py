@@ -210,7 +210,7 @@ def _cam(elev, roll=0.0):
 
 
 @torch.no_grad()
-def raycast(tool, elev, H, W, ppm, centre, zmax, steps=200, chunk=1 << 20):
+def raycast(tool, elev, H, W, ppm, centre, zmax, steps=128, chunk=1 << 20):
     """orthographic camera; centre = tool point (mm) at the image centre; ppm = pixels per mm.
     returns hit mask, points, normals, parts (all [H*W])"""
     Dv, U, Rv = [t.to(DEV) for t in _cam(elev)]
@@ -258,17 +258,18 @@ def raycast(tool, elev, H, W, ppm, centre, zmax, steps=200, chunk=1 << 20):
         found = torch.zeros(idx.numel(), dtype=torch.bool, device=DEV)
         tl = a0.clone()
         th_ = a1.clone()
-        prev = a0.clone()
+        act = torch.arange(idx.numel(), device=DEV)       # rays still marching (compacted every 8 steps)
         for i in range(1, steps + 1):
-            t = a0 + (a1 - a0) * i / steps
-            f = tool.field(oo + t[:, None] * Dv[None])
-            new = (~found) & (f > 0)
-            tl = torch.where(new, prev, tl)
-            th_ = torch.where(new, t, th_)
-            found = found | new
-            prev = t
-            if found.all():
-                break
+            t = a0[act] + (a1[act] - a0[act]) * i / steps
+            f = tool.field(oo[act] + t[:, None] * Dv[None])
+            new = (f > 0) & ~found[act]
+            th_[act] = torch.where(new, t, th_[act])
+            tl[act] = torch.where(new, a0[act] + (a1[act] - a0[act]) * (i - 1) / steps, tl[act])
+            found[act] = found[act] | new
+            if i % 8 == 0:
+                act = act[~found[act]]
+                if act.numel() == 0:
+                    break
         # bisection
         for _ in range(10):
             m = (tl + th_) / 2
