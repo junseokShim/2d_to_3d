@@ -45,8 +45,8 @@
   }
 
   // window (network frame) -> photo: X, Y network px -> photo x, y
-  function sideWindow(P) {
-    const {al, zoneRows, strip} = P, sep = al.sepPx, D = NET_ClampD(sep), k = D / sep;
+  function sideWindow(P, lim = {}) {
+    const {al, zoneRows, strip} = P, sep = al.sepPx, D = Math.max(lim.netMin || NET_MIN, Math.min(lim.netMax || NET_MAX, sep)), k = D / sep;
     const v0 = al.vTip - ABOVE * sep, v1 = al.vTip + zoneRows + BELOW * sep;
     const Wn = ceil32((1 + 2 * SIDE) * sep * k), Hn = ceil32((v1 - v0) * k);
     const toPhoto = (X, Y) => al.toImg(al.uC + (X + .5 - Wn / 2) / k, v0 + (Y + .5) / k);
@@ -197,7 +197,7 @@
     const faces = [];
     async function segmentSide(P, i) {
       if (!P.img) throw new Error('seg: photo missing (wear-core too old)');
-      const win = sideWindow(P), {Wn, Hn, fromStrip} = win, n = Wn * Hn;
+      const win = sideWindow(P, opts), {Wn, Hn, fromStrip} = win, n = Wn * Hn;
       // opts.oracle(i, toPhoto, Wn, Hn) -> probs: exact labels instead of the network (tests of the VB maths)
       const prob = opts.oracle ? opts.oracle(i, win.toPhoto, Wn, Hn) : await runProbs(windowInput(P.img, Wn, Hn, win.toPhoto), Hn, Wn);
       const {strip} = P, {w, h, cx, R, top} = strip, y1 = Math.min(h, top + P.zoneRows);
