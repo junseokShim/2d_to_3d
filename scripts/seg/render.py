@@ -309,6 +309,9 @@ def shade(tool, rng, p, n, Dv, parts, wear, H, W, hitmask, lights):
         wcol = coat * _rand(rng, 1.2, 1.8) + .05                                                          # low contrast
     else:
         wcol = torch.tensor([_rand(rng, .3, .5), _rand(rng, .3, .5), _rand(rng, .45, .7)], device=DEV)    # bluish temper
+    LL = getattr(tool, 'landLook', None)   # seg14: matte grey worn peripheral land (gen_pool_micro 'land' mode)
+    if LL:
+        wcol = torch.tensor(LL['col'], device=DEV)
     adh = torch.tensor([[.75, .75, .74], [.5, .42, .35], [.6, .5, .38], [.35, .33, .3], [.7, .45, .3]][rng.integers(5)], device=DEV) * _rand(rng, .8, 1.15)
     rho = torch.sqrt(x * x + y * y)
     th = torch.atan2(y, x)
@@ -339,8 +342,8 @@ def shade(tool, rng, p, n, Dv, parts, wear, H, W, hitmask, lights):
     n2 = torch.where(isW[:, None], torch.nn.functional.normalize(wn * (1 - tilt) + n * tilt, dim=-1), n2)
     sc = torch.sin(z * _rand(rng, 150, 400) + _noise2(th * 20, z * 20, rng.integers(1e9)) * 3)
     alb = torch.where(isW[:, None], wcol[None] * (1 + .12 * sc[:, None]), alb)
-    rough = torch.where(isW, torch.full_like(rough, _rand(rng, .1, .5)), rough)
-    spec = torch.where(isW, torch.full_like(spec, _rand(rng, .5, 1.3)), spec)
+    rough = torch.where(isW, torch.full_like(rough, LL['rough'] if LL else _rand(rng, .1, .5)), rough)
+    spec = torch.where(isW, torch.full_like(spec, LL['spec'] if LL else _rand(rng, .5, 1.3)), spec)
     # fracture: rough grey carbide, random normals
     if isC.any():
         rn = torch.randn_like(n) * .45
