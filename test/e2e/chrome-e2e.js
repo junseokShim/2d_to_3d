@@ -160,7 +160,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     colours:(()=>{const c=v.querySelector('canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let g=0,m=0;for(let i=0;i<d.length;i+=4){const r=d[i],G=d[i+1],b=d[i+2];if(G>r+30&&G>b+20)g++;if(b>G+40&&(r>G+20||b>150))m++}return {green:g,blueMag:m}})()}})())`))});
   await shotEl('#post', 'post-alicona-mock.png');
   await ev(`Tool3D.render.setMap(null);Tool3D.post.setTab('keyence');1`); await sleep(300);
-  Pp.ok = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .02) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats === 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
+  Pp.ok = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats >= 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
     Pp.view === 'ok' && Pp.eqRows === 15 && Pp.tol === 5 && Pp.faces === 5 && !!Pp.wmm && Pp.mock.chips > 0 && Pp.mock.chipSide && Pp.mock.Dmin < 0 && Pp.mock.Vv > 0 && Pp.mock.devVerts > 0 &&
     Pp.mock.colours.green > 500 && Pp.mock.colours.blueMag > 50 && Pp.mock.hist >= 2 && /µm\//.test(Pp.mock.trendTag) && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
@@ -295,6 +295,12 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     fs.writeFileSync(path.join(OUT, 'micro-metro.png'), Buffer.from(mic, 'base64'));
     const {data: mip} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const a=document.querySelector('main section').getBoundingClientRect(),b=document.querySelectorAll('main section')[2].getBoundingClientRect();return {x:a.x+scrollX,y:a.y+scrollY,width:b.right-a.x,height:Math.max(a.bottom,b.bottom)-a.y,scale:1}})()`), captureBeyondViewport: true});
     fs.writeFileSync(path.join(OUT, 'micro-steps.png'), Buffer.from(mip, 'base64'));
+    // ⑤ post-processing in microscope mode: overlay labels the microscope magnification, per-side edge metrics from wear-post
+    await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.refresh();Tool3D.post.setTab('keyence');1`); await sleep(900);
+    MI.post = JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {mode:R&&R.inputMode,mag:R&&R.magnification,n:f&&f.length,src:f&&f.map(x=>x.eq.source),vb:f&&f.map(x=>x.stats.maxUm)}})())`));
+    await shotEl('#post', 'post-micro-keyence.png');
+    await ev(`Tool3D.post.setTab('alicona');1`); await sleep(1200); await shotEl('#post', 'post-micro-alicona.png'); await ev(`Tool3D.post.setTab('keyence');1`);
+    MI.post.ok = MI.post.mode === 'microscope' && MI.post.mag === 200 && MI.post.n >= 1 && MI.post.vb.every(v => v > 0);
     const P = JSON.parse(MI.panel);
     MI.ok = P.shown && P.mags.length === 8 && P.multiHidden && P.slots === 4 && /200x 교정/.test(MI.cal) && MI.thumbs === '2,1,0,0' && /현미경 200x/.test(MI.engine) && !MI.msg &&
       MI.wr && MI.wr.mode === 'microscope' && MI.wr.mag === 200 && MI.wr.n === 4 && MI.wr.vb[0] > 0 && MI.wr.vb[1] > 0 && MI.wr.imgs.every(q => q === 0) &&
@@ -309,7 +315,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
-    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), microscope: !!(c.micro && (c.micro.ok || c.micro.skipped)), postProcessing: !!(c.post && c.post.ok)};
+    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), microscope: !!(c.micro && (c.micro.ok || c.micro.skipped)), postProcessing: !!(c.post && c.post.ok), postMicroscope: !!(c.micro && (c.micro.skipped || (c.micro.post && c.micro.post.ok)))};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

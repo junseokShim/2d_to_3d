@@ -33,7 +33,7 @@
  <div class="ps-pane" data-pane="keyence">
   <div class="ps-grid">
    <div><div class="ps-cwrap"><canvas id="pkCanvas"></canvas></div>
-    <div class="ps-ctl"><label>VB 화살표 <input id="pkN" type="number" min="1" max="12" value="${S.prefs.nLines}"></label><span class="hint">절삭날 기준선(점선)에서 마모 경계까지 수직 VB · 스케일바/배율은 교정 px/mm 기준 (배율 = Keyence VHX 환산)</span></div></div>
+    <div class="ps-ctl"><label>VB 화살표 <input id="pkN" type="number" min="1" max="12" value="${S.prefs.nLines}"></label><label title="긴 스트립(현미경 연결 영상)은 최대 VB 주변을 확대"><input id="pkZoom" type="checkbox" checked> 최대 VB 확대</label><span id="pkZoomTag" class="hint"></span><span class="hint">절삭날 기준선(점선)에서 마모 경계까지 수직 VB · 스케일바/배율은 교정 px/mm 기준 (배율 = Keyence VHX 환산)</span></div></div>
    <div><table class="ps-tab" id="pkList"></table><table class="ps-tab" id="pkStats"></table>
     <div class="ps-card"><div class="ps-h">VB 프로파일 · 절삭날 따라 <small>u = z / cos(헬릭스)</small></div><canvas id="pkChart" class="ps-dark"></canvas></div></div>
   </div>
@@ -62,6 +62,7 @@
  </div>
 </div>`;
     root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+    $('#pkZoom').onchange = e => { S.prefs.zoom = e.target.checked; savePrefs(); render(); };
     $('#pkN').onchange = e => { S.prefs.nLines = Math.max(1, Math.min(12, +e.target.value || 5)); savePrefs(); refresh(); };
     $('#paDefTol').onchange = e => { S.prefs.defTol = Math.max(.1, +e.target.value || 5); savePrefs(); refresh(); };
     $('#paDevTol').onchange = e => { S.prefs.devTol = Math.max(0, +e.target.value || 0); savePrefs(); refresh(); };
@@ -147,7 +148,12 @@
   // Keyence overlay: rectified strip, dotted reference edge line, red VB arrows with [n] labels, blue scale bar, magnification
   function drawKeyence() {
     const f = cur(), c = $('#pkCanvas'), [x, W, H] = canvasFit(c, 470); x.fillStyle = '#000'; x.fillRect(0, 0, W, H); if (!f) return;
-    const img = T.metro.stripImage(f.i), top = f.F.strip.top, y0 = Math.max(0, top - 12), y1 = Math.min(img.height, top + f.F.n + 12);
+    const img = T.metro.stripImage(f.i), top = f.F.strip.top; let y0 = Math.max(0, top - 12), y1 = Math.min(img.height, top + f.F.n + 12);
+    // Keyence frames one field of view: a long thin strip (microscope stitch) is shown zoomed around the VB maximum
+    const zoom = S.prefs.zoom !== false && img.width * H / (y1 - y0) < .3 * W;
+    if (zoom) { const rows = H / Math.min(.5 * W / img.width, 40), mx = f.lines.find(l => l.isMax) || f.lines[0], cy = mx ? mx.y : (y0 + y1) / 2;
+      y0 = Math.max(0, Math.round(cy - rows / 2)); y1 = Math.min(img.height, y0 + Math.round(rows)); y0 = Math.max(0, y1 - Math.round(rows)); }
+    $('#pkZoom').checked = S.prefs.zoom !== false; $('#pkZoomTag').textContent = zoom ? `표시 ${f3((y1 - y0) / f.ppmCal)} mm 구간` : '';
     const s = Math.min(W / img.width, H / (y1 - y0)), ox = (W - img.width * s) / 2, oy = (H - (y1 - y0) * s) / 2, P = (ix, iy) => [ox + ix * s, oy + (iy - y0) * s];
     x.imageSmoothingEnabled = s < 3; x.drawImage(img, 0, y0, img.width, y1 - y0, ox, oy, img.width * s, (y1 - y0) * s);
     const {A, B} = f.e.rows, edgeX = r => f.e.edge === 'a' ? A[r] - .5 : B[r] + .5, frontX = r => f.e.edge === 'a' ? B[r] + .5 : A[r] - .5;
@@ -162,6 +168,7 @@
     };
     x.font = '600 12px system-ui,sans-serif'; let lastY = -99;
     for (const l of f.lines) {
+      if (l.y < y0 || l.y > y1) continue;
       const a = P(l.xEdge, l.y), b = P(l.xFront, l.y), grow = Math.max(0, 16 - Math.abs(b[0] - a[0])) / 2;   // tiny lands: arrows still readable
       x.strokeStyle = x.fillStyle = l.isMax ? '#ff2020' : '#ff4040'; x.lineWidth = l.isMax ? 2.4 : 1.8;
       arrow([a[0] - side * grow, a[1]], [b[0] + side * grow, b[1]]);
@@ -189,7 +196,7 @@
       <tr><td>VB 최소</td><td>${f2(s.minUm)}</td><td>µm/px</td><td>${f3(f.mag.umPerPx)}</td></tr>
       <tr><td>표준편차 σ</td><td>${f2(s.sdUm)}</td><td>시야 폭</td><td>${f3(f.mag.fovMm)} mm</td></tr>
       <tr><td>중앙값 (Q1–Q3)</td><td>${f2(s.medianUm)} (${f1(s.p25Um)}–${f1(s.p75Um)})</td><td>평가 길이</td><td>${f3(s.lengthMm)} mm</td></tr>
-      <tr><td>마모 길이</td><td>${f3(s.wornMm)} mm (${f1(s.wornPct)} %)</td><td>U (k=2) VBmax</td><td>${f3(f.e.q.vbMax.U * 1000)} µm</td></tr>` +
+      <tr><td>마모 길이</td><td>${f3(s.wornMm)} mm (${f1(s.wornPct)} %)</td><td>U (k=2) VBmax</td><td>${f1(f.e.q.vbMax.U * 1000)} µm</td></tr>` +
       (f.eq.keyence ? `<tr><th colspan="4">기준선 방식 (AI 마모 영역, 미마모 날에 맞춘 직선)</th></tr>
       <tr><td title="기준선에서 마모 경계까지 수직 거리의 최대">VBmax (기준선)</td><td>${f2(f.eq.keyence.VBmaxUm)}</td><td title="기준선 아래로 후퇴한 절삭날 = 치핑 ([2] 값)">날 후퇴</td><td>${f2(f.eq.keyence.recessionUm)} µm</td></tr>
       <tr><td>VB 평균 (기준선)</td><td>${f2(f.eq.keyence.VBmeanUm)}</td><td>위치 (날 따라)</td><td>${f1(f.eq.keyence.VBmaxAtUm)} / ${f1(f.eq.keyence.recessionAtUm)} µm</td></tr>` : '');
@@ -214,14 +221,19 @@
     for (let j = 1; j < stops.length; j++) { const [a, ca] = stops[j - 1], [b, cb] = stops[j]; if ((t - a) * (t - b) <= 0) { const u = (t - a) / (b - a || 1); return ca.map((v, k) => v + (cb[k] - v) * u); } }
     return stops[stops.length - 1][1];
   }
-  const devRange = R => Math.max(2 * R.o.devTolUm, R.wmm ? Math.abs(R.wmm.DminUm) : 0, 10);
+  const devRange = R => {
+    if (R.rngUm) return R.rngUm;
+    const a = []; if (R.dev) for (const arr of [R.dev.side, R.dev.end]) for (let k = 0; k < arr.length; k++) if (arr[k]) a.push(-arr[k] * 1000);
+    a.sort((p, q) => p - q); const p90 = a.length ? a[Math.floor(.9 * (a.length - 1))] : 0;
+    return (R.rngUm = Math.max(2 * R.o.devTolUm, 10, Math.min(1.25 * p90, R.wmm ? Math.abs(R.wmm.DminUm) : Infinity)));
+  };
   let V = null;   // 3D deviation viewer
   function view3d() {
     const R = S.R, box = $('#paView'); if (!box) return;
     const THREE = window.THREE, G = T._render && T._render.geometry, rp = T.render && T.render.params;
     const rng = devRange(R), lg = $('#paLegend');
     lg.innerHTML = `<div class="ps-lgbar" style="background:linear-gradient(${[1, .5, 0, -.33, -.66, -1].map(t => `rgb(${devColor(t * rng, rng).map(v => Math.round(255 * v)).join(',')})`).join(',')})"></div>
-      <div class="ps-lgt">${[1, .5, 0, -.5, -1].map(t => `<span>${(t * rng).toFixed(1)}</span>`).join('')}</div><div class="ps-lgu">µm</div>`;
+      <div class="ps-lgt">${[1, .5, 0, -.5, -1].map(t => `<span>${(t * rng).toFixed(1)}</span>`).join('')}</div><div class="ps-lgu">µm${R.wmm && Math.abs(R.wmm.DminUm) > rng + .5 ? `<br>≤−${rng.toFixed(0)} 포화 (최저 ${R.wmm.DminUm.toFixed(0)})` : ''}</div>`;
     if (!THREE || !G || !rp || !R.dev) { box.dataset.state = 'no-map'; return; }
     if (!V) {
       const r = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true}); r.setPixelRatio(Math.min(2, devicePixelRatio || 1));
@@ -283,7 +295,7 @@
     const i = Math.max(0, Math.min(n - 1, Math.floor(S.pos * n))), vb = E.vb[i] / 1000, o = S.R.o, corner = !!E.corner[i];
     const w = C.wedgeSection(corner ? -E.D[i] / 1000 / Math.tan(o.clearanceDeg * Math.PI / 180) : vb, {clearanceDeg: o.clearanceDeg, rakeDeg: o.rakeDeg, lenMm: Math.max(.06, 2.4 * Math.max(vb, .02))});
     const pts = w.nominal.concat(w.worn), xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), xmin = Math.min(...xs), ymin = Math.min(...ys);
-    const s = Math.min((W - 70) / (0 - xmin || 1), (H - 50) / (0 - ymin || 1)) * .9, ox = W - 40, oy = 28, P = p => [ox + p[0] * s, oy - p[1] * s];
+    const s = Math.min((W - 130) / (0 - xmin || 1), (H - 50) / (0 - ymin || 1)) * .9, ox = W - 90, oy = 28, P = p => [ox + p[0] * s, oy - p[1] * s];
     // worn body (filled), nominal outline dashed
     x.fillStyle = '#e4e1e1'; x.strokeStyle = '#111'; x.lineWidth = 1.4; x.beginPath(); w.worn.forEach((p, j) => j ? x.lineTo(...P(p)) : x.moveTo(...P(p)));
     x.lineTo(...P([xmin, ymin])); x.closePath(); x.fill(); x.beginPath(); w.worn.forEach((p, j) => j ? x.lineTo(...P(p)) : x.moveTo(...P(p))); x.stroke();
