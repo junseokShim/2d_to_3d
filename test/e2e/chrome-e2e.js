@@ -147,7 +147,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   // ---------- ⑤ post-processing (js/post): Keyence VHX overlay + Alicona deviation / EdgeQuality / trend ----------
   const Pp = res.checks.post = {};
   await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.setTab('keyence');1`); await sleep(600);
-  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {n:f&&f.length,lines:f&&f.map(x=>x.lines.length),vbMaxUm:f&&f.map(x=>x.stats.maxUm),metroVb:Tool3D.metro.summary().flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),mag:f&&f[0].mag.label,list:document.querySelectorAll('#pkList tr').length,stats:document.querySelectorAll('#pkStats tr').length,
+  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {n:f&&f.length,lines:f&&f.map(x=>x.lines.length),vbMaxUm:f&&f.map(x=>x.stats.maxUm),metroVb:Tool3D.metro.summary().flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),assist:Tool3D.metro.summary().flutes.map(e=>!!(e&&e.assist)),mag:f&&f[0].mag.label,list:document.querySelectorAll('#pkList tr').length,stats:document.querySelectorAll('#pkStats tr').length,
     ink:(()=>{const c=document.querySelector('#pkCanvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let r=0,b=0;for(let i=0;i<d.length;i+=4){if(d[i]>200&&d[i+1]<90&&d[i+2]<90)r++;if(d[i+2]>200&&d[i]<80&&d[i+1]<90)b++}return {red:r,blue:b}})()}})())`)));
   await shotEl('#post', 'post-keyence.png');
   await ev(`Tool3D.post.setTab('alicona');1`); await sleep(1500);
@@ -160,7 +160,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     colours:(()=>{const c=v.querySelector('canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let g=0,m=0;for(let i=0;i<d.length;i+=4){const r=d[i],G=d[i+1],b=d[i+2];if(G>r+30&&G>b+20)g++;if(b>G+40&&(r>G+20||b>150))m++}return {green:g,blueMag:m}})()}})())`))});
   await shotEl('#post', 'post-alicona-mock.png');
   await ev(`Tool3D.render.setMap(null);Tool3D.post.setTab('keyence');1`); await sleep(300);
-  Pp.ok = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats >= 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
+  Pp.ok = Pp.n === 4 && Pp.lines.every((n, i) => n >= 1 || Pp.assist[i]) && Pp.lines.some(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats >= 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
     Pp.view === 'ok' && Pp.eqRows === 15 && Pp.tol === 5 && Pp.faces === 5 && !!Pp.wmm && Pp.mock.chips > 0 && Pp.mock.chipSide && Pp.mock.Dmin < 0 && Pp.mock.Vv > 0 && Pp.mock.devVerts > 0 &&
     Pp.mock.colours.green > 500 && Pp.mock.colours.blueMag > 50 && Pp.mock.hist >= 2 && /µm\//.test(Pp.mock.trendTag) && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
