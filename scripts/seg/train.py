@@ -112,6 +112,8 @@ def main():
     ap.add_argument('--cw', default='.5,1,3,6,6', help='cross-entropy class weights bg,tool,flank,chip,adhesion (chip/adhesion are rare)')
     ap.add_argument('--win', type=float, default=0, help='share of pool samples framed like the app side window (augment.compose win)')
     ap.add_argument('--bw', type=float, default=0, help='extra cross-entropy weight on pixels within 2 px of a wear-class boundary (thin lands)')
+    ap.add_argument('--pool2', default='', help='second render pool (mix key pool2), e.g. gen_pool_thin.py phone-like thin lands')
+    ap.add_argument('--win2', type=float, default=.8, help='share of pool2 samples framed like the app side window')
     ap.add_argument('--save_every', action='store_true', help='keep a checkpoint per eval (it<N>.pt)')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -139,6 +141,11 @@ def main():
     # fixed validation sets, generated once (same seeds every eval), one per source
     vals = {'pool': list(prod.batches([('synth', 7_000_003 * k + 11, a.pool, metas[val_ids[k % len(val_ids)]], a.size)
                                        for k in range(a.nval)], 16))}
+    if a.pool2:                # fixed val set of the second pool, framed like the app side window
+        m2 = data.load_pool(a.pool2)
+        v2 = sorted(i for i in m2 if i % 20 == 0)
+        vals['pool2'] = list(prod.batches([('synth', 7_000_003 * k + 13, a.pool2, m2[v2[k % len(v2)]], a.size, True)
+                                           for k in range(min(a.nval, 3 * len(v2)))], 16))
     real_va = data.load_real('val')
     for src, items in real_va.items():
         n = min(a.nval, 3 * len(items))
@@ -154,7 +161,9 @@ def main():
         metas = data.load_pool(a.pool)            # the generator keeps adding renders
         tr = [metas[i] for i in metas if i % 20 != 0]
         real_tr = data.load_real('train')
-        srcs = [k for k in mix if (k == 'pool' and tr) or real_tr.get(k)]
+        m2 = data.load_pool(a.pool2) if a.pool2 else {}
+        tr2 = [m2[i] for i in m2 if i % 20 != 0]
+        srcs = [k for k in mix if (k == 'pool' and tr) or (k == 'pool2' and tr2) or real_tr.get(k)]
         pw = np.array([mix[k] for k in srcs]); pw /= pw.sum()
         n = a.bs * min(a.eval_every, a.iters - it)
         tasks = []
@@ -162,6 +171,8 @@ def main():
             k = srcs[rs.choice(len(srcs), p=pw)]
             if k == 'pool':
                 tasks.append(('synth', int(rs.integers(2 ** 62)), a.pool, tr[rs.integers(len(tr))], a.size, bool(rs.random() < a.win)))
+            elif k == 'pool2':
+                tasks.append(('synth', int(rs.integers(2 ** 62)), a.pool2, tr2[rs.integers(len(tr2))], a.size, bool(rs.random() < a.win2)))
             else:
                 ip, mp_, _ = real_tr[k][rs.integers(len(real_tr[k]))]
                 tasks.append(('real', int(rs.integers(2 ** 62)), ip, mp_, a.size, k in no_tool))
@@ -192,7 +203,7 @@ def main():
             w = mix.get(src, .25)
             has = [c for c in (2, 3, 4) if cm[c].sum() > 0]      # score only the wear classes this val set labels
             sc = np.mean([iou[c] for c in has])
-            if src in ('pool', 'syn'):                            # exact tool masks: reading tool vs background counts too
+            if src in ('pool', 'pool2', 'syn'):                            # exact tool masks: reading tool vs background counts too
                 sc = .75 * sc + .25 * iou[1]
             score += w * sc; ws += w
         score /= max(ws, 1e-9)
