@@ -256,3 +256,34 @@ What the numbers say: land renders did not stop 12Pi's land being painted as chi
 seg13's 2.63); 10Pi gains from human labels repeat (chip depth .78/.26 -> .14/.11 mm). fA's top-view tool loss and
 ExtraDrey FFL flank loss repeat seg13 exactly, so they come from the xd/qitw/hum mix, not from the land pool.
 Next step needs labelled flank land on more human tools, not more renders.
+
+## seg16 (2026-09-30): hybrid (fA for side views, ft4 for top), code kept, model not shipped
+
+Code: `seg-wear.js` `createSegmenter` runs side views through `opts.sideProbs || runProbs.side` (the browser `run()` loads
+`models/wear-seg-side.onnx.js`, `Tool3D.segSideModelB64`, once; without the file the sides use wear-seg). Top views and
+the microscope close-up path always use `wear-seg.onnx.js`. `test/wear/ort-seg-node.js` attaches `run.side` from
+`www/models/wear-seg-side.onnx.js`, or `SEG_SIDE_MODEL=<file.onnx.js>`, or `=none`. `export.py --var segSideModelB64
+--parity test/wear/seg/parity-side.json` exports a side model (fA it3000: onnx 18.34 MB, .js 24.45 MB, torch/onnx max
+diff 2e-6, wasm parity 0.000 %). The file is removed again in commit 5d79535; revert that commit to ship.
+
+App-level human-run (checks passed / failed). Fold rows use the model that never saw that tool (`g_<T>` it3000 as the
+side model); fA is in-sample on all three tools.
+
+| tool | main (ft4) | held-out fold | fA (seen) |
+|---|---|---|---|
+| 10Pi_1 | 5/0, chip MAE .287 mm | 5/0, .194 | 5/0, .184 |
+| 10Pi_2 | 5/0, chip MAE .517 mm | 5/0, .523 | 5/0, .471 |
+| 12Pi + 12Pi+cal | 5/3 | 6/2: VBC now reported on 7/8 sides (was 3/8); chip MAE 1.12 -> 1.31 and VB MAE .93 -> .92 still fail | 6/2 |
+| total | 15/3 | | 16/2 |
+
+Other gates: target tool IoU sides fA .929 .911 .724 .717 vs ft4 .922 .909 .726 .720 (within .01), top stays ft4 .844.
+seg-run 16/1 (the 2 new checks are side parity; the one fail is the same as main: t41-t44 silent-wrong); worn-side VBmax
+mean error .068 -> .064 mm. run 55/0, ai-run 8/0, real-samples 13/0, post-run 17/0, post 50/0, metro 54/0, map3d 33/0,
+capture 32/0, micro 38/0, route 5/0, keyence-run 6/0.
+
+**Why not shipped: chrome-e2e FAIL** on the post-processing step. It needs a Keyence land line on every flute of the
+sample tool (`test/wear/samples`, ~5 px/mm). With fA, flute 3 has no flank land (ft4: .067 mm flank, 1.33 mm tip damage
+on both). All four sides go to the operator with both models, and nobody knows the true flank wear of that sample. To ship
+anyway: revert 5d79535 and change the E2E post check to accept a flute where the network found no land. That is a gate
+change, so god decides it. APK: the side model adds 24.45 MB of base64 JS (about 18 MB of weights), which roughly doubles
+the seg model's share of the APK.
