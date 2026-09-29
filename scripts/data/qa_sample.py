@@ -6,7 +6,7 @@ import argparse, glob, json, os, random
 import cv2, numpy as np
 from overlay import over
 
-SRC = {'mud_': 'mudestreda', 'syn_': 'synth_endmill', 'matwi_': 'matwi', 'aqifi_': 'aqifi_endmill', 'qit_': 'qit_cemc', 'target_': 'target'}
+SRC = {'mud_': 'mudestreda', 'syn_': 'synth_endmill', 'matwi_': 'matwi', 'aqifi_': 'aqifi_endmill', 'qit_': 'qit_cemc', 'target_': 'target', 'xd_': 'extradrey'}
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('root'); ap.add_argument('--frac', type=float, default=0.1)

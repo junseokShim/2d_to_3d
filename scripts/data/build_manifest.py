@@ -5,6 +5,7 @@ Splits are by source and tool (never by frame of one tool across splits), target
   matwi  : Set 3 -> val, Set 17 -> test (RVS304, 2-tooth), others train
   qit    : cutting edge 4 -> val, edges 1-3 train (one tool only; tool-only labels)
   aqifi  : train (2 images)
+  xd     : ExtraDrey, split by insert (all edges of one CT0XX together): CT003+CT005 -> val, CT006+CT013 -> test (~72/14/14 %), new inserts train
   target : eval (the human's real photos; never train on them)
   qitw   : qit_w_* VBmax-guided wear labels on QIT side views (same frames as qit_*): edge 4 -> val, others train
   hum    : human USB-microscope photos, eval only; item 'fold' = tool (10Pi_1 / 10Pi_2 / 12Pi) for leave-one-tool-out
@@ -33,6 +34,9 @@ SOURCES = {
     'hum': dict(source='human_usb_microscope', name="Human's USB-microscope photos (10Pi_1, 10Pi_2, 12Pi)", licence='project-internal, eval only',
                 url='datasets/human_samples/공구 이미지; reference/human_gt.json', toolType='solid end mill D10 / D12', view='side (tip up) + top',
                 labelQuality='manual (hand ROIs/polygons, zoom-checked)'),
+    'xd': dict(source='extradrey', name='ExtraDrey (Schibsdat, TUHH IPMT, 2026)', licence='Public Domain Mark 1.0', url='https://doi.org/10.15480/882.17237',
+               toolType='TiAlN-coated turning insert CNMG (longitudinal turning, C45+N / X5CrNi18-10)', view='flank 150x/100x, rake face (microscope 2048x1536)',
+               labelQuality='expert masks (dataset); rake face tool-only'),
     'target': dict(source='target', name="Human's real phone photos (repo test/wear/samples)", licence='project-internal, eval only', url='test/wear/samples',
                    toolType='end mill (target domain)', view='4 sides + top', labelQuality='manual polygons'),
 }
@@ -49,6 +53,7 @@ def split_of(pre, sid, info):
     if pre == 'qit': return 'val' if info.get('edge') == 4 else 'train'
     if pre == 'qitw': return 'val' if info.get('edge') == 4 else 'train'
     if pre in ('target', 'hum'): return 'eval'
+    if pre == 'xd': return {3: 'val', 5: 'val', 6: 'test', 13: 'test'}.get(int(re.match(r'xd_CT(\d+)_', sid).group(1)), 'train')
     return 'train'
 
 
@@ -58,6 +63,7 @@ def tool_of(pre, sid, info):
     if pre == 'matwi': return 'Set' + re.match(r'matwi_S(\d+)_', sid).group(1)
     if pre in ('qit', 'qitw'): return 'qit_tool'
     if pre == 'hum': return info.get('tool')
+    if pre == 'xd': return info.get('toolId') or sid.split('_')[1]
     return sid
 
 
@@ -77,7 +83,7 @@ if __name__ == '__main__':
         pxmm = info.get('pxPerMm') or info.get('pxPerMmEst')
         it = dict(id=sid, image='processed/images/%s.png' % sid, mask='processed/masks/%s.png' % sid, source=SOURCES[pre]['source'], tool=tool_of(pre, sid, info),
                   split=sp, labelQuality=lq, view=info.get('view'), pxPerMm=pxmm, h=int(m.shape[0]), w=int(m.shape[1]), pixels={str(k): v for k, v in px.items()})
-        for k in ('vbUm', 'vbMm', 'vbMaxMm', 'wearType', 'state', 'wearState', 'cycle', 'edge', 'set'):
+        for k in ('vbUm', 'vbMm', 'vbMaxMm', 'wearType', 'state', 'wearState', 'cycle', 'edge', 'set', 'timeS', 'magnification', 'material'):
             if info.get(k) is not None: it[k] = info[k]
         if pre == 'hum': it['fold'] = info.get('tool')
         if pre == 'qitw': it['toolOnlyId'] = info.get('toolOnlyId')
@@ -119,8 +125,9 @@ if __name__ == '__main__':
           '- **qitw**: 72 QIT side views (frames also in `qit_` as tool-only): class 2 = band of 0.8 x VBmax x 95 px/mm along the lower cutting edge (px/mm estimated by hand, +-20 %), 0.8-1.25 x and unverified edge stretches = 255.',
           '- **hum**: the human USB-microscope photos, eval only; per-image VBC / chip depth / VBmax in `reference/human_gt.json`; leave-one-tool-out by item `fold`.',
           '- **aqifi**: two end-view photos (new/worn).',
+          '- **xd**: ExtraDrey expert masks (TUHH): flank face FF 150x / FFL 100x fully labelled (85 wear -> 2, 170 tool -> 1, 255 adhesion -> 4); rake face RF only marks the tool area, so after 0 s the tool within 0.5 mm of its outline = 255 (crater not labelled). px/mm from the 100 um scale bar (bar area = 255). VB_Max (um) per edge/time in each item. Split by insert.',
           '- **target**: the real photos the app must work on. Eval only.',
-          '', 'Licences: MATWI is CC-BY-SA (derived masks share-alike), Mudestreda is GPL-3.0-or-later (copyleft; keep masks/data separate from app code and credit the source). Cite the papers above when publishing.',
+          '', 'Licences: ExtraDrey is Public Domain Mark 1.0 (no restrictions). MATWI is CC-BY-SA (derived masks share-alike), Mudestreda is GPL-3.0-or-later (copyleft; keep masks/data separate from app code and credit the source). Cite the papers above when publishing.',
           '', 'Per-item metadata: `manifest.json` -> `items[]` (id, image, mask, source, tool, split, labelQuality, view, pxPerMm, pixels per class, expert wear values).',
           'QA sheets and reject lists: `qa/<source>/`. Scripts: `scripts/data/label_*.py`, `qa_sample.py`, `overlay.py`, `build_synth.py`.']
     open(os.path.join(root, 'README.md'), 'w', encoding='utf-8').write('\n'.join(L) + '\n')
