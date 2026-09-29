@@ -110,12 +110,26 @@ def load_pool(pool):
     return metas
 
 
+_MVAL = None
+
+
+def _manifest_val(root=DS_ROOT):
+    """ids the dataset manifest puts in 'val' (qit_w_: 7 held-out side views)"""
+    global _MVAL
+    if _MVAL is None:
+        try:
+            _MVAL = {x['id'] for x in json.load(open(os.path.join(root, 'manifest.json'), encoding='utf-8'))['items'] if x.get('split') == 'val'}
+        except Exception:
+            _MVAL = set()
+    return _MVAL
+
+
 def split_of(name):
     """processed/ file stem -> (source, split). syn_*: every 10th render is val; mud_*: tool T3 held out (val);
     target_*: the human's photos, eval only (never trained on)."""
     src = name.split('_', 1)[0]
-    if name.startswith('qit_w_'):      # QIT-CEMC with wear labels (worker-hlabel), kept apart from the tool-only qit_
-        src = 'qitw'
+    if name.startswith('qit_w_'):      # QIT-CEMC with wear labels (worker-hlabel2), kept apart from the tool-only qit_
+        return 'qitw', 'val' if name in _manifest_val() else 'train'
     if src == 'target':
         return src, 'target'
     if src == 'mud':
