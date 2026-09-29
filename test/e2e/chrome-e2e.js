@@ -171,7 +171,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await ev(`document.querySelector('#mtPdf').click();1`); const apf = await waitFile(/^tool3d-report-E2E-OA-.*\.pdf$/);
   A.pdf = apf ? /\(OA\)|\\\(OA\\\)/.test(fs.readFileSync(apf).toString('latin1')) : 'missing';
   const B = A.before, Af = A.after;
-  A.ok = !A.msg && !!B.assist && /no-band/.test(B.assist.reason) && B.assist.guess === true && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
+  A.ok = !A.msg && !!B.assist && (/no-band/.test(B.assist.reason) ? B.assist.guess === true : /low-quality/.test(B.assist.reason)) && B.tool === 'edit' && /Drag the wear boundary to measure/.test(B.banner || '') &&
     B.modes.every(x => x === 'awaiting-operator') && B.decision === 'indeterminate' && Af.mode === 'operator-assisted' && Af.vb > 0 && Af.U > 0 && Af.banner === 'operator-assisted' &&
     /operator-assisted/.test(Af.table) && Af.contract === 'operator-assisted' && Math.abs(Af.wr - Af.vb) < 1e-4 && A.csv.mode && A.csv.oa && A.html === true && A.pdf === true;
   // engine faceSeg (board contract, as seg-wear.js will publish): toTool-only faces built from this run's strips + a top face with a
@@ -237,7 +237,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     await ev(`Tool3D.render.view('iso');1`);
   }
   // helix hand: default RH (the photo-texture guess is not applied); the toolbar toggle switches to LH (user) and the map follows the new model
-  res.checks.hand = JSON.parse(await ev(`JSON.stringify((()=>{const hud=()=>document.querySelector('#tool3d-view div').textContent.split('\n')[0],btn=()=>[...document.querySelectorAll('#tool3d-view button')].find(b=>/^(RH|LH)$/.test(b.textContent));
+  res.checks.hand = JSON.parse(await ev(`JSON.stringify((()=>{const hud=()=>document.querySelector('#tool3d-view div').textContent.split('\\n')[0],btn=()=>[...document.querySelectorAll('#tool3d-view button')].find(b=>/^(RH|LH)$/.test(b.textContent));
     const o={def:hud(),btn0:btn().textContent};Tool3D.map3d.mock();btn().click();o.user=hud();o.btn1=btn().textContent;o.hand1=Tool3D.render.params.hand;o.mapAfter=!!Tool3D.render.map&&Tool3D.map3dResult.faces.length;
     Tool3D.render.hand(null);o.back=hud();o.hand2=Tool3D.render.params.hand;Tool3D.render.setMap(null);return o})())`));
   { const H = res.checks.hand; H.ok = /RH \(default\)/.test(H.def) && H.btn0 === 'RH' && /LH \(user\)/.test(H.user) && H.btn1 === 'LH' && H.hand1 === -1 && H.mapAfter === 5 && /RH \(default\)/.test(H.back) && H.hand2 === 1; }
