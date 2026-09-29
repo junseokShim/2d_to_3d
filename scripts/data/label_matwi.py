@@ -192,14 +192,39 @@ SET_MIN_CORR = 0.6      # a set's detected band height must track the expert VB 
 RATIO_BAND = (0.7, 1.4)  # ... and an image's px-per-um ratio must lie within this factor of its set's median
 
 
-def finalize(root):
+def regularize(m, edge, k=31, minrun=25):
+    """Smooth, conservative class 2: per column the band height is median-filtered over k columns (sm); class 2 keeps
+    rows edge .. edge + 0.75 sm where the raw band reaches at least 0.6 sm, rows up to 1.25 x max(raw, sm) become 255,
+    and band runs narrower than minrun columns become 255. Removes the column spikes and the jagged lower boundary."""
+    from scipy.ndimage import median_filter
+    h, w = m.shape
+    raw = (m == 2).sum(0).astype(np.float32)
+    sm = median_filter(raw, size=k, mode='nearest')
+    on = (sm > 4) & (raw >= 0.6 * sm)
+    d = np.diff(np.r_[0, on.astype(int), 0]); st, en = np.where(d == 1)[0], np.where(d == -1)[0]
+    for a, b in zip(st, en):
+        if b - a < minrun: on[a:b] = False
+    core_h = np.where(on, 0.75 * sm, 0)
+    hi = np.maximum(raw, sm)
+    yy = np.arange(h)[:, None]
+    toolish = (m == 1) | (m == 2)
+    band = m == 2
+    m[band] = IGN
+    unsure = (yy >= edge[None, :] - 2) & (yy < edge[None, :] + 1.25 * hi[None, :] + 2) & (hi[None, :] > 0) & toolish
+    m[unsure] = IGN
+    core = (yy >= edge[None, :]) & (yy < edge[None, :] + core_h[None, :]) & band
+    m[core] = 2
+    return m, float(on.mean())
+
+
+def finalize(root, dst=None):
     """Stage -> processed/. Sets whose detected band tracks VB (r >= SET_MIN_CORR) keep class 2 on images whose ratio is
     consistent; every other image keeps tool (1) but its wear zone (edge .. edge + 1.5 x the set's VB-predicted height, or
     the detected band) becomes 255 ignore -> labelQuality 'tool-only'. Images with a failed tool mask are dropped."""
     import shutil
     stage = os.path.join(root, 'work/matwi')
     info = json.load(open(os.path.join(stage, 'stage_info.json')))
-    out = {d: os.path.join(root, 'processed', d) for d in ('images', 'masks', 'labelinfo')}
+    out = {d: os.path.join(dst or os.path.join(root, 'processed'), d) for d in ('images', 'masks', 'labelinfo')}
     for d in out.values(): os.makedirs(d, exist_ok=True)
     bys = {}
     for k, v in info.items(): bys.setdefault(v['set'], []).append(k)
@@ -227,6 +252,9 @@ def finalize(root):
                 m[zone & (m == 1)] = IGN
                 it['labelQuality'] = 'tool-only'; counts['toolonly'] += 1
             else:
+                img = cv2.imread(os.path.join(stage, k + '_img.png'))
+                _, edge, _, _ = edge_line(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+                m, it['wearColsReg'] = regularize(m, edge)
                 it['labelQuality'] = 'wear-verified'; counts['verified'] += 1
             it['pxPerMmEst'] = med * 1000 if med > 0 and r >= SET_MIN_CORR else None
             it['status'] = 'kept'
@@ -240,7 +268,7 @@ def finalize(root):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('root'); ap.add_argument('--limit', type=int, default=0)
-    ap.add_argument('--sets', default=''); ap.add_argument('--dry', action='store_true'); ap.add_argument('--every', type=int, default=1); ap.add_argument('--finalize', action='store_true')
+    ap.add_argument('--sets', default=''); ap.add_argument('--dry', action='store_true'); ap.add_argument('--every', type=int, default=1); ap.add_argument('--finalize', action='store_true'); ap.add_argument('--out', default='')
     a = ap.parse_args()
     raw = os.path.join(a.root, 'raw/matwi')
     rows = load_rows(raw)
@@ -248,7 +276,7 @@ if __name__ == '__main__':
     rows = rows[::a.every]
     if a.limit: rows = rows[:a.limit]
     stage = os.path.join(a.root, 'work/matwi'); os.makedirs(stage, exist_ok=True)
-    if a.finalize: finalize(a.root); sys.exit(0)
+    if a.finalize: finalize(a.root, a.out or None); sys.exit(0)
     sfile = os.path.join(stage, 'stage_info%s.json' % ('_dry' if a.dry else ''))
     done = json.load(open(sfile)) if os.path.exists(sfile) else {}
     recs = list(done.items())
