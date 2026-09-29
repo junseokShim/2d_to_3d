@@ -211,7 +211,7 @@
     for (let k = 0; k < E.cls.length; k++) { const c = E.cls[k]; if (c) { T.endAreaMm2[c] += E.cellArea; if (c === 3) T.chipVolumeMm3 += E.cellArea * eDepth[k]; } }
     for (const c of [2, 3, 4]) T.areaMm2[c] = T.sideAreaMm2[c] + T.endAreaMm2[c];
     // per tooth (needs the parametric layout)
-    const k = opts.flutes || 4, perTooth = Array.from({length: k}, () => ({areaMm2: {2: 0, 3: 0, 4: 0}, endAreaMm2: {2: 0, 3: 0, 4: 0}, vbMaxMm: 0, flankVolumeMm3: 0, onLandFrac: 0, _flank: 0, _land: 0}));
+    const k = opts.flutes || 4, perTooth = Array.from({length: k}, () => ({areaMm2: {2: 0, 3: 0, 4: 0}, endAreaMm2: {2: 0, 3: 0, 4: 0}, vbMaxMm: 0, chipDepthMm: 0, flankVolumeMm3: 0, onLandFrac: 0, _flank: 0, _land: 0}));
     if (opts.layout) {
       const look = toothLookup(opts.layout), landW = opts.layout.land1Mm + opts.layout.land2Mm;
       for (let i = 0; i < S.NZ; i++) {
@@ -220,6 +220,7 @@
           const c = S.cls[i * S.NA + j]; if (!c) continue;
           const col = look((j + .5) * S.dA, z), t = Math.max(0, Math.min(k - 1, col.tooth | 0)), P = perTooth[t];
           P.areaMm2[c] += S.cellArea;
+          if (c === 3) P.chipDepthMm = Math.max(P.chipDepthMm, sDepth[i * S.NA + j]);   // chipping / broken corner (VBC side): VBmax is class 2 only
           if (c === 2) {
             P._flank++; if (col.s >= 0 && col.s <= landW) { P._land++; wMax[t] = Math.max(wMax[t], col.s + .5 * R * S.dA); }   // cell centre -> cell edge
           }
@@ -235,6 +236,7 @@
         const c = E.cls[yi * E.N + xi]; if (!c) continue;
         const X = -R + (xi + .5) * E.cell, Y = -R + (yi + .5) * E.cell, t = Math.max(0, Math.min(k - 1, lookEnd(Math.atan2(Y, X), 0).tooth | 0));
         perTooth[t].endAreaMm2[c] += E.cellArea;
+        if (c === 3) perTooth[t].chipDepthMm = Math.max(perTooth[t].chipDepthMm, eDepth[yi * E.N + xi]);
       }
       for (const P of perTooth) { P.onLandFrac = P._flank ? P._land / P._flank : 0; T.flankVolumeMm3 += P.flankVolumeMm3; delete P._flank; delete P._land; }
     }
@@ -311,8 +313,10 @@
     let nb = 0; for (let j = 0; j < w * h; j++) if (band[j]) { mask[j] = 2; nb++; }
     const chip = tipChips(e.strip, D), nc = chip.count;
     for (const j of chip.idx) mask[j] = 3;
+    // + the wear pipeline's own tip damage (chipping / fracture face measured as VBC, e.tipMask on the same strip)
+    let nt = 0; if (e.tipMask) for (let j = 0; j < w * h; j++) if (e.tipMask[j] && mask[j] !== 2) { if (mask[j] !== 3) nt++; mask[j] = 3; }
     const f = {face: 'side' + (i + 1), angleDeg: i * 360 / k, w, h, mask, pxPerMm: ppm, axisX: cx + .5, tipY: top, source: 'wear-pipeline'};
-    f.stats = {bandPx: nb, chipPx: nc};
+    f.stats = {bandPx: nb, chipPx: nc + nt};
     return f;
   }
 
