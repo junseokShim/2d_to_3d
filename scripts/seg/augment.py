@@ -117,6 +117,29 @@ def perspective(rng, h, w, strength):
     return cv2.getPerspectiveTransform(src, dst)
 
 
+def overlay_marks(rng, im8):
+    """UI marks some photos carry (screenshots of the app: yellow / olive dashed guide lines, dots). Drawn on the
+    uint8 RGB image; the label keeps whatever lies under them."""
+    h, w = im8.shape[:2]
+    im = im8.copy()
+    for _ in range(int(rng.integers(1, 6))):
+        col = (int(U(rng, 150, 255)), int(U(rng, 140, 230)), int(U(rng, 0, 90)))      # yellow .. olive
+        t = int(rng.integers(1, 4))
+        vert = rng.random() < .6
+        c0 = int(rng.integers(w if vert else h))
+        a, b = sorted(rng.integers(0, h if vert else w, 2))
+        dash, gap = int(U(rng, 3, 14)), int(U(rng, 3, 12))
+        if rng.random() < .3:
+            dash = t                                                                    # dotted
+        for q in range(int(a), int(b), dash + gap):
+            p0, p1 = (c0, q), (c0, min(int(b), q + dash))
+            if not vert:
+                p0, p1 = p0[::-1], p1[::-1]
+            cv2.line(im, p0, p1, col, t)
+    al = U(rng, .5, 1)
+    return (al * im + (1 - al) * im8).astype(np.uint8)
+
+
 def compose(rng, rgba, lab, out=384, meta=None, strength=1.0):
     h0, w0 = lab.shape
     rgb = rgba[..., :3]                                    # BGR uint8, gamma encoded; linearised after the warp
@@ -231,6 +254,8 @@ def compose(rng, rgba, lab, out=384, meta=None, strength=1.0):
     if rng.random() < .4:
         bl = cv2.GaussianBlur(im8, (0, 0), U(rng, 1, 3))
         im8 = cv2.addWeighted(im8, 1 + U(rng, .3, 1.5), bl, -U(rng, .3, 1.5), 0)
+    if rng.random() < .15:
+        im8 = overlay_marks(rng, im8)
     # ---- JPEG ----
     if rng.random() < .75:
         q = int(U(rng, 25, 95))

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import data
 
 NET_D = 256
-COL = np.array([[0, 0, 0], [60, 60, 60], [255, 220, 0], [255, 40, 40], [40, 160, 255]], np.uint8)   # RGB per class
+COL = np.array([[0, 0, 0], [60, 60, 60], [0, 255, 255], [255, 40, 40], [255, 0, 200]], np.uint8)   # RGB per class: flank cyan, chip red, adhesion pink
 D_MM = 10.0
 
 
@@ -84,8 +84,11 @@ def evaluate(model, outdir=None, tag='', dev='cuda'):
         t, pt = tm > 0, pred > 0
         iou = float((t & pt).sum() / max(1, (t | pt).sum()))
         near = cv2.dilate(tm, np.ones((15, 15), np.uint8)) > 0
+        hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)       # the app's yellow dashed marks baked into these screenshot crops
+        marks = cv2.dilate(((hsv[..., 0] > 18) & (hsv[..., 0] < 40) & (hsv[..., 1] > 80) & (hsv[..., 2] > 80)).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
         a = 1 / info['ppm'] ** 2
-        r = {'toolIoU': round(iou, 3), 'bgWearMm2': round(float(((pred >= 2) & ~near).sum()) * a, 3)}
+        bgw = (pred >= 2) & ~near
+        r = {'toolIoU': round(iou, 3), 'bgWearMm2': round(float(bgw.sum()) * a, 3), 'bgWearNoMarksMm2': round(float((bgw & ~marks).sum()) * a, 3)}
         if info['tipY'] is not None:
             yy = np.arange(pred.shape[0])[:, None]
             tipz = (yy < info['tipY'] + .3 * NET_D) & near
@@ -109,7 +112,7 @@ def evaluate(model, outdir=None, tag='', dev='cuda'):
 
 
 def fmt(res):
-    return ' '.join(f"{k}[iou {v['toolIoU']:.2f} bg {v['bgWearMm2']:.2f} " +
+    return ' '.join(f"{k}[iou {v['toolIoU']:.2f} bg {v['bgWearMm2']:.2f}/{v['bgWearNoMarksMm2']:.2f} " +
                     ' '.join(f'{kk} {vv:.2f}' for kk, vv in v.items() if kk[:3] in ('tip', 'fla', 'fac') and vv > 0) + ']'
                     for k, v in res.items())
 

@@ -43,6 +43,8 @@ def real_sample(rng, ip, mp_, size, strength=1.0):
     if rng.random() < .4 * strength:
         f = f + rng.normal(0, augment.U(rng, .005, .04), f.shape).astype(np.float32)
     im = (np.clip(f, 0, 1) * 255).astype(np.uint8)
+    if rng.random() < .15:
+        im = augment.overlay_marks(rng, np.ascontiguousarray(im))
     if rng.random() < .5:
         ok, buf = cv2.imencode('.jpg', np.ascontiguousarray(im[..., ::-1]), [cv2.IMWRITE_JPEG_QUALITY, int(augment.U(rng, 35, 95))])
         im = cv2.imdecode(buf, cv2.IMREAD_COLOR)[..., ::-1]

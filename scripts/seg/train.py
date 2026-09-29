@@ -17,7 +17,8 @@ STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1) * 255
 
 def build(encoder='tu-mobilenetv3_large_100', weights='imagenet'):
     import segmentation_models_pytorch as smp
-    return smp.Unet(encoder_name=encoder, encoder_weights=weights, classes=NC, decoder_channels=(256, 128, 64, 32, 16))
+    # decoder kept slim so the fp32 ONNX stays < 20 MB (4.58 M params; (256,128,64,32,16) was 6.7 M = 27 MB)
+    return smp.Unet(encoder_name=encoder, encoder_weights=weights, classes=NC, decoder_channels=(128, 64, 48, 32, 16))
 
 
 def to_input(im, dev):
