@@ -5,7 +5,7 @@
 'use strict';
 const path = require('path'), fs = require('fs');
 const W = require('../../www/js/wear/wear-core.js'), SEG = require('../../www/js/wear/seg-wear.js'), readPng = require('./png.js'), loadSeg = require('./ort-seg-node.js');
-const {writePng} = require('./png-write.js');
+const {writePng, readLabel} = require('./png-write.js');
 const COL = [[0, 0, 0], [90, 90, 90], [0, 255, 255], [255, 40, 40], [255, 0, 200]];
 
 (async () => {
@@ -17,11 +17,29 @@ const COL = [[0, 0, 0], [90, 90, 90], [0, 255, 255], [255, 40, 40], [255, 0, 200
   for (const e of idx) if (e.view !== 'top') (cases[e.case] = cases[e.case] || {e, sides: []}).sides.push(readPng(path.join(DIR, e.file)));
   const SD = path.join(__dirname, 'samples');
   cases.human = {e: {flutes: 4, D: 10}, sides: [1, 2, 3, 4].map(i => readPng(path.join(SD, `side${i}.png`)))};
+  // oracle: the exact labels through the same window + VB maths (what the engine reads from a perfect network)
+  const labs = {};
+  for (const e of idx) if (e.view !== 'top') (labs[e.case] = labs[e.case] || []).push(readLabel(path.join(DIR, e.label)));
+  for (const [name, c] of Object.entries(cases)) {
+    if (!labs[name]) continue;
+    const oracle = (i, toPhoto, Wn, Hn) => {
+      const L = labs[name][i], p = new Float32Array(5 * Wn * Hn);
+      for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) {
+        const [x, y] = toPhoto(X, Y), xi = Math.max(0, Math.min(L.w - 1, Math.round(x))), yi = Math.max(0, Math.min(L.h - 1, Math.round(y)));
+        const v = L.m[yi * L.w + xi]; p[(v < 5 ? v : 0) * Wn * Hn + Y * Wn + X] = 1;
+      }
+      return p;
+    };
+    const k = c.e.flutes, seg = SEG.createSegmenter(null, W, {flutes: k, oracle});
+    const {result: R} = await W.measureAsync({sides: c.sides, flutes: k, diameterMm: c.e.D}, seg, 'seg');
+    console.log(`${name} ORACLE (exact labels): VBmax ${R.perFlute.map(f => f.vbMaxMm.toFixed(3)).join(' ')}  want ${(c.e.vbMaxMm || []).map(v => v.toFixed(3)).join(' ')}`);
+  }
   for (const [name, c] of Object.entries(cases)) {
     calls = [];
     const k = c.e.flutes, seg = SEG.createSegmenter(run, W, {flutes: k});
     const {result: R, debug} = await W.measureAsync({sides: c.sides, flutes: k, diameterMm: c.e.D}, seg, 'seg');
     console.log(`${name}: VBmax ${R.perFlute.map(f => f.vbMaxMm.toFixed(3)).join(' ')}  want ${(c.e.vbMaxMm || []).join(' ')}`);
+    R.perFlute.forEach((f, i) => console.log(`   side${i + 1} VB profile (z mm:vb mm) ${f.profile.slice(0, 20).map(q => q.zMm.toFixed(1) + ':' + q.vbMm.toFixed(2)).join(' ')}`));
     calls.forEach((q, i) => {
       const {x, H, W: Wn, p} = q, P = H * Wn, o = new Uint8Array(3 * 2 * Wn * H);
       for (let j = 0; j < P; j++) {

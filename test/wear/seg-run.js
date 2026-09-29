@@ -6,33 +6,11 @@
 // Run: node test/wear/seg-run.js
 'use strict';
 const path = require('path'), fs = require('fs');
-const W = require('../../www/js/wear/wear-core.js'), SEG = require('../../www/js/wear/seg-wear.js'), readPng = require('./png.js'), loadSeg = require('./ort-seg-node.js');
+const W = require('../../www/js/wear/wear-core.js'), SEG = require('../../www/js/wear/seg-wear.js'), readPng = require('./png.js'), loadSeg = require('./ort-seg-node.js'), {readLabel} = require('./png-write.js');
 const DIR = path.join(__dirname, 'seg');
 let pass = 0, fail = 0;
 const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`); ok ? pass++ : fail++; };
 const f3 = v => (+v).toFixed(3);
-
-// grey label PNG (colour type 0) -> Uint8Array; png.js reads RGB(A) only, so decode here
-function readLabel(file) {
-  const zlib = require('zlib'), b = fs.readFileSync(file); let p = 8, w, h, ct, idat = [];
-  while (p < b.length) {
-    const len = b.readUInt32BE(p), type = b.toString('ascii', p + 4, p + 8), d = b.subarray(p + 8, p + 8 + len);
-    if (type === 'IHDR') { w = d.readUInt32BE(0); h = d.readUInt32BE(4); ct = d[9]; }
-    if (type === 'IDAT') idat.push(d);
-    p += 12 + len;
-  }
-  if (ct !== 0) { const im = readPng(file), m = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) m[i] = im.data[4 * i]; return {w, h, m}; }
-  const raw = zlib.inflateSync(Buffer.concat(idat)), m = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) {
-    const f = raw[y * (w + 1)], o = y * w;
-    for (let x = 0; x < w; x++) {
-      const v = raw[y * (w + 1) + 1 + x], a = x ? m[o + x - 1] : 0, up = y ? m[o - w + x] : 0, c = x && y ? m[o - w + x - 1] : 0;
-      const pa = Math.abs(up - c), pb = Math.abs(a - c), pc = Math.abs(a + up - 2 * c);
-      m[o + x] = (v + [0, a, up, (a + up) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? up : c][f]) & 255;
-    }
-  }
-  return {w, h, m};
-}
 
 // IoU of a predicate on the network grid against the label resampled (nearest) to that grid
 function iou(seg, lab, pred) {

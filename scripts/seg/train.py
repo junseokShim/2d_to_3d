@@ -69,7 +69,7 @@ def preview(batches, path, n=12):
     tiles = []
     for im, lb in batches:
         for i in range(len(im)):
-            o = im[i].copy(); m = lb[i] >= 2
+            o = im[i].copy(); m = (lb[i] >= 2) & (lb[i] < NC)
             o[m] = (.4 * o[m] + .6 * COL[lb[i][m]]).astype(np.uint8)
             c, _ = cv2.findContours((lb[i] > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             cv2.drawContours(o, c, -1, (0, 255, 0), 1)
