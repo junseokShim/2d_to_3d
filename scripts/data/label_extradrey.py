@@ -2,7 +2,7 @@
 Raw pairs come from fetch_extradrey.py: raw/extradrey/CT0XX_Y/Images/{Image/*.jpg, Mask/*_mask.png}.
 Source masks: 0 bg, 85 flank wear, 170 tool, 255 adhesion  ->  0 bg, 1 tool, 2 flank wear, 4 adhesion.
 Views: FF flank 150x, FFL flank 100x (fully labelled); RF rake face: the dataset marks only the tool area
-(crater/edge wear not labelled), so RF after 0 s is tool-only: tool within RF_BAND_MM of the tool outline -> 255.
+(crater/edge wear not labelled, crater sometimes left as 0 -> bg inside the tool's convex hull = 255), so RF after 0 s is tool-only: tool within RF_BAND_MM of the tool outline -> 255.
 Scale: measured from the blue 100 um scale bar (150x ~1010 px/mm, 100x ~680 px/mm at 2048 px); the bar + label -> 255.
 Images downscaled to <= MAXW px wide. VB_Max (um) from Experiment_Documentation.xlsx by (edge, cutting time end).
   python label_extradrey.py <root>      (root = datasets/toolwear)
@@ -79,6 +79,11 @@ def main(root):
         if box: m[box[1]:, box[0]:] = 255
         else: m[-140:, -200:] = 255
         quality = 'expert mask (dataset)'
+        if face == 'RF':  # crater left unlabelled (0) inside the tool -> 255: bg inside the tool's convex hull
+            cs, _ = cv2.findContours((m == 1).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if cs:
+                hull = np.zeros_like(m); cv2.fillPoly(hull, [cv2.convexHull(np.concatenate(cs))], 1)
+                m[(m == 0) & (hull > 0)] = 255
         if face == 'RF' and t > 0:
             tool_m = (m == 1).astype(np.uint8)
             pad = cv2.copyMakeBorder(tool_m, 1, 1, 1, 1, cv2.BORDER_REPLICATE)
