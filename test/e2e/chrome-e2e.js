@@ -254,7 +254,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     const {root: r2} = await s('DOM.getDocument');
     for (const [fl, files] of [[0, mimgs.slice(0, 2)], [1, mimgs.slice(2)]]) {
       const {nodeId: ni} = await s('DOM.querySelector', {nodeId: r2.nodeId, selector: `#slots .mi-slot[data-flute="${fl}"] input`});
-      await s('DOM.setFileInputFiles', {nodeId: ni, files: files.map(f => f.replace(/\//g, '\'))}); await sleep(1200);
+      await s('DOM.setFileInputFiles', {nodeId: ni, files: files.map(f => f.replace(/\//g, '\\'))}); await sleep(1200);
     }
     MI.thumbs = await ev(`[...document.querySelectorAll('#slots .mi-slot')].map(d=>d.querySelectorAll('canvas').length).join()`);
     await ev(`document.querySelector('#engine').textContent='';document.querySelector('#run').click();1`);
