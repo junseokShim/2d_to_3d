@@ -156,7 +156,9 @@
     // from it (the tool body; specular streaks on it are a minority). A pixel is backdrop-like when its colour projects past the midpoint from Ct towards Cb: robust to
     // a vignetted / two-tone backdrop (the variation is small next to |Cb - Ct|), and glints on the tool only count as
     // backdrop where they touch it
-    const cnt = [0, 0, 0]; for (const i of border) cnt[km.near(px(i))[0]]++;
+    // (counted on the top border: the tip is in frame, so the top rows are backdrop; on a close-up the tool fills the left
+    // and right borders and would win the count)
+    const cnt = [0, 0, 0]; for (const i of border) if (i < bw * W) cnt[km.near(px(i))[0]]++;
     const Cb = km.C[[0, 1, 2].sort((p, q) => cnt[q] - cnt[p])[0]];
     const all = []; for (let i = 0; i < W * H; i += 7) all.push(px(i));
     const ka = kmeans(all, 4, rgb), share = [0, 0, 0, 0]; for (const p of all) share[ka.near(p)[0]]++;
@@ -164,7 +166,7 @@
     const kt = [0, 1, 2, 3].filter(k => share[k] > .1 * all.length).sort((p, q) => far(q) - far(p))[0];
     if (kt == null) return null;
     const Ct = ka.C[kt], dC = Cb.map((v, c) => v - Ct[c]), dd = dC.reduce((p, v) => p + v * v, 0) || 1;
-    const bd = border.map(i => { const p = px(i); return Math.hypot(p[0] - Cb[0], p[1] - Cb[1], p[2] - Cb[2]); }).sort((p, q) => p - q);
+    const bd = border.filter(i => i < bw * W).map(i => { const p = px(i); return Math.hypot(p[0] - Cb[0], p[1] - Cb[1], p[2] - Cb[2]); }).sort((p, q) => p - q);   // spread of the backdrop: top border (see cnt)
     const tau = Math.max(8, bd[Math.floor(.5 * bd.length)]), contrast = Math.sqrt(dd) / tau;
     if (contrast < 4) return null;
     const isBg = i => { const p = px(i); return ((p[0] - Ct[0]) * dC[0] + (p[1] - Ct[1]) * dC[1] + (p[2] - Ct[2]) * dC[2]) / dd > .5; };
@@ -193,7 +195,8 @@
     let yTop = H, cutL = 0, cutR = 0; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (lab[y * W + x] === best) { yTop = Math.min(yTop, y); break; }
     for (let y = 0; y < H; y++) { if (lab[y * W] === best) cutL++; if (lab[y * W + W - 1] === best) cutR++; }
     const hT = Math.max(1, H - yTop), cut = {left: cutL > CUT_FRAC * hT, right: cutR > CUT_FRAC * hT};
-    if (cut.left && cut.right && !expectSepPx) return null;
+    // both sides cut and no scale from elsewhere: the axis and the scale are unknown; the alignment is still returned (tilt and
+    // tip line hold) with the visible width as a lower bound, flagged by cut (the side goes to the operator: 'tool-cut-off')
     // tilt: the tip line (the end face is square to the axis) = the longest top edge of the hull within +-20 deg of the
     // horizontal; chips and broken teeth only lower parts of the end, the hull spans the highest remaining points
     let bt = null, bl = 0; const yT = (yTop + .5) / sc;
@@ -211,11 +214,11 @@
     let hw = 0; { const {a: lo, b: hi} = proj(bt); hw = hi - lo; }
     let uL = 1e9, uR = -1e9;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (lab[y * W + x] !== best) continue; const X = (x + .5) / sc - .5 - cx0, Y = (y + .5) / sc - .5 - cy0, v = X * s1 + Y * c1; if (v > v0 + .3 * hw) continue; const u = X * c1 - Y * s1; if (u < uL) uL = u; if (u > uR) uR = u; }
-    if (expectSepPx && (cut.left || cut.right)) { if (cut.left) uL = uR - expectSepPx; else uR = uL + expectSepPx; }
+    if (expectSepPx && (cut.left || cut.right)) { if (cut.left && cut.right) { const m = (uL + uR) / 2; uL = m - expectSepPx / 2; uR = m + expectSepPx / 2; } else if (cut.left) uL = uR - expectSepPx; else uR = uL + expectSepPx; }
     const sep = uR - uL; if (sep < 8) return null;
     const c = c1, s = s1, uC = (uL + uR) / 2;
     const toImg = (u, v) => [cx0 + u * c + v * s, cy0 - u * s + v * c];
-    return {t: bt, tiltDeg: bt / DEG, uL, uR, uC, sepPx: sep, pxPerMm: sep / diameterMm, vTip: v0, toImg, tipPx: toImg(uC, v0), method: 'backdrop', cut, contrast: r4(contrast), toolFrac: r4(frac), mask: {W, H, sc, lab, best}};
+    return {t: bt, tiltDeg: bt / DEG, uL, uR, uC, sepPx: sep, pxPerMm: sep / diameterMm, vTip: v0, toImg, tipPx: toImg(uC, v0), method: 'backdrop', cut, scaleFrom: (cut.left || cut.right) ? (expectSepPx ? 'expected' : 'lower-bound') : 'silhouette', contrast: r4(contrast), toolFrac: r4(frac), mask: {W, H, sc, lab, best}};
   }
   function convexHull(P) {
     const p = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (p.length < 3) return p;
@@ -645,7 +648,7 @@
       // close-up on a plain backdrop (tool >= CLOSE_W of the frame width, where align()'s framing prior does not hold) ->
       // backdrop alignment; otherwise the edge-pair search, and the backdrop one only when that finds nothing
       const ab = o.align !== 'edges' ? backdropAlign(G, D, exp) : null;
-      const al = ab && ab.sepPx >= CLOSE_W * G.w ? ab : align(G, sobel(G), D, exp) || ab;
+      const al = ab && (ab.sepPx >= CLOSE_W * G.w || ab.cut.left || ab.cut.right) ? ab : align(G, sobel(G), D, exp) || ab;
       if (!al) return null;
       const [, ty] = al.tipPx, [tx] = al.tipPx, edge = Math.min(ty, tx, G.w - 1 - tx) < .02 * al.sepPx + 2;
       return {G, al, deg, edge};
@@ -685,10 +688,10 @@
     m.vbMaxMm = r4(Math.max(vbFlankMaxMm, vbTipMm));
     strip.tip = vbTipMm ? {depthMm: vbTipMm, widthMm: seg.tip.widthMm} : null;   // metro-core folds it into VBC / VBmax
     return Object.assign(m, {vbFlankMaxMm, vbTipMm, vbSource: vbTipMm > vbFlankMaxMm ? 'corner/tip (VBC)' : vbFlankMaxMm > 0 ? 'flank (VB)' : 'none',
-      align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
+      align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg, method: al.method || 'edges', scaleFrom: al.scaleFrom || 'silhouette'},
       helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band, rowVbMm: seg.rowVbMm || null,
       tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
-    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip, seg.flags));
+    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip, (seg.flags || []).concat(al.scaleFrom === 'lower-bound' ? ['tool-cut-off'] : [])));
   }
 
   // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
@@ -715,13 +718,16 @@
   }
 
   // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
-  function prepareAll({sides, enhanced, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm, flutes: k}, E = enhanced || [];
+  // pxPerMm (optional): operator / microscope calibration of the photos; needed when the tool is wider than the frame
+  function prepareAll({sides, enhanced, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm, pxPerMm}) {
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm, flutes: k, expectPxPerMm: pxPerMm}, E = enhanced || [];
     Object.keys(o).forEach(key => o[key] == null && delete o[key]);
     let P = sides.slice(0, k).map((img, i) => prepareSide(img, o, E[i]));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
-    const pp = P.filter(Boolean).map(p => p.al.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
-    if (pp.length >= 2) P = P.map((p, i) => !p || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed}), E[i]) : p);
+    // (cut-off sides give only a lower bound: they borrow the scale of the whole ones, and do not set it)
+    const cutOff = p => p && p.al.cut && (p.al.cut.left || p.al.cut.right);
+    const pp = P.filter(p => p && !cutOff(p)).map(p => p.al.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
+    if (!pxPerMm && pp.length >= 2 || !pxPerMm && pp.length && P.some(cutOff)) P = P.map((p, i) => !p || cutOff(p) || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed}), E[i]) : p);
     return {k, o, P};
   }
 

@@ -5,6 +5,9 @@
 //   chip / tip-damage depth vs the labelled chip depth, flank VB vs the labelled land width, never a confident 0 on a
 //   labelled damage, px/mm vs the labelled scale.
 // Needs the PNG cache (Node has no JPEG decoder): python scripts/data/human_png.py
+// 12Pi: the D12 tool is wider than the frame (no scale from the silhouette) -> uncalibrated its sides must be flagged
+// 'tool-cut-off'; then a second pass with a per-shot px/mm calibration (the median of the labelled scales of that shot, as
+// a microscope calibration would give) checks the land / chip in mm within the labels' own scale error (+-25 %).
 // Run: node test/wear/human-run.js [--classic] [--shot 1|2] [--tool 10Pi_1] [--no-gt]
 'use strict';
 const fs = require('fs'), path = require('path');
@@ -15,7 +18,7 @@ const TOOLS = [['10Pi_1', 10, '10'], ['10Pi_2', 10, '10'], ['12Pi', 12, '12']];
 const arg = k => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
 const f3 = v => v == null ? '  -  ' : (+v).toFixed(3);
 // thresholds (per tool, on the sides the labels give a scale for)
-const TOL = {chipMm: .5, chipRel: .3, vbMm: .3, ppmRel: .08};
+const TOL = {chipMm: .5, chipRel: .3, vbMm: .3, ppmRel: .08, scaleRel: .25};
 let pass = 0, fail = 0;
 const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`); ok ? pass++ : fail++; };
 
@@ -26,13 +29,16 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   const classic = process.argv.includes('--classic'), run = classic ? null : await require('./ort-seg-node.js')();
   const shots = arg('--shot') ? [arg('--shot')] : ['1', '2'], only = arg('--tool');
   const rows = [];
-  for (const [tool, D, p] of TOOLS) {
-    if (only && only !== tool) continue;
+  const passes = TOOLS.map(t => [t, false]).concat(gt ? [[TOOLS[2], true]] : []);
+  for (const [[tool0, D, p], cal] of passes) {
+    const tool = tool0 + (cal ? '+cal' : '');
+    if (only && only !== tool0) continue;
     for (const k of shots) {
-      const names = [1, 2, 3, 4].map(s => `${tool}/${p}-${s}-${k}`), sides = names.map(n => readPng(path.join(DATA, n + '.png')));
-      const args = {sides, flutes: 4, diameterMm: D};
+      const names = [1, 2, 3, 4].map(s => `${tool0}/${p}-${s}-${k}`), sides = names.map(n => readPng(path.join(DATA, n + '.png')));
+      const cp = cal ? names.map(n => G[n] && G[n].pxPerMm).filter(Boolean).sort((a, b) => a - b) : [];
+      const args = Object.assign({sides, flutes: 4, diameterMm: D}, cp.length ? {pxPerMm: cp[cp.length >> 1]} : {});
       const {result, debug} = classic ? W.measure(args) : await W.measureAsync(args, SEG.createSegmenter(run, W, {flutes: 4}), 'seg');
-      console.log(`\n# ${tool} shot ${k} (D${D}, ${classic ? 'classic' : 'seg'}): VBmax ${f3(result.totals.vbMaxMm)}`);
+      console.log(`\n# ${tool} shot ${k} (D${D}, ${classic ? 'classic' : 'seg'}${args.pxPerMm ? `, calibrated ${args.pxPerMm} px/mm` : ''}): VBmax ${f3(result.totals.vbMaxMm)}`);
       debug.sides.forEach((s, i) => {
         const g = G[names[i]], r = {tool, name: names[i], s, g, ai: debug.aiErrors[i]};
         rows.push(r);
@@ -43,25 +49,26 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   }
   if (!gt) { console.log('\n(no labels: report only)'); return; }
   console.log('\n# against the labels (per tool; sides without a labelled scale are checked for flags only)');
-  for (const [tool] of TOOLS) {
+  for (const tool of ['10Pi_1', '10Pi_2', '12Pi', '12Pi+cal']) {
     const R = rows.filter(r => r.tool === tool && r.g); if (!R.length) continue;
+    const cal = tool.endsWith('+cal'), tolV = g => cal ? Math.max(TOL.vbMm, TOL.scaleRel * g) : TOL.vbMm;
     const scaled = R.filter(r => r.g.pxPerMm);
     // never a confident 0 / confident small number on a side with labelled damage
     const silent = R.filter(r => (r.g.hasChip || r.g.hasWear) && (!r.s || (!r.s.needsOperator && r.s.vbMaxMm < .5 * Math.max(r.g.chipDepthMm || 0, r.g.vbMaxMm || 0, .2))));
     check(`${tool}: no silent miss on labelled damage (${R.length} sides)`, !silent.length, silent.map(r => r.name).join(' '));
     const ppmBad = scaled.filter(r => r.s && Math.abs(r.s.align.pxPerMm / r.g.pxPerMm - 1) > TOL.ppmRel && !(r.s.reasons || []).includes('tool-cut-off'));
-    check(`${tool}: px/mm within ${100 * TOL.ppmRel} % of the label or flagged tool-cut-off`, !ppmBad.length, ppmBad.map(r => `${r.name} ${r.s.align.pxPerMm.toFixed(1)}/${r.g.pxPerMm}`).join(' '));
+    if (!cal) check(`${tool}: px/mm within ${100 * TOL.ppmRel} % of the label or flagged tool-cut-off`, !ppmBad.length, ppmBad.map(r => `${r.name} ${r.s.align.pxPerMm.toFixed(1)}/${r.g.pxPerMm}`).join(' '));
     const ch = scaled.filter(r => r.g.hasChip && r.s && !(r.s.reasons || []).includes('tool-cut-off'));
     if (ch.length) {
       const err = ch.map(r => Math.abs((r.s.vbTipMm || 0) - r.g.chipDepthMm)), mae = err.reduce((a, b) => a + b, 0) / err.length;
       const found = ch.filter(r => r.s.vbTipMm > 0).length;
       check(`${tool}: chipped corners reported as tip damage (VBC) on >= 75 % of the labelled sides`, found >= .75 * ch.length, `${found}/${ch.length}`);
-      check(`${tool}: chip depth MAE <= max(${TOL.chipMm} mm, ${100 * TOL.chipRel} %)`, mae <= Math.max(TOL.chipMm, TOL.chipRel * ch.reduce((a, r) => a + r.g.chipDepthMm, 0) / ch.length), `MAE ${f3(mae)} mm`);
+      check(`${tool}: chip depth MAE <= max(${TOL.chipMm} mm, ${100 * (cal ? TOL.scaleRel : TOL.chipRel)} %)`, mae <= Math.max(TOL.chipMm, (cal ? TOL.scaleRel : TOL.chipRel) * ch.reduce((a, r) => a + r.g.chipDepthMm, 0) / ch.length), `MAE ${f3(mae)} mm`);
     }
     const noLand = scaled.filter(r => !r.g.hasWear && r.s && r.s.vbFlankMaxMm > TOL.vbMm);
     check(`${tool}: no flank land where none is labelled (specular streaks are not wear)`, !noLand.length, noLand.map(r => `${r.name} ${f3(r.s.vbFlankMaxMm)}`).join(' '));
     const land = scaled.filter(r => r.g.hasWear && r.g.vbMaxMm && r.s && !(r.s.reasons || []).includes('tool-cut-off'));
-    if (land.length) { const e = land.map(r => Math.abs(r.s.vbFlankMaxMm - r.g.vbMaxMm)), m = e.reduce((a, b) => a + b, 0) / e.length; check(`${tool}: flank VB MAE <= ${TOL.vbMm} mm`, m <= TOL.vbMm, `MAE ${f3(m)} mm`); }
+    if (land.length) { const e = land.map(r => Math.abs(r.s.vbFlankMaxMm - r.g.vbMaxMm)), m = e.reduce((a, b) => a + b, 0) / e.length, t = tolV(land.reduce((a, r) => a + r.g.vbMaxMm, 0) / land.length); check(`${tool}: flank VB MAE <= ${f3(t)} mm${cal ? ` (max(${TOL.vbMm}, ${100 * TOL.scaleRel} %): labelled scale +-${100 * TOL.scaleRel} %)` : ''}`, m <= t, `MAE ${f3(m)} mm`); }
   }
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
