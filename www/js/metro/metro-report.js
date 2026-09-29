@@ -48,13 +48,13 @@
     const d = data(), P = M.PdfPage(), W = P.W, L = 36, R = W - 36, S = T.metro.state, light = {green: '#1e9e4a', amber: '#e0a100', red: '#d0342c'};
     // header
     P.rect(0, 0, W, 62, '#1f2a36'); P.text(L, 26, 'Tool wear inspection report', 16, {bold: true, color: '#ffffff'});
-    P.text(L, 44, 'Peripheral flank wear VB - ISO 8688-2 / ISO 3685 - photo-based measurement', 9, {color: '#c8d2dc'});
+    P.text(L, 44, 'Peripheral flank wear VB - ISO 8688-2 / ISO 3685 - ' + (d.inputMode === 'microscope' ? 'microscope ' + d.magnification + 'x measurement' : 'photo-based measurement'), 9, {color: '#c8d2dc'});
     const ov = d.overall || {light: 'amber', decision: 'n/a'};
     P.rect(R - 150, 14, 150, 34, light[ov.light]); P.text(R - 75, 30, (T.metro.LBL[ov.light] || '-') + ' - ' + DEC[ov.decision], 10, {bold: true, color: '#ffffff', align: 'center'});
     P.text(R - 75, 42, 'VBmax ' + f3(d.vbMax && d.vbMax.v) + ' +- ' + f3(d.vbMax && d.vbMax.U) + ' mm', 8, {color: '#ffffff', align: 'center'});
     // info grid
     let y = 80; const info = [['Tool ID', d.toolId], ['Operator', d.operator || '-'], ['Date', d.date], ['Diameter', 'D ' + d.D + ' mm'], ['Flutes', d.k], ['Helix', (+d.helixDeg).toFixed(1) + ' deg'],
-      ['Engine', d.engine || '-'], ['Scale', d.calib.pxPerMm.toFixed(2) + ' +- ' + d.calib.U_pxPerMm.toFixed(2) + ' px/mm (' + d.calib.method + ')'], ['Limit VB', f3(d.limitMm) + ' mm (warn ' + Math.round(d.warnFrac * 100) + ' %)']];
+      ['Engine', d.engine || '-'], ['Mode', d.inputMode === 'microscope' ? 'microscope ' + d.magnification + 'x' : 'camera'], ['Scale', d.calib.pxPerMm.toFixed(2) + ' +- ' + d.calib.U_pxPerMm.toFixed(2) + ' px/mm (' + d.calib.method + ')'], ['Limit VB', f3(d.limitMm) + ' mm (warn ' + Math.round(d.warnFrac * 100) + ' %)']];
     info.forEach(([k, v], i) => { const cx = L + (i % 3) * 176, cy = y + Math.floor(i / 3) * 14; P.text(cx, cy, k, 7.5, {color: '#667788'}); P.text(cx + 50, cy, String(v), 8.5, {bold: i === 0}); });
     y += 48;
     // VB table
@@ -143,7 +143,7 @@ h2{font-size:13px;margin:12px 0 4px}.note{font-size:10px;color:#445}footer{margi
 <div class="badge">${T.metro.LBL[ov.light] || '-'} · ${DEC[ov.decision]}<br><small style="color:#fff">VBmax ${f3(d.vbMax && d.vbMax.v)} ± ${f3(d.vbMax && d.vbMax.U)} mm</small></div></header>
 <div class="info"><div><span>Tool ID</span><b>${esc(d.toolId)}</b></div><div><span>Operator</span>${esc(d.operator || '-')}</div><div><span>Date</span>${d.date}</div>
 <div><span>Diameter</span>Ø ${d.D} mm</div><div><span>Flutes</span>${d.k}</div><div><span>Helix</span>${(+d.helixDeg).toFixed(1)}°</div>
-<div><span>Engine</span>${esc(d.engine || '-')}</div><div><span>Scale</span>${d.calib.pxPerMm.toFixed(2)} ± ${d.calib.U_pxPerMm.toFixed(2)} px/mm (${d.calib.method})</div><div><span>Limit</span>${f3(d.limitMm)} mm (warn ${Math.round(d.warnFrac * 100)} %)</div></div>
+<div><span>Engine</span>${esc(d.engine || '-')}</div><div><span>Mode</span>${d.inputMode === 'microscope' ? 'microscope ' + esc(d.magnification) + 'x' : 'camera'}</div><div><span>Scale</span>${d.calib.pxPerMm.toFixed(2)} ± ${d.calib.U_pxPerMm.toFixed(2)} px/mm (${d.calib.method})</div><div><span>Limit</span>${f3(d.limitMm)} mm (warn ${Math.round(d.warnFrac * 100)} %)</div></div>
 <table><tr><th>Flute</th><th>VBmax</th><th>VBB avg</th><th>VBC corner</th><th>VBN notch</th><th>Area mm²</th><th>Vol. mm³</th><th>Decision</th></tr>
 ${d.flutes.map((e, i) => `<tr><td>F${i + 1}${e.edited ? '*' : ''}${e.mode === 'operator-assisted' || e.mode === 'awaiting-operator' ? ` <small>${e.mode}</small>` : ''}</td>${q(e)}<td>${e.failed ? '-' : e.areaMm2.toFixed(3)}</td><td>${e.failed ? '-' : e.volumeMm3.toFixed(4)}</td><td>${DEC[e.status.decision]} <i class="dot" style="background:${light[e.status.light]}"></i></td></tr>`).join('')}</table>
 <p class="note">mm, value ± U (k=2). * = corrected by the operator.</p>
