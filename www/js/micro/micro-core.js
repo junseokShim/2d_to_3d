@@ -20,7 +20,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
   const MAGS = [10, 20, 30, 50, 100, 200, 500];
-  const NET_LONG = 800;        // network input long side for a microscope image (MUDESTREDA 1550 px was trained at 0.2..0.62 x)
+  const NET_LONG = 1600;       // network input long side cap: the land reads best near native resolution (MUDESTREDA val T3: MAE VBmax 41 px at 500, 31 at 1100, 25 at 1550)
   const PADV = 24;             // strip columns kept on the background side of the edge line (px)
   const GAP = 8;               // strip rows between two images of one flute
   const r4 = v => Math.round(v * 1e4) / 1e4;
@@ -191,7 +191,7 @@
     const line = fitEdge(seg);
     if (!line) throw new Error('micro: 절삭날(공구/배경 경계)을 찾지 못했습니다');
     const F = frame(line, W, H); if (!F) throw new Error('micro: 절삭날 선이 영상 밖입니다');
-    const ppm = o.pxPerMm, sx = seg.scale[0], vTol = Math.max(3, Math.round(2 * sx + line.sigmaPx)), smooth = Math.max(2, Math.round(1.5 * sx));
+    const ppm = o.pxPerMm, sx = seg.scale[0], vTol = Math.max(3, Math.round(2 * sx + line.sigmaPx)), smooth = o.smoothPx != null ? o.smoothPx : Math.max(2, Math.round(1.5 * sx));
     const lookup = thr => (u, v) => { const [x, y] = F.toImg(u, v); return classAtImg(seg, x, y, W, H, thr); };
     const main = landRows(lookup(o.thr == null ? null : o.thr), F.L, F.V, vTol, smooth), lo = landRows(lookup(.3), F.L, F.V, vTol, smooth), hi = landRows(lookup(.7), F.L, F.V, vTol, smooth);
     const mm = a => Float32Array.from(a, v => v / ppm);
