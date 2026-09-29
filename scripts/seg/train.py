@@ -116,6 +116,7 @@ def main():
     ap.add_argument('--win2', type=float, default=.8, help='share of pool2 samples framed like the app side window')
     ap.add_argument('--pool3', default='', help='USB-microscope render pool (gen_pool_micro.py), mix key micro, composited by augment.compose_micro')
     ap.add_argument('--win3', type=float, default=.4, help='share of micro samples framed like the app side window')
+    ap.add_argument('--exclude', default='', help='regex on real stems never trained on (held-out tool of a fold)')
     ap.add_argument('--save_every', action='store_true', help='keep a checkpoint per eval (it<N>.pt)')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -167,7 +168,7 @@ def main():
     while it < a.iters:
         metas = data.load_pool(a.pool)            # the generator keeps adding renders
         tr = [metas[i] for i in metas if i % 20 != 0]
-        real_tr = data.load_real('train')
+        real_tr = data.load_real('train', exclude=a.exclude or None)
         m2 = data.load_pool(a.pool2) if a.pool2 else {}
         tr2 = [m2[i] for i in m2 if i % 20 != 0]
         m3 = data.load_pool(a.pool3) if a.pool3 else {}

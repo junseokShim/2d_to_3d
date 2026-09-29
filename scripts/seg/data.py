@@ -114,6 +114,8 @@ def split_of(name):
     """processed/ file stem -> (source, split). syn_*: every 10th render is val; mud_*: tool T3 held out (val);
     target_*: the human's photos, eval only (never trained on)."""
     src = name.split('_', 1)[0]
+    if name.startswith('qit_w_'):      # QIT-CEMC with wear labels (worker-hlabel), kept apart from the tool-only qit_
+        src = 'qitw'
     if src == 'target':
         return src, 'target'
     if src == 'mud':
@@ -125,9 +127,9 @@ def split_of(name):
     return src, 'train'
 
 
-def load_real(split, root=DS_ROOT, sources=None):
+def load_real(split, root=DS_ROOT, sources=None, exclude=None):
     """labelled images of the shared dataset (processed/{images,masks}/<source>_*.png) for a split:
-    {source: [(image, mask, stem)]}"""
+    {source: [(image, mask, stem)]}; exclude: regex on the stem (leave-one-tool-out folds)"""
     out = {}
     d = os.path.join(root, 'processed')
     if not os.path.isdir(os.path.join(d, 'images')):
@@ -138,7 +140,7 @@ def load_real(split, root=DS_ROOT, sources=None):
         if ext.lower() not in ('.png', '.jpg') or not os.path.exists(mp_):
             continue
         src, sp = split_of(stem)
-        if sp != split or (sources and src not in sources):
+        if sp != split or (sources and src not in sources) or (exclude and re.search(exclude, stem)):
             continue
         out.setdefault(src, []).append((os.path.join(d, 'images', f), mp_, stem))
     return out
