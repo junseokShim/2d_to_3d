@@ -84,6 +84,7 @@ def main():
     ap.add_argument('--net_d', type=int, default=256)
     ap.add_argument('--root', default=os.path.join(data.DS_ROOT, 'processed'), help='dataset dir with images/ masks/ labelinfo/ (e.g. fold_eval.KEYENCE)')
     ap.add_argument('--short', type=int, default=384, help='images without a tool diameter: short side in px')
+    ap.add_argument('--group', default='', help='regex: summary group = its first match in the stem (default: tool id)')
     ap.add_argument('--encoder', default='tu-mobilenetv3_large_100')
     a = ap.parse_args()
     global P
@@ -134,7 +135,7 @@ def main():
     for name, rows in res.items():
         groups = {}
         for s, r in rows.items():
-            g = re.sub(r'_(s\d_\d|top|\d+|C\d+_side\d)$', '', s)
+            g = re.search(a.group, s).group(0) if a.group and re.search(a.group, s) else re.sub(r'_(s\d_\d|top|\d+|C\d+_side\d)$', '', s)
             groups.setdefault(g, []).append((s, r))
         for g, rs in groups.items():
             side = [r for s, r in rs if not s.endswith('_top')]
