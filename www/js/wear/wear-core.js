@@ -547,7 +547,7 @@
       let r0 = 1e9, r1 = -1; const span = new Map();
       for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); r0 = Math.min(r0, y); r1 = Math.max(r1, y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
       const depthMm = (r1 + 1 - Math.max(r0, top)) / ppm, widthMm = quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5);
-      const touches = r0 <= touch, kind = touches && depthMm >= 2 * resMm && (depthMm <= CHIP_ASPECT * Math.max(widthMm, 1 / ppm) || (isChip && isChip(pts))) ? 'chip' : continuesBelow(S, tm, pts, span, r1, touches ? null : r0) ? 'streak' : 'land';
+      const touches = r0 <= touch, kind = touches && depthMm >= 2 * resMm && (depthMm <= CHIP_ASPECT * Math.max(widthMm, 1 / ppm) || (isChip && isChip(pts))) ? 'chip' :  continuesBelow(S, tm, pts, span, r1, touches ? null : r0, null, mask) ? 'streak' : 'land';
       const out = kind === 'chip' ? chip : kind === 'land' ? land : streak; for (const p of pts) out[p] = 1;
       blobs.push({kind, r0, r1, depthMm: r4(depthMm), widthMm: r4(widthMm), areaMm2: r4(pts.length / ppm / ppm)});
     }
@@ -574,7 +574,8 @@
   // r0 (optional, a blob away from the tip line): the highlight may also run on above it (a specular band on the helical
   // flank is cut into pieces by the zone end and by darker patches; a land piece is bounded by the edge's own geometry)
   // rough (optional, roughMap rows): a rough blob (fracture face) followed by smooth bright metal (a specular flank) ends there
-  function continuesBelow(strip, tm, pts, span, r1, r0, rough) {
+  // cand (with r0): the candidate mask; above a land piece lies more of the land (the piece is a split land, not a highlight)
+  function continuesBelow(strip, tm, pts, span, r1, r0, rough, cand) {
     const {w, h, g, rgb, ppm} = strip, lum = i => rgb ? (rgb[3 * i] + rgb[3 * i + 1] + rgb[3 * i + 2]) / 3 : g[i];
     // the window follows the blob's slant (row-centre line fit: a highlight on a helical margin runs diagonally)
     const med = a => a.sort((p, q) => p - q)[a.length >> 1], sp = [...span.values()], hw = (med(sp.map(s => s[1] - s[0])) + 1) / 2;
@@ -582,11 +583,11 @@
     for (const [y, [l, r]] of span) { sxy += (y - my) * ((l + r) / 2 - mx); syy += (y - my) ** 2; }
     const sl = Math.max(-2, Math.min(2, syy ? sxy / syy : 0)), xc = y => mx + sl * (y - my);
     let lb = 0, rb = 0; for (const p of pts) { lb += lum(p); if (rough && rough[p]) rb++; } lb /= pts.length; rb /= pts.length;
-    const along = (ya, yb) => { let s = 0, n = 0, rn = 0;
-    for (let y = Math.max(0, ya); y < Math.min(h, yb); y++) for (let x = Math.max(0, Math.round(xc(y) - hw)); x <= Math.min(w - 1, Math.round(xc(y) + hw)); x++) { const i = y * w + x; if (tm[i] && !Number.isNaN(g[i])) { s += lum(i); n++; if (rough && rough[i]) rn++; } }
-    return n >= .25 * 2 * hw * TIP_BELOW_MM * ppm && s / n > TIP_BELOW_X * lb && !(rough && rb > ROUGH_BLOB && rn / n < .5 * rb); };
+    const along = (ya, yb, cd) => { let s = 0, n = 0, rn = 0, cn = 0;
+    for (let y = Math.max(0, ya); y < Math.min(h, yb); y++) for (let x = Math.max(0, Math.round(xc(y) - hw)); x <= Math.min(w - 1, Math.round(xc(y) + hw)); x++) { const i = y * w + x; if (tm[i] && !Number.isNaN(g[i])) { s += lum(i); n++; if (rough && rough[i]) rn++; if (cd && cd[i]) cn++; } }
+    return n >= .25 * 2 * hw * TIP_BELOW_MM * ppm && s / n > TIP_BELOW_X * lb && !(rough && rb > ROUGH_BLOB && rn / n < .5 * rb) && !(cd && cn > .2 * n); };
     const L = Math.round(TIP_BELOW_MM * ppm);
-    return along(r1 + 1, r1 + 1 + L) || (r0 != null && r0 - L >= strip.top && along(r0 - L, r0));
+    return along(r1 + 1, r1 + 1 + L) || (r0 != null && r0 - L >= strip.top && along(r0 - L, r0, cand));
   }
   // binary opening with a k x k square (separable running minimum / maximum)
   function openMask(m, w, h, k) {
