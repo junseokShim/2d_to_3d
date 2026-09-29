@@ -104,17 +104,17 @@
   // here VB = the band's thickness (2 x inner distance at its ridge, per row), un-foreshortened on the cylinder: with m the
   // band normal in the photo (towards the nearest outside pixel) and f = 1 / sqrt(1 - (u/R)^2) the circumferential
   // compression, a projected thickness t is T = t / |(m_x / f, m_y)|.  Largest piece of flank wear + chipping in the zone (one photo = the flute it faces).
-  function landWidth(wc, Wn, Hn, win, P, edgeU) {
+  function landWidth(wc, Wn, Hn, win, P, edgeU, vo = {}) {
     const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn);
-    const m = new Uint8Array(Wn * Hn);
+    const m = new Uint8Array(Wn * Hn), Yc = Y0 + Math.round((vo.zc || 0) * win.netD), uR = (vo.umax || 9) * Rn;
     for (let Y = Y0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if ((c === 2 || c === 3) && Math.abs(X + .5 - Wn / 2) < edgeU * Rn) m[Y * Wn + X] = 1; }
     const {lab, sizes} = components(m, Wn, Hn);
     let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
     if (!best) return {vbMm, px: 0};
     for (let j = 0; j < m.length; j++) m[j] = lab[j] === best ? 1 : 0;
     const d = distIn(m, Wn, Hn);
-    for (let Y = Y0; Y < Hn; Y++) {
-      let jb = -1; for (let X = 0; X < Wn; X++) { const j = Y * Wn + X; if (m[j] && (jb < 0 || d[j] > d[jb])) jb = j; }
+    for (let Y = Yc; Y < Hn; Y++) {
+      let jb = -1; for (let X = 0; X < Wn; X++) { const j = Y * Wn + X; if (m[j] && Math.abs(X + .5 - Wn / 2) < uR && (jb < 0 || d[j] > d[jb])) jb = j; }
       if (jb < 0) continue;
       // band normal at the ridge = direction to the nearest pixel outside the band
       const X = jb % Wn, r = Math.ceil(d[jb]) + 1; let bx = 0, by = 1, bd = 1e9;
@@ -191,12 +191,25 @@
       const {lab, sizes} = components(m, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
-      const land = landWidth(wc, Wn, Hn, win, P, EDGE_U);
+      const land = landWidth(wc, Wn, Hn, win, P, EDGE_U, opts.vb);
       const rowVbMm = new Float32Array(y1 - top);
       for (let y = top; y < y1; y++) {
         const Ya = Math.max(0, Math.floor(fromStrip(cx, y - .5)[1])), Yb = Math.min(Hn - 1, Math.ceil(fromStrip(cx, y + .5)[1]));
         let v = 0; for (let Y = Ya; Y <= Yb; Y++) v = Math.max(v, land.vbMm[Y]); rowVbMm[y - top] = v;
       }
+      // VB uncertainty: the land width read from the flank+chip probability at a low and a high threshold (instead of the
+      // argmax), and from the horizontally mirrored photo (test-time flip). A soft or two-way land edge moves VBmax
+      const zEnd0 = Math.min(Hn, Math.ceil((P.al.vTip + P.zoneRows - win.v0) * win.k)), Yw = Math.round(ABOVE * win.netD);
+      const vbMaxOf = lw => { let v = 0; for (let Y = Yw; Y < zEnd0; Y++) v = Math.max(v, lw.vbMm[Y]); return v; };
+      const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
+      const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
+      let vbFlip = null;
+      if (opts.tta && !opts.oracle) {
+        const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
+        for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const i0 = Y * Wn + (Wn - 1 - X); let b = 0; for (let c = 1; c < NC; c++) if (pf[c * n + i0] > pf[b * n + i0]) b = c; wf[Y * Wn + X] = b; }
+        vbFlip = vbMaxOf(landWidth(wf, Wn, Hn, win, P, EDGE_U, opts.vb));
+      }
+      const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
       const tip = tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
@@ -205,9 +218,11 @@
       const al = P.al, Rmm = R / strip.ppm, k = opts.flutes || 0;
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
-        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1};
+        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1,
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
-        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn}};
+        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
+          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}}};
     }
     const segmenter = (P, i) => segmentSide(P, i);
     segmenter.faces = faces;
