@@ -159,17 +159,23 @@
     const repAvg = rs => rs.length < 2 ? 0 : sd(rs.map(r => vb[r])) / Math.sqrt(Math.max(1, rs.length / 3));   // 3-row median: ~1/3 independent rows
     const avg = rs => mean(rs.map(r => vb[r]));
     const zC = pick(r => vb[r] > 0 && zone(r) === 'C'), zN = pick(r => vb[r] > 0 && zone(r) === 'N');
+    // tip / corner damage measured by wear-core (strip.tip: chipping / broken end tooth, depth from the original corner)
+    // is corner wear VBC (ISO 8688-2 zone C) and therefore also VBmax; the flank band alone is vbFlankMax
+    const tipMm = F.strip.tip && F.strip.tip.depthMm > 0 ? F.strip.tip.depthMm * f : 0, flankMax = maxOf(worn);
+    const tipQ = budget(tipMm, 0), vbc = budget(maxOf(zC), repMax(zC));
     const q = {
-      vbMax: budget(maxOf(worn), repMax(worn)),
+      vbMax: tipMm > flankMax ? tipQ : budget(flankMax, repMax(worn)),
+      vbFlankMax: budget(flankMax, repMax(worn)),
       vbAvg: budget(avg(worn), repAvg(worn)),
       vbb: budget(avg(inB), repAvg(inB)),
       vbbMax: budget(maxOf(inB), repMax(inB)),
-      vbc: budget(maxOf(zC), repMax(zC)),
+      vbc: tipMm > vbc.v ? tipQ : vbc,
       vbn: budget(maxOf(zN), repMax(zN))
     };
     return {
       q, vbMaxMm: q.vbMax.v, vbAvgMm: q.vbAvg.v, areaMm2: r4(area), volumeMm3: r4(vol), profile, wornLengthMm: r4(worn.length * dz),
       zAtMaxMm: worn.length ? r4(z(argmax(worn))) : null, rows: {vb, A, B, dz}, zones: {cornerMm: o.cornerMm, apMm: o.apMm, notchHalfMm: o.notchHalfMm, zoneMm: r4(n * dz)},
+      tipMm: r4(tipMm), vbSource: tipMm > flankMax ? 'corner/tip (VBC)' : flankMax > 0 ? 'flank (VB)' : 'none',
       edited: F.edited, edge: F.edge, sigmaPx: sig, mode: mode(F), assist: F.assist ? F.assist.reason : null
     };
   }

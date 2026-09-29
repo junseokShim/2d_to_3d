@@ -59,6 +59,7 @@ console.log('\n# tip damage (broken end tooth, bright fracture face) -> measured
     const arcW = 5 * (Math.asin((uMm + wMm / 2) / 5) - Math.asin((uMm - wMm / 2) / 5));   // truth: arc width on the D10 cylinder
     near(`fracture ${wMm} mm wide (arc ${arcW.toFixed(2)}): tip width mm`, s.tip.widthMm, arcW, .25);
     check('fracture: flagged for the operator (tip-damage)', s.needsOperator && s.reasons.includes('tip-damage'), s.reasons.join(','));
+    check('fracture: counted in VBmax as corner/tip VBC (never a confident 0)', s.vbMaxMm >= s.tip.depthMm && s.vbTipMm === s.tip.depthMm && s.vbSource === 'corner/tip (VBC)', JSON.stringify({vb: s.vbMaxMm, flank: s.vbFlankMaxMm, src: s.vbSource}));
   }
   const fp = [];
   for (const seed of [11, 12, 13, 40, 41, 42]) for (const vbm of [0, .2]) {
@@ -66,6 +67,9 @@ console.log('\n# tip damage (broken end tooth, bright fracture face) -> measured
     if (s.tip.depthMm > 0) fp.push(`seed ${seed} vb ${vbm}: ${s.tip.depthMm}`);
   }
   check('clean tips (6 seeds x unworn/flank-worn, dark+light bg): no tip damage', !fp.length, fp.join('; '));
+  // specular line on the flute margin running down from the tip (thin helical streak) is not a chip
+  const gl = [40, 41].map(seed => { const P = W.prepareSide(synth.sideReal(Object.assign({}, base, {flutes: 2, tiltDeg: 0, vb: () => 0, seed})), {diameterMm: 10}); return W.finishSide(P, W.classicSegment(P), 30); });
+  check('margin glint streak at the tip (2 flutes, tilt 0): no tip damage, VBmax 0', gl.every(s => s.tip.depthMm === 0 && s.vbMaxMm === 0), gl.map(s => `${s.tip.depthMm}x${s.tip.widthMm}`).join('; '));
   const ok = side({vb: () => 0, seed: 11});
   check('clean tip at 20 px/mm: confident zero (no operator needed)', ok.vbMaxMm === 0 && !ok.needsOperator, ok.reasons.join(','));
 }

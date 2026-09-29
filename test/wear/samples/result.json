@@ -160,7 +160,7 @@
    ]
   },
   {
-   "vbMaxMm": 0.5447,
+   "vbMaxMm": 2.5639,
    "vbAvgMm": 0.5447,
    "areaMm2": 0.278,
    "volumeMm3": 0.0106,
@@ -316,7 +316,7 @@
    ]
   },
   {
-   "vbMaxMm": 0,
+   "vbMaxMm": 1.3307,
    "vbAvgMm": 0,
    "areaMm2": 0,
    "volumeMm3": 0,
@@ -468,7 +468,7 @@
    ]
   },
   {
-   "vbMaxMm": 2.1109,
+   "vbMaxMm": 2.6764,
    "vbAvgMm": 1.1817,
    "areaMm2": 1.5738,
    "volumeMm3": 0.1859,
@@ -621,7 +621,7 @@
   }
  ],
  "totals": {
-  "vbMaxMm": 2.1109,
+  "vbMaxMm": 2.6764,
   "areaMm2": 2.04,
   "volumeMm3": 0.2013
  }

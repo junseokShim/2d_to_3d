@@ -397,6 +397,9 @@
       // width = median over the blob's rows of the row's arc span (a bounding box would take in glints touching the blob)
       const span = new Map(); for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
       const depthMm = r4((r1 + 1 - Math.max(r0, top)) / ppm), widthMm = r4(quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5));
+      // a thin streak running down from the tip (narrower than the 0.6 mm resolution limit, or > 4x deeper than wide) is the
+      // specular line on a flute margin following the helix, not a chip (a chip / broken tooth is a compact notch)
+      if (widthMm < .6 || depthMm > 4 * widthMm) continue;
       for (const p of pts) out[p] = 1;
       best.areaMm2 = r4(best.areaMm2 + pts.length / ppm / ppm); best.px += pts.length;
       if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
@@ -487,11 +490,16 @@
 
   function finishSide(P, seg, helixDeg) {
     const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
-    return Object.assign(m, {
+    // tip / corner damage (chipping, broken end tooth) counts in the reported VBmax as corner wear VBC (ISO 8688-2 zone C:
+    // material lost from the original cutting corner, depth along the axis). The flank band alone stays in vbFlankMaxMm.
+    const vbFlankMaxMm = m.vbMaxMm, vbTipMm = seg.tip && seg.tip.depthMm > 0 ? r4(seg.tip.depthMm) : 0;
+    m.vbMaxMm = r4(Math.max(vbFlankMaxMm, vbTipMm));
+    strip.tip = vbTipMm ? {depthMm: vbTipMm, widthMm: seg.tip.widthMm} : null;   // metro-core folds it into VBC / VBmax
+    return Object.assign(m, {vbFlankMaxMm, vbTipMm, vbSource: vbTipMm > vbFlankMaxMm ? 'corner/tip (VBC)' : vbFlankMaxMm > 0 ? 'flank (VB)' : 'none',
       align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
       helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band,
       tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
-    }, evidence(al.pxPerMm, m.vbMaxMm, seg.tip));
+    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip));
   }
 
   // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
@@ -528,6 +536,10 @@
   function assemble({k, P}, segs, {diameterMm, helixDeg, top, sens}, engine) {
     const hs = P.filter(Boolean).map(p => p.hEst).filter(Boolean).sort((a, b) => a - b);
     const helixUsed = helixDeg || (hs.length ? hs[hs.length >> 1] : 30);
+    // helix: operator value (catalogue) > median photo estimate > 30 deg default; confidence from the per-side estimates
+    const hx = P.map(p => p && p.helix), conf = ['high', 'medium', 'low'].find(c => hx.some(h => h && h.confidence === c)) || 'none';
+    const helixInfo = {deg: r4(helixUsed), source: helixDeg ? 'operator' : hs.length ? 'estimated' : 'default', confidence: helixDeg ? 'operator' : hs.length ? conf : 'none',
+      perSide: hx.map(h => h && {deg: h.deg, confidence: h.confidence, tensorDeg: h.tensorDeg, coherence: h.coherence, periodDeg: h.periodDeg, clamped: h.clamped})};
     const S2 = P.map((p, i) => p && finishSide(p, segs[i], helixUsed));
     const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
     const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));
@@ -543,11 +555,13 @@
     const debug = {
       engine,
       sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated,
-        tip: s.tip, evidence: s.evidence, needsOperator: s.needsOperator, reasons: s.reasons, confidence: s.confidence}),
+        vbMaxMm: s.vbMaxMm, vbFlankMaxMm: s.vbFlankMaxMm, vbTipMm: s.vbTipMm, vbSource: s.vbSource, tip: s.tip, evidence: s.evidence, needsOperator: s.needsOperator, reasons: s.reasons, confidence: s.confidence}),
+      helix: helixInfo,
       failedSides: S2.map((s, i) => s ? -1 : i).filter(i => i >= 0), top: topRes,
       warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean)
         .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean))
-        .concat(S2.map((s, i) => s && s.tip && s.tip.depthMm > 0 ? `side ${i + 1}: tip damage (chipping / broken end tooth) ${s.tip.depthMm.toFixed(2)} mm deep x ${s.tip.widthMm.toFixed(2)} mm wide - not a flank band; confirm in the measurement panel` : null).filter(Boolean)),
+        .concat(S2.map((s, i) => s && s.tip && s.tip.depthMm > 0 ? `side ${i + 1}: tip damage (chipping / broken end tooth) ${s.tip.depthMm.toFixed(2)} mm deep x ${s.tip.widthMm.toFixed(2)} mm wide - counted in VBmax as corner/tip wear (VBC); confirm in the measurement panel` : null).filter(Boolean))
+        .concat(helixInfo.source === 'default' || helixInfo.confidence === 'low' ? [`helix angle ${helixInfo.source === 'default' ? 'not measurable in the photos, 30 deg assumed' : `estimate ${helixUsed.toFixed(1)} deg is uncertain`}; enter the catalogue value`] : []),
       strips: S2.map(s => s && {strip: s.strip, band: s.band, tipMask: s.tipMask}),
       ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
       model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
