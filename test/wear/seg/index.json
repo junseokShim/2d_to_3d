@@ -1,0 +1,223 @@
+[
+ {
+  "file": "t4_side1.png",
+  "label": "t4_side1_lab.png",
+  "case": "t4",
+  "view": "side",
+  "flutes": 4,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.2,
+   0.23333333333333334,
+   0.26666666666666666,
+   0.3
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t4_side2.png",
+  "label": "t4_side2_lab.png",
+  "case": "t4",
+  "view": "side",
+  "flutes": 4,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.2,
+   0.23333333333333334,
+   0.26666666666666666,
+   0.3
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t4_side3.png",
+  "label": "t4_side3_lab.png",
+  "case": "t4",
+  "view": "side",
+  "flutes": 4,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.2,
+   0.23333333333333334,
+   0.26666666666666666,
+   0.3
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t4_side4.png",
+  "label": "t4_side4_lab.png",
+  "case": "t4",
+  "view": "side",
+  "flutes": 4,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.2,
+   0.23333333333333334,
+   0.26666666666666666,
+   0.3
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t4_top.png",
+  "label": "t4_top_lab.png",
+  "case": "t4",
+  "view": "top",
+  "flutes": 4,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.2,
+   0.23333333333333334,
+   0.26666666666666666,
+   0.3
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t3low_side1.png",
+  "label": "t3low_side1_lab.png",
+  "case": "t3low",
+  "view": "side",
+  "flutes": 3,
+  "D": 12,
+  "ppm": 13.333333333333334,
+  "vbMaxMm": [
+   0.24,
+   0.3,
+   0.36
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": true
+ },
+ {
+  "file": "t3low_side2.png",
+  "label": "t3low_side2_lab.png",
+  "case": "t3low",
+  "view": "side",
+  "flutes": 3,
+  "D": 12,
+  "ppm": 13.333333333333334,
+  "vbMaxMm": [
+   0.24,
+   0.3,
+   0.36
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": true
+ },
+ {
+  "file": "t3low_side3.png",
+  "label": "t3low_side3_lab.png",
+  "case": "t3low",
+  "view": "side",
+  "flutes": 3,
+  "D": 12,
+  "ppm": 13.333333333333334,
+  "vbMaxMm": [
+   0.24,
+   0.3,
+   0.36
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": true
+ },
+ {
+  "file": "t2chip_side1.png",
+  "label": "t2chip_side1_lab.png",
+  "case": "t2chip",
+  "view": "side",
+  "flutes": 2,
+  "D": 8,
+  "ppm": 20.0,
+  "vbMaxMm": [
+   0.16000000000000003,
+   0.24
+  ],
+  "chips": 2,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t2chip_side2.png",
+  "label": "t2chip_side2_lab.png",
+  "case": "t2chip",
+  "view": "side",
+  "flutes": 2,
+  "D": 8,
+  "ppm": 20.0,
+  "vbMaxMm": [
+   0.16000000000000003,
+   0.24
+  ],
+  "chips": 2,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "t2chip_top.png",
+  "label": "t2chip_top_lab.png",
+  "case": "t2chip",
+  "view": "top",
+  "flutes": 2,
+  "D": 8,
+  "ppm": 20.0,
+  "vbMaxMm": [
+   0.16000000000000003,
+   0.24
+  ],
+  "chips": 2,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "clean_side1.png",
+  "label": "clean_side1_lab.png",
+  "case": "clean",
+  "view": "side",
+  "flutes": 2,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.0,
+   0.0
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ },
+ {
+  "file": "clean_side2.png",
+  "label": "clean_side2_lab.png",
+  "case": "clean",
+  "view": "side",
+  "flutes": 2,
+  "D": 10,
+  "ppm": 16.0,
+  "vbMaxMm": [
+   0.0,
+   0.0
+  ],
+  "chips": 0,
+  "blobs": 0,
+  "low": false
+ }
+]

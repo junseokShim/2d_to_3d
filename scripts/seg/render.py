@@ -390,12 +390,14 @@ def make_lights(rng):
     return dict(dirs=dirs, amb=amb, env=env, specTint=torch.tensor([1., 1, 1], device=DEV))
 
 
-def render(rng, H=512, W=512, view=None, ppm=None, ss=2, mode=None, tool=None):
+def render(rng, H=512, W=512, view=None, ppm=None, ss=2, mode=None, tool=None, fixed=None):
     """one synthetic tool image. view: 'side' | 'top'. ppm: output pixels per mm."""
     tool = tool or Tool(rng)
     view = view or ('side' if rng.random() < .78 else 'top')
     mode = mode or rng.choice(['none', 'flank', 'mixed', 'chip', 'bue'], p=[.12, .38, .3, .12, .08])
-    plan_wear(tool, rng, mode)
+    if mode != 'keep':
+        plan_wear(tool, rng, mode)
+    fx = fixed or {}
     if ppm is None:
         # tool diameter on the output: 70 .. 460 px, biased to 180..400
         dpx = math.exp(_rand(rng, math.log(70), math.log(460))) if rng.random() < .4 else _rand(rng, 180, 420)
@@ -403,15 +405,16 @@ def render(rng, H=512, W=512, view=None, ppm=None, ss=2, mode=None, tool=None):
     Dv, U, Rv = _cam(0)
     if view == 'side':
         elev = _rand(rng, -20, 35) if rng.random() < .85 else _rand(rng, -35, 50)
+        elev = fx.get('elev', elev)
         ce = math.cos(math.radians(elev))
-        f = _rand(rng, .06, .55)                                  # tip row as a fraction of the height
+        f = fx.get('tipFrac', _rand(rng, .06, .55))              # tip row as a fraction of the height
         zc = (H / 2 - f * H) / ppm * ce
-        xo = _rand(rng, -.25, .25) * W / ppm
+        xo = fx.get('xo', _rand(rng, -.25, .25)) * W / ppm
         cpt = [xo, 0.0, zc]
         zmax = zc + H / ppm / max(ce, .3) + tool.R * 2
     else:
-        elev = _rand(rng, 58, 90)
-        cpt = [_rand(rng, -.2, .2) * W / ppm, _rand(rng, -.2, .2) * W / ppm, 0.0]
+        elev = fx.get('elev', _rand(rng, 58, 90))
+        cpt = [_rand(rng, -.2, .2) * W / ppm, _rand(rng, -.2, .2) * W / ppm, 0.0] if 'elev' not in fx else [0.0, 0.0, 0.0]
         zmax = max(tool.D * 2.5, H / ppm * 1.2)
     hs, ws, pps = H * ss, W * ss, ppm * ss
     hit, P, Dvd, _ = raycast(tool, elev, hs, ws, pps, cpt, zmax)
