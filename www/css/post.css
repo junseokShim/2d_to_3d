@@ -35,3 +35,4 @@ canvas.ps-dark{background:#000;border-radius:4px}
 .ps-lgbar{width:12px;height:150px;border-radius:2px}
 .ps-lgt{display:flex;flex-direction:column;justify-content:space-between;height:150px}
 .ps-lgu{align-self:flex-end}
+.ps-src{font-size:10.5px;padding:1px 5px;border-radius:8px;background:#eef0f3;color:#667}.ps-src.m{background:#dff3e6;color:#1e7a3e}

@@ -139,3 +139,21 @@ A side is sent to the operator (never a confident number) when:
 node test/wear/seg-run.js                       # held-out set; SEG_SET=.work/valset1 for another set, SEG_MODEL=<file.onnx.js> for another export
 node test/wear/seg-diag.js <outdir>             # overlays per side
 ```
+
+## seg8 (2026-09-29): tip false fires, coverage gate, Keyence / Alicona post-processing
+
+Fresh sets `.work/valset43-57` (tuning), `58-72` (check), `73-87` (final check); test/wear/seg never tuned on.
+
+- **Colour tip false fires** (wear-core `tipDamage`, `continuesBelow`): a fracture face ends, a specular highlight runs on.
+  Brightness of the 1.5 mm below the blob (window following the blob's slant) / blob brightness: human broken teeth
+  .28-.36, synthetic false fires >= .60 -> blobs with ratio > .5 dropped. Fires on 45 fresh sets 18 -> 2; human sides 2-4
+  keep 2.56 / 1.33 / 2.68 mm; held-out t41 / t44 VBC 2.97 false fires gone.
+- **`seg-coverage` flag**: the network sees < 70 % of the silhouette as tool -> operator. 58-72: 12 of 18 silent-wrong
+  caught, 1 of 14 confident-right sides flagged; 73-87: silent-wrong 8 -> 6, confident-right 20 -> 13.
+- Tried and rejected: corner-zone exclusion from VBmax (zc .18 D): 43-57 silent 8 -> 4, but 58-72 14 -> 17.
+- Remaining silent-wrong: t4 sides fully seen (toolFrac ~1) with the land boundary drawn 0.1-0.2 mm wrong (over near the
+  corner, under on flute 4); held-out t42 is this type. Needs model work (boundary sharpness), not gating.
+- **wear-post.js**: each segmented land also reported the way Keyence VHX (reference line on the unworn edge,
+  perpendicular VB, edge recession) and Alicona EdgeQuality / WearMeasurementModule (Nd, L, Pd, Ddmax/mean, Ldmax/mean,
+  Ldcmax/mean, VBmax/mean; no Ldr / volumes from one photo) report it. `wearResult.post`, metro panel card 후처리,
+  test/wear/post-run.js.

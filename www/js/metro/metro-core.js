@@ -63,7 +63,8 @@
       if (lo < 0) return src[hi]; if (hi < 0) return src[lo];
       return lo === hi ? src[lo] : src[lo] + (src[hi] - src[lo]) * (r - lo) / (hi - lo);
     };
-    for (let r = 0; r < n; r++) if (!has[r]) { const e = edgeAt(r); a0[r] = e + .5; b0[r] = e - .5; }
+    // strip.edgeCol (microscope strips, js/micro): the cutting edge is a known column, not interpolated from the band
+    for (let r = 0; r < n; r++) if (!has[r]) { const e = strip.edgeCol != null ? strip.edgeCol : edgeAt(r); a0[r] = e + .5; b0[r] = e - .5; }
     const N = Math.max(3, Math.min(33, Math.round(n / (.25 * ppm)) + 1)), nodeRows = new Float32Array(N);
     for (let i = 0; i < N; i++) nodeRows[i] = i * (n - 1) / (N - 1);
     return {strip, D, n, a0, b0, has, edge, nodeRows, nodes: {a: new Float32Array(N), b: new Float32Array(N)}, edited: false, rowVbMm: rowVbMm || null};
@@ -109,7 +110,8 @@
   }
   // flute model for the assisted path: zero-width band on the guessed edge line (drag the wear boundary to open it)
   function assistFlute(strip, D, o, reason) {
-    const F = flute(strip, new Uint8Array(strip.w * strip.h), D, o), G = edgeGuess(strip, D, o);
+    const F = flute(strip, new Uint8Array(strip.w * strip.h), D, o), G = strip.edgeCol != null ? null : edgeGuess(strip, D, o);
+    if (strip.edgeCol != null) { F.edge = 'a'; F.assist = {reason: reason || 'no-band', guess: true, score: 1}; return F; }   // microscope: edge line already known
     if (G) { F.edge = G.edge; for (let r = 0; r < F.n; r++) { F.a0[r] = G.x[r] + .5; F.b0[r] = G.x[r] - .5; } }
     F.assist = {reason: reason || 'no-band', guess: !!G, score: G ? G.score : 0};
     return F;
@@ -235,7 +237,7 @@
   function csv(rep) {
     const L = [], esc = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }, row = a => L.push(a.map(esc).join(','));
     row(['Tool3D wear measurement report']); row(['tool_id', rep.toolId]); row(['operator', rep.operator]); row(['date', rep.date]);
-    row(['diameter_mm', rep.D]); row(['flutes', rep.k]); row(['helix_deg', rep.helixDeg]); row(['engine', rep.engine]);
+    row(['diameter_mm', rep.D]); row(['flutes', rep.k]); row(['helix_deg', rep.helixDeg]); row(['engine', rep.engine]); row(['input_mode', rep.inputMode || 'camera']); if (rep.magnification) row(['magnification', rep.magnification + 'x']);
     row(['scale_px_per_mm', rep.calib.pxPerMm]); row(['scale_method', rep.calib.method]); row(['scale_U_rel_k2', r4(2 * rep.calib.uRel)]);
     row(['limit_VB_mm', rep.limitMm]); row(['decision_rule', 'ISO 14253-1: conform if VB+U<limit, nonconform if VB-U>limit']);
     row([]);

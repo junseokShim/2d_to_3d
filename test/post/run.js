@@ -116,5 +116,17 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   check('csv sections', /keyence_flute/.test(csv) && /edgequality_flute,Nd,L_um,Pd_%/.test(csv) && /tolerance,value/.test(csv) && /trend_per/.test(csv), csv.split('\r\n').length + ' lines');
 }
 
+// 7) one design with wear-post.js: measured per-side edge metrics replace the wedge model, Ldr / Vd stay modelled
+{
+  const WP = require('../../www/js/wear/wear-post.js'), w = 400, h = 300, ppm = 100, m = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const e = y > 100 && y < 140 ? 6 : 0; m[y * w + x] = x < 50 + e ? 0 : x < 70 ? 2 : 1; }   // edge x=50, land 0.20 mm, chip 0.06 x 0.40 mm
+  const wp = WP.analyze({mask: m, w, h, pxPerMm: ppm, edge: 'background'}), eq = P.edgeQuality(P.edgeProfile(rows, {}));
+  const q = P.mergeEdge(eq, {keyence: wp.keyence, alicona: wp.alicona, lengthMm: wp.lengthMm, edgeSide: wp.edgeSide});
+  check('merge: source wear-post, Nd 1, Ddmax -60 um, Ldmax 400 um', q.source === 'wear-post' && q.Nd === 1 && Math.abs(q.Ddmax + 60) <= 15 && Math.abs(q.Ldmax - 400) <= 30, `${q.Nd} ${q.Ddmax} ${q.Ldmax}`);
+  check('merge: Ldr and Vdrel stay from the wedge model', q.Ldrmax === eq.Ldrmax && q.Vdrel === eq.Vdrel && q.measured.includes('Pd') && !q.measured.includes('Ldrmax'));
+  check('merge: keyence reference line VB 200 um, recession 60 um', Math.abs(q.keyence.VBmaxUm - 200) <= 15 && Math.abs(q.keyence.recessionUm - 60) <= 15, `${q.keyence.VBmaxUm} ${q.keyence.recessionUm}`);
+  check('merge: no wear-post -> model', P.mergeEdge(eq, null).source === 'model' && P.mergeEdge(eq, null).Ddmax === eq.Ddmax);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

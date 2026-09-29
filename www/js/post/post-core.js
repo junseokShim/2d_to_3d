@@ -123,6 +123,22 @@
       Ldrmax: r2(Math.max(0, ...pos.map(i => P.ldr[i]))), Ldrmean: r2(mean(pos.map(i => P.ldr[i])))
     };
   }
+  // one post-processing design with wear-post.js (Tool3D.wear.post -> wearResult.post[flute]): the per-side edge metrics
+  // measured on the segmented land (Alicona Nd, L, Pd, Dd, Ld, Ldc; Keyence reference-line VB + edge recession) replace
+  // the wedge-model values; what one photo cannot give (Ldr, Vd*, Vdrel: rake face, heights) stays from the wedge model.
+  // Returns an edgeQuality-shaped object (Dd negative = below the reference, um) with source / measured / keyence.
+  const EQ_MEASURED = ['Nd', 'L', 'Pd', 'Ddmax', 'Ddmean', 'Ldmax', 'Ldmean', 'Ldcmax', 'Ldcmean'];
+  function mergeEdge(eq, wp) {
+    if (!wp || !wp.alicona) return Object.assign({}, eq, {source: 'model', measured: [], keyence: null});
+    const A = wp.alicona, K = wp.keyence || null, um = v => v == null ? null : r2(1000 * v), neg = v => v ? -um(v) : 0;
+    const defects = (A.defects || []).map((d, k) => ({n: k + 1, u0Um: um(d.fromMm), u1Um: um(d.toMm), LUm: um(d.lengthMm), DdUm: neg(d.depthMaxMm), uAtDdUm: um(d.atMm),
+      VdUm3: null, LdcUm: um(d.clearanceLengthMm), LdrUm: null, corner: false}));
+    return Object.assign({}, eq, {source: 'wear-post', measured: EQ_MEASURED.slice(), tolUm: um(A.toleranceMm), defects, modelDefects: eq.defects,
+      Nd: A.Nd, L: um(A.L), Pd: r2(A.Pd), Ddmax: neg(A.Ddmax), Ddmean: neg(A.Ddmean), uAtDdmax: defects.length ? defects.reduce((b, d) => d.DdUm < b.DdUm ? d : b).uAtDdUm : null,
+      Ldmax: um(A.Ldmax), Ldmean: um(A.Ldmean), Ldcmax: um(A.Ldcmax), Ldcmean: um(A.Ldcmean), VBmaxUm: um(A.VBmax), VBmeanUm: um(A.VBmean),
+      keyence: K && {VBmaxUm: um(K.VBmax), VBmaxAtUm: um(K.VBmaxAtMm), VBmeanUm: um(K.VBmean), recessionUm: um(K.edgeRecessionMax), recessionAtUm: um(K.edgeRecessionAtMm), referenceMm: K.referenceMm, angleDeg: K.angleDeg},
+      edgeSide: wp.edgeSide || null, lengthMm: wp.lengthMm == null ? null : wp.lengthMm});
+  }
   // Alicona result-table rows: [name, value, unit, Korean description]
   const EQ_ROWS = [['Nd', '', '결함 개수'], ['L', 'µm', '평가 길이 (절삭날 따라)'], ['Pd', '%', '결함이 있는 날 길이 비율 ΣLi / L'], ['Vdrel', 'µm²', '길이당 결함 체적'],
     ['Ddmax', 'µm', '프로파일 최대 결함 깊이'], ['Ddmean', 'µm', '프로파일 평균 결함 깊이'], ['Vdmax', 'µm³', '최대 결함 체적'], ['Vdmean', 'µm³', '평균 결함 체적'],
@@ -270,8 +286,12 @@
     R.flutes.forEach(f => f && f.lines.forEach(l => row(['F' + (f.i + 1), l.n, l.uMm, l.zMm, l.vbUm, l.isMax ? 1 : 0])));
     row([]); row(['keyence_stats_flute', 'VBmax_um', 'VBmean_um', 'VBmin_um', 'sd_um', 'median_um', 'worn_mm', 'worn_pct', 'length_mm', 'scale_px_per_mm', 'mag_equiv']);
     R.flutes.forEach(f => f && row(['F' + (f.i + 1), f.stats.maxUm, f.stats.meanUm, f.stats.minUm, f.stats.sdUm, f.stats.medianUm, f.stats.wornMm, f.stats.wornPct, f.stats.lengthMm, f.pxPerMm, f.mag.label]));
-    row([]); row(['edgequality_flute'].concat(EQ_ROWS.map(r => r[0] + (r[1] ? '_' + r[1].replace('µ', 'u').replace('²', '2').replace('³', '3') : ''))));
-    R.flutes.forEach(f => f && row(['F' + (f.i + 1)].concat(EQ_ROWS.map(r => f.eq[r[0]]))));
+    row([]); row(['edgequality_flute'].concat(EQ_ROWS.map(r => r[0] + (r[1] ? '_' + r[1].replace('µ', 'u').replace('²', '2').replace('³', '3') : ''))).concat(['source']));
+    R.flutes.forEach(f => f && row(['F' + (f.i + 1)].concat(EQ_ROWS.map(r => f.eq[r[0]])).concat([f.eq.source || 'model'])));
+    if (R.flutes.some(f => f && f.eq.keyence)) {
+      row([]); row(['keyence_refline_flute', 'VBmax_um', 'VBmax_at_um', 'VBmean_um', 'edge_recession_um', 'recession_at_um', 'source']);
+      R.flutes.forEach(f => f && f.eq.keyence && row(['F' + (f.i + 1), f.eq.keyence.VBmaxUm, f.eq.keyence.VBmaxAtUm, f.eq.keyence.VBmeanUm, f.eq.keyence.recessionUm, f.eq.keyence.recessionAtUm, 'wear-post']));
+    }
     row([]); row(['defect_flute', 'n', 'u0_um', 'u1_um', 'L_um', 'Dd_um', 'Vd_um3', 'Ldc_um', 'Ldr_um', 'corner']);
     R.flutes.forEach(f => f && f.eq.defects.forEach(d => row(['F' + (f.i + 1), d.n, d.u0Um, d.u1Um, d.LUm, d.DdUm, d.VdUm3, d.LdcUm, d.LdrUm, d.corner ? 1 : 0])));
     if (R.wmm) {
@@ -287,5 +307,5 @@
   }
 
   return {DEFAULTS, EQ_ROWS, WMM_ROWS, scaleBar, keyenceMag, vbLines, vbProfileU, vbStats, edgeProfile, edgeQuality, wedgeSection,
-    deviationAtlas, devAt, wmm, perFace, chipList, tolerance, HKEY, history, historyAdd, trend, csvRows, r4, r2};
+    mergeEdge, EQ_MEASURED, deviationAtlas, devAt, wmm, perFace, chipList, tolerance, HKEY, history, historyAdd, trend, csvRows, r4, r2};
 });

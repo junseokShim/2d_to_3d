@@ -86,14 +86,15 @@
     const st = Mt.state, sum = Mt.summary(), rp = (T.render && T.render.params) || {};
     const o = Object.assign({}, C.DEFAULTS, {clearanceDeg: rp.clear1Deg || C.DEFAULTS.clearanceDeg, rakeDeg: rp.rakeDeg == null ? C.DEFAULTS.rakeDeg : rp.rakeDeg,
       helixDeg: st.helix || rp.helixDeg || C.DEFAULTS.helixDeg, defectTolUm: S.prefs.defTol, devTolUm: S.prefs.devTol});
+    const wpost = (st.base && st.base.post) || [];   // wear-post.js per-side edge metrics (seg engine / microscope mode)
     const flutes = st.ev.map((e, i) => {
       if (!e) return null;
       const F = st.F[i], ppmCal = F.strip.ppm / (st.cal ? st.cal.scaleFor(F.strip.ppm) : 1), prof = C.vbProfileU(e.rows, o.helixDeg);
       const E = C.edgeProfile(e.rows, Object.assign({}, o, {tipMm: e.tipMm, cornerMm: e.zones.cornerMm}));
-      return {i, e, F, ppmCal, pxPerMm: C.r2(ppmCal), lines: C.vbLines(e.rows, e.edge, F.strip.top, {n: S.prefs.nLines, helixDeg: o.helixDeg}), prof, stats: C.vbStats(prof), E, eq: C.edgeQuality(E, o.defectTolUm),
+      return {i, e, F, ppmCal, pxPerMm: C.r2(ppmCal), lines: C.vbLines(e.rows, e.edge, F.strip.top, {n: S.prefs.nLines, helixDeg: o.helixDeg}), prof, stats: C.vbStats(prof), E, eq: C.mergeEdge(C.edgeQuality(E, o.defectTolUm), wpost[i]),
         mag: C.keyenceMag(ppmCal, F.strip.w)};
     });
-    const R = {o, flutes, vbMaxMm: sum.vbMax ? sum.vbMax.v : null, vbU: sum.vbMax ? sum.vbMax.U : null, limitMm: sum.limitMm,
+    const R = {o, flutes, inputMode: st.inputMode || 'camera', magnification: st.mag || null, vbMaxMm: sum.vbMax ? sum.vbMax.v : null, vbU: sum.vbMax ? sum.vbMax.U : null, limitMm: sum.limitMm,
       vbMeanMm: C.r4(flutes.filter(Boolean).reduce((s, f) => s + f.e.vbAvgMm, 0) / Math.max(1, flutes.filter(Boolean).length)), wmm: null, faces: [], chips: [], dev: null};
     // Alicona: deviation on the model from the map3d atlas
     const map = T.render && T.render.map, G = T._render && T._render.geometry, MC = T.map3dCore;
@@ -174,7 +175,7 @@
     x.strokeStyle = '#1b2cff'; x.lineWidth = 2; x.beginPath(); x.moveTo(bx0, by); x.lineTo(bx1, by); x.moveTo(bx0, by - 4); x.lineTo(bx0, by + 4); x.moveTo(bx1, by - 4); x.lineTo(bx1, by + 4); x.stroke();
     x.font = '13px system-ui,sans-serif'; const bt = bar.label, btw = x.measureText(bt).width;
     x.fillStyle = '#fff'; x.fillRect(bx1 - btw - 6, by + 8, btw + 6, 18); x.strokeStyle = '#000'; x.lineWidth = 1; x.strokeRect(bx1 - btw - 5.5, by + 8.5, btw + 5, 17); x.fillStyle = '#000'; x.fillText(bt, bx1 - btw - 3, by + 22);
-    const vis = C.keyenceMag(f.ppmCal, Math.min(img.width, W / s)), lab = `배율 환산 ${vis.label} · ${vis.umPerPx} µm/px · F${f.i + 1}`;
+    const vis = C.keyenceMag(f.ppmCal, Math.min(img.width, W / s)), lab = `${S.R.inputMode === 'microscope' && S.R.magnification ? `현미경 X${S.R.magnification} · ` : ''}배율 환산 ${vis.label} · ${vis.umPerPx} µm/px · F${f.i + 1}`;
     x.font = '13px system-ui,sans-serif'; const lw = x.measureText(lab).width; x.fillStyle = '#fff'; x.fillRect(6, 6, lw + 8, 19); x.strokeStyle = '#000'; x.strokeRect(6.5, 6.5, lw + 7, 18); x.fillStyle = '#000'; x.fillText(lab, 10, 20);
   }
   function renderKeyenceTables() {
@@ -188,7 +189,10 @@
       <tr><td>VB 최소</td><td>${f2(s.minUm)}</td><td>µm/px</td><td>${f3(f.mag.umPerPx)}</td></tr>
       <tr><td>표준편차 σ</td><td>${f2(s.sdUm)}</td><td>시야 폭</td><td>${f3(f.mag.fovMm)} mm</td></tr>
       <tr><td>중앙값 (Q1–Q3)</td><td>${f2(s.medianUm)} (${f1(s.p25Um)}–${f1(s.p75Um)})</td><td>평가 길이</td><td>${f3(s.lengthMm)} mm</td></tr>
-      <tr><td>마모 길이</td><td>${f3(s.wornMm)} mm (${f1(s.wornPct)} %)</td><td>U (k=2) VBmax</td><td>${f3(f.e.q.vbMax.U * 1000)} µm</td></tr>`;
+      <tr><td>마모 길이</td><td>${f3(s.wornMm)} mm (${f1(s.wornPct)} %)</td><td>U (k=2) VBmax</td><td>${f3(f.e.q.vbMax.U * 1000)} µm</td></tr>` +
+      (f.eq.keyence ? `<tr><th colspan="4">기준선 방식 (AI 마모 영역, 미마모 날에 맞춘 직선)</th></tr>
+      <tr><td title="기준선에서 마모 경계까지 수직 거리의 최대">VBmax (기준선)</td><td>${f2(f.eq.keyence.VBmaxUm)}</td><td title="기준선 아래로 후퇴한 절삭날 = 치핑 ([2] 값)">날 후퇴</td><td>${f2(f.eq.keyence.recessionUm)} µm</td></tr>
+      <tr><td>VB 평균 (기준선)</td><td>${f2(f.eq.keyence.VBmeanUm)}</td><td>위치 (날 따라)</td><td>${f1(f.eq.keyence.VBmaxAtUm)} / ${f1(f.eq.keyence.recessionAtUm)} µm</td></tr>` : '');
   }
   function drawVbChart() {
     const f = cur(), [x, W, H] = canvasFit($('#pkChart'), 200); x.fillStyle = '#000'; x.fillRect(0, 0, W, H); if (!f) return;
@@ -257,9 +261,10 @@
   }
   function drawProfile() {
     const f = cur(), [x, W, H] = canvasFit($('#paProfile'), 190); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); if (!f) return;
-    const E = f.E, q = f.eq, L = E.u.length ? E.u[E.u.length - 1] + E.du / 2 : 1, dMin = Math.min(-2 * q.tolUm, ...E.D) * 1.1, dMax = Math.max(4, .15 * -dMin), pad = {l: 44, r: 10, t: 10, b: 24};
+    const E = f.E, q = f.eq, L = E.u.length ? E.u[E.u.length - 1] + E.du / 2 : 1, dMin = Math.min(-2 * q.tolUm, q.Ddmax || 0, ...E.D) * 1.1, dMax = Math.max(4, .15 * -dMin), pad = {l: 44, r: 10, t: 10, b: 24};
     const X = u => pad.l + u / L * (W - pad.l - pad.r), Y = d => pad.t + (dMax - d) / (dMax - dMin) * (H - pad.t - pad.b);
-    x.fillStyle = 'rgba(230,40,40,.13)'; for (const d of q.defects) x.fillRect(X(d.u0Um), pad.t, X(d.u1Um) - X(d.u0Um), H - pad.t - pad.b);
+    const ks = q.source === 'wear-post' && q.L ? L / q.L : 1, Xd = u => X(u * ks);   // measured defects lie along the AI land: scaled to this edge
+    x.fillStyle = 'rgba(230,40,40,.13)'; for (const d of q.defects) x.fillRect(Xd(d.u0Um), pad.t, Math.max(2, Xd(d.u1Um) - Xd(d.u0Um)), H - pad.t - pad.b);
     x.strokeStyle = '#ccd'; x.lineWidth = 1; x.font = '10px system-ui'; x.fillStyle = '#334'; x.textAlign = 'right';
     const step = Math.pow(10, Math.floor(Math.log10(dMax - dMin))) / (dMax - dMin > 50 ? 1 : 2);
     for (let v = Math.ceil(dMin / step) * step; v <= dMax; v += step) { x.beginPath(); x.moveTo(pad.l, Y(v)); x.lineTo(W - pad.r, Y(v)); x.stroke(); x.fillText(v.toFixed(0), pad.l - 4, Y(v) + 3); }
@@ -267,9 +272,9 @@
     x.textAlign = 'left'; x.fillText('[µm]', 2, 10); x.fillText('[µm]', W - 30, H - 2);
     x.setLineDash([5, 3]); x.strokeStyle = '#d0342c'; x.beginPath(); x.moveTo(pad.l, Y(-q.tolUm)); x.lineTo(W - pad.r, Y(-q.tolUm)); x.stroke(); x.setLineDash([]);
     x.strokeStyle = '#1f3fbf'; x.lineWidth = 1.5; x.beginPath(); E.D.forEach((d, j) => { const px = X(E.u[j]), py = Y(d); j ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke();
-    if (q.uAtDdmax != null) { x.fillStyle = '#1f3fbf'; x.font = '600 11px system-ui'; const px = X(q.uAtDdmax), py = Y(q.Ddmax); x.fillText('+', px - 3, py + 4); x.fillText(`Ddmax ${q.Ddmax.toFixed(1)} µm`, Math.min(W - 110, px + 6), Math.min(H - pad.b - 4, py + 14)); }
+    if (q.uAtDdmax != null) { x.fillStyle = q.source === 'wear-post' ? '#d0342c' : '#1f3fbf'; x.font = '600 11px system-ui'; const px = Xd(q.uAtDdmax), py = Y(q.Ddmax); x.fillText('+', px - 3, py + 4); x.fillText(`Ddmax ${q.Ddmax.toFixed(1)} µm`, Math.min(W - 110, px + 6), Math.min(H - pad.b - 4, py + 14)); }
     const pos = S.pos == null ? null : X(S.pos * L); if (pos != null) { x.strokeStyle = '#111'; x.setLineDash([2, 2]); x.beginPath(); x.moveTo(pos, pad.t); x.lineTo(pos, H - pad.b); x.stroke(); x.setLineDash([]); }
-    $('#paProfTag').textContent = `F${f.i + 1} · 결함 기준 −${q.tolUm} µm · 모델 깊이 = VB·tan α (α ${f1(S.R.o.clearanceDeg)}°)`;
+    $('#paProfTag').textContent = `F${f.i + 1} · 파랑 = 모델 깊이 VB·tan α (α ${f1(S.R.o.clearanceDeg)}°)` + (q.source === 'wear-post' ? ` · 빨강 = AI 영역 측정 결함 (날 후퇴, 기준 −${f1(q.tolUm)} µm)` : ` · 결함 기준 −${q.tolUm} µm`);
   }
   function drawSection() {
     const f = cur(), [x, W, H] = canvasFit($('#paSection'), 220); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); if (!f) return;
@@ -295,9 +300,10 @@
   }
   function renderAlicona() {
     const R = S.R, f = cur(); if (!f) return;
-    const q = f.eq, fmt = (k, v) => /^(Nd|Vdmax|Vdmean)$/.test(k) ? String(Math.round(v)) : f2(v);
-    $('#paEq').innerHTML = `<tr><th>Name</th><th>Value</th><th>[u]</th><th>Description</th></tr>` + C.EQ_ROWS.map(([k, u, d]) => `<tr><td>${k}</td><td>${fmt(k, q[k])}</td><td>${u}</td><td>${d}</td></tr>`).join('');
-    $('#paEqTag').textContent = `F${f.i + 1} · ${q.Nd}개 결함`;
+    const q = f.eq, fmt = (k, v) => v == null ? '—' : /^(Nd|Vdmax|Vdmean)$/.test(k) ? String(Math.round(v)) : f2(v);
+    const src = k => q.measured.includes(k) ? '<span class="ps-src m" title="AI 마모 영역에서 측정 (wear-post)">측정</span>' : '<span class="ps-src" title="쐐기 모델 추정 (VB·tan α): 사진으로는 경사면·높이를 알 수 없음">모델</span>';
+    $('#paEq').innerHTML = `<tr><th>Name</th><th>Value</th><th>[u]</th><th>Description</th><th></th></tr>` + C.EQ_ROWS.map(([k, u, d]) => `<tr><td>${k}</td><td>${fmt(k, q[k])}</td><td>${u}</td><td>${d}</td><td>${src(k)}</td></tr>`).join('');
+    $('#paEqTag').textContent = `F${f.i + 1} · ${q.Nd}개 결함 · ${q.source === 'wear-post' ? '날 프로파일 = AI 마모 영역 (결함 기준 ' + f1(q.tolUm) + ' µm)' : '쐐기 모델'}`;
     const w = R.wmm;
     $('#paWmm').innerHTML = `<tr><th>Name</th><th>Value</th><th>[u]</th><th>Description</th></tr>` + (w ? C.WMM_ROWS.map(([n, k, u, d]) => `<tr><td>${n}</td><td>${/Mm3/.test(k) ? f4(w[k]) : f2(w[k])}</td><td>${u}</td><td>${d}</td></tr>`).join('') : '<tr><td colspan="4" class="hint">3D 매핑 결과 없음</td></tr>') +
       `<tr><td>VBmax</td><td>${f3(R.vbMaxMm)}</td><td>mm</td><td>최대 플랭크 마모 (④ 측정)</td></tr><tr><td>VBmean</td><td>${f3(R.vbMeanMm)}</td><td>mm</td><td>평균 플랭크 마모</td></tr>` +

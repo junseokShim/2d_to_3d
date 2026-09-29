@@ -400,11 +400,28 @@
       // a thin streak running down from the tip (narrower than the 0.6 mm resolution limit, or > 4x deeper than wide) is the
       // specular line on a flute margin following the helix, not a chip (a chip / broken tooth is a compact notch)
       if (widthMm < .6 || depthMm > 4 * widthMm) continue;
+      // a fracture face ends: the body right below it (same columns, next TIP_BELOW_MM) is dark. A specular highlight on the
+      // cylinder or a flute margin runs on down the tool at about the same brightness (synthetic false fires: below / blob
+      // brightness >= 0.60; the human's broken teeth: 0.28-0.36; chosen on .work/valset43-57)
+      if (continuesBelow(strip, tm, pts, span, r1)) continue;
       for (const p of pts) out[p] = 1;
       best.areaMm2 = r4(best.areaMm2 + pts.length / ppm / ppm); best.px += pts.length;
       if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
     }
     return Object.assign(best, {mask: out, y1, openPx: k});
+  }
+  const TIP_BELOW_MM = 1.5, TIP_BELOW_X = .5;
+  function continuesBelow(strip, tm, pts, span, r1) {
+    const {w, h, g, rgb, ppm} = strip, lum = i => rgb ? (rgb[3 * i] + rgb[3 * i + 1] + rgb[3 * i + 2]) / 3 : g[i];
+    // the window follows the blob's slant (row-centre line fit: a highlight on a helical margin runs diagonally)
+    const med = a => a.sort((p, q) => p - q)[a.length >> 1], sp = [...span.values()], hw = (med(sp.map(s => s[1] - s[0])) + 1) / 2;
+    let my = 0, mx = 0, sxy = 0, syy = 0; for (const [y, [l, r]] of span) { my += y; mx += (l + r) / 2; } my /= span.size; mx /= span.size;
+    for (const [y, [l, r]] of span) { sxy += (y - my) * ((l + r) / 2 - mx); syy += (y - my) ** 2; }
+    const sl = Math.max(-2, Math.min(2, syy ? sxy / syy : 0)), xc = y => mx + sl * (y - my);
+    let lb = 0; for (const p of pts) lb += lum(p); lb /= pts.length;
+    let s = 0, n = 0;
+    for (let y = r1 + 1; y < Math.min(h, r1 + 1 + Math.round(TIP_BELOW_MM * ppm)); y++) for (let x = Math.max(0, Math.round(xc(y) - hw)); x <= Math.min(w - 1, Math.round(xc(y) + hw)); x++) { const i = y * w + x; if (tm[i] && !Number.isNaN(g[i])) { s += lum(i); n++; } }
+    return n >= .25 * 2 * hw * TIP_BELOW_MM * ppm && s / n > TIP_BELOW_X * lb;
   }
   // binary opening with a k x k square (separable running minimum / maximum)
   function openMask(m, w, h, k) {
