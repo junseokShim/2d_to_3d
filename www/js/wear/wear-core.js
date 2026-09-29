@@ -133,6 +133,98 @@
     return {t, tiltDeg: t / DEG, uL, uR, uC, sepPx: sep, pxPerMm: ppm, vTip, toImg, tipPx: toImg(uC, vTip)};
   }
 
+  // ---------- 1b. backdrop alignment (close-up side views on a plain backdrop) ----------
+  // USB-microscope / macro side views (the human's samples, docs/debug-p5.md): the tool fills 70-100 % of the frame width,
+  // so the framing prior of align() (tool ~0.3 w wide) and its edge-pair search pick flute edges (tilts of -11..-16 deg,
+  // half the true px/mm on D12). Here the backdrop colours are learnt from the top / left / right frame border, the backdrop
+  // is flooded in from the border, and the tool is the rest. Its silhouette is bounded by the lines u = +-R (the lands touch
+  // them; flute gullies only recede), so the axis direction is the one of minimum projected width of the tool's convex
+  // hull (any other direction adds L sin(dt)); the tip line is the top of the hull (chips only lower the end).
+  // A side of the silhouette that runs along the frame border for > CUT_FRAC of the tool height is cut off: the width is
+  // then a lower bound and the scale must come from expectSepPx (microscope calibration / the tool's other sides).
+  const CUT_FRAC = .15, CLOSE_W = .5;
+  function backdropAlign(G, diameterMm, expectSepPx) {
+    const {w, h, img} = G; if (!img) return null;
+    const d = img.data, sc = Math.min(1, 400 / Math.max(w, h)), W = Math.max(8, Math.round(w * sc)), H = Math.max(8, Math.round(h * sc));
+    const rgb = new Float32Array(3 * W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const X = Math.min(w - 1, Math.round((x + .5) / sc - .5)), Y = Math.min(h - 1, Math.round((y + .5) / sc - .5)), j = 4 * (Y * w + X); for (let c = 0; c < 3; c++) rgb[3 * (y * W + x) + c] = d[j + c]; }
+    const px = i => [rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]], bw = Math.max(2, Math.round(.03 * Math.min(W, H)));
+    const border = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (y < bw || x < bw || x >= W - bw) border.push(y * W + x);
+    if (border.length < 30) return null;
+    const km = kmeans(border.map(px), 3, rgb);
+    // backdrop colour Cb = the border's main cluster; tool colour Ct = the image colour cluster (>= 10 % of the frame) farthest
+    // from it (the tool body; specular streaks on it are a minority). A pixel is backdrop-like when its colour projects past the midpoint from Ct towards Cb: robust to
+    // a vignetted / two-tone backdrop (the variation is small next to |Cb - Ct|), and glints on the tool only count as
+    // backdrop where they touch it
+    const cnt = [0, 0, 0]; for (const i of border) cnt[km.near(px(i))[0]]++;
+    const Cb = km.C[[0, 1, 2].sort((p, q) => cnt[q] - cnt[p])[0]];
+    const all = []; for (let i = 0; i < W * H; i += 7) all.push(px(i));
+    const ka = kmeans(all, 4, rgb), share = [0, 0, 0, 0]; for (const p of all) share[ka.near(p)[0]]++;
+    const far = k => Math.hypot(ka.C[k][0] - Cb[0], ka.C[k][1] - Cb[1], ka.C[k][2] - Cb[2]);
+    const kt = [0, 1, 2, 3].filter(k => share[k] > .1 * all.length).sort((p, q) => far(q) - far(p))[0];
+    if (kt == null) return null;
+    const Ct = ka.C[kt], dC = Cb.map((v, c) => v - Ct[c]), dd = dC.reduce((p, v) => p + v * v, 0) || 1;
+    const bd = border.map(i => { const p = px(i); return Math.hypot(p[0] - Cb[0], p[1] - Cb[1], p[2] - Cb[2]); }).sort((p, q) => p - q);
+    const tau = Math.max(8, bd[Math.floor(.5 * bd.length)]), contrast = Math.sqrt(dd) / tau;
+    if (contrast < 4) return null;
+    const isBg = i => { const p = px(i); return ((p[0] - Ct[0]) * dC[0] + (p[1] - Ct[1]) * dC[1] + (p[2] - Ct[2]) * dC[2]) / dd > .5; };
+    const back = new Uint8Array(W * H), st = [];
+    for (const i of border) if (isBg(i)) { back[i] = 1; st.push(i); }
+    while (st.length) { const p = st.pop(), x = p % W; for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W]) if (q >= 0 && q < W * H && !back[q] && isBg(q)) { back[q] = 1; st.push(q); } }
+    // tool = largest non-backdrop component; 2-px opening against specks
+    const tool = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) tool[i] = back[i] ? 0 : 1;
+    const op = openMask(tool, W, H, 3), lab = new Int32Array(W * H); let best = 0, bestN = 0, n = 0;
+    for (let s = 0; s < W * H; s++) if (op[s] && !lab[s]) {
+      const q = [s]; lab[s] = ++n; let c = 0;
+      while (q.length) { const p = q.pop(), x = p % W; c++; for (const r of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W]) if (r >= 0 && r < W * H && op[r] && !lab[r]) { lab[r] = n; q.push(r); } }
+      if (c > bestN) { bestN = c; best = n; }
+    }
+    const frac = bestN / (W * H);
+    if (!best || frac < .08 || frac > .97) return null;
+    // the tip must be in frame: backdrop along most of the top border
+    let topBg = 0; for (let x = 0; x < W; x++) if (back[x]) topBg++;
+    if (topBg < .5 * W) return null;
+    // boundary pixels of the tool component -> convex hull (image px)
+    const pts = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (lab[i] !== best) continue; if (x === 0 || y === 0 || x === W - 1 || y === H - 1 || lab[i - 1] !== best || lab[i + 1] !== best || lab[i - W] !== best || lab[i + W] !== best) pts.push([(x + .5) / sc - .5, (y + .5) / sc - .5]); }
+    const hull = convexHull(pts); if (hull.length < 3) return null;
+    const cx0 = w / 2, cy0 = h / 2, proj = t => { const c = Math.cos(t), s = Math.sin(t); let a = 1e9, b = -1e9, v0 = 1e9; for (const [x, y] of hull) { const u = (x - cx0) * c - (y - cy0) * s, v = (x - cx0) * s + (y - cy0) * c; a = Math.min(a, u); b = Math.max(b, u); v0 = Math.min(v0, v); } return {a, b, v0}; };
+    // cut-off sides: silhouette on the left / right frame border over > CUT_FRAC of the tool height
+    let yTop = H, cutL = 0, cutR = 0; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (lab[y * W + x] === best) { yTop = Math.min(yTop, y); break; }
+    for (let y = 0; y < H; y++) { if (lab[y * W] === best) cutL++; if (lab[y * W + W - 1] === best) cutR++; }
+    const hT = Math.max(1, H - yTop), cut = {left: cutL > CUT_FRAC * hT, right: cutR > CUT_FRAC * hT};
+    if (cut.left && cut.right && !expectSepPx) return null;
+    // tilt: the tip line (the end face is square to the axis) = the longest top edge of the hull within +-20 deg of the
+    // horizontal; chips and broken teeth only lower parts of the end, the hull spans the highest remaining points
+    let bt = null, bl = 0; const yT = (yTop + .5) / sc;
+    for (let i = 0; i < hull.length; i++) {
+      const p = hull[i], q = hull[(i + 1) % hull.length], dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
+      if (Math.abs(ang) > 20 * DEG && Math.abs(Math.abs(ang) - Math.PI) > 20 * DEG) continue;
+      if (Math.max(p[1], q[1]) > yT + .25 * hT / sc) continue;   // top of the tool only
+      if (L > bl) { bl = L; bt = Math.abs(ang) > Math.PI / 2 ? ang - Math.sign(ang) * Math.PI : ang; }
+    }
+    if (bt == null) return null;
+    bt = -bt;   // image y down: a tip line rising to the right is a clockwise-tilted axis (u = (x-cx) cos t - (y-cy) sin t)
+    // width at the tip: tool extent across the axis over the first 0.3 widths below the tip line (the lands at the end
+    // teeth reach the full diameter; further down the silhouette alternates lands and flute gullies)
+    const {v0} = proj(bt), c1 = Math.cos(bt), s1 = Math.sin(bt);
+    let hw = 0; { const {a: lo, b: hi} = proj(bt); hw = hi - lo; }
+    let uL = 1e9, uR = -1e9;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (lab[y * W + x] !== best) continue; const X = (x + .5) / sc - .5 - cx0, Y = (y + .5) / sc - .5 - cy0, v = X * s1 + Y * c1; if (v > v0 + .3 * hw) continue; const u = X * c1 - Y * s1; if (u < uL) uL = u; if (u > uR) uR = u; }
+    if (expectSepPx && (cut.left || cut.right)) { if (cut.left) uL = uR - expectSepPx; else uR = uL + expectSepPx; }
+    const sep = uR - uL; if (sep < 8) return null;
+    const c = c1, s = s1, uC = (uL + uR) / 2;
+    const toImg = (u, v) => [cx0 + u * c + v * s, cy0 - u * s + v * c];
+    return {t: bt, tiltDeg: bt / DEG, uL, uR, uC, sepPx: sep, pxPerMm: sep / diameterMm, vTip: v0, toImg, tipPx: toImg(uC, v0), method: 'backdrop', cut, contrast: r4(contrast), toolFrac: r4(frac), mask: {W, H, sc, lab, best}};
+  }
+  function convexHull(P) {
+    const p = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (p.length < 3) return p;
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+    for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+    for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  }
+
   // resample into an axis-aligned strip: column = u (centred on the axis), row = v from the tip, native px/mm
   function rectify(G, al, lenMm) {
     const ppm = al.pxPerMm, R = al.sepPx / 2, m = Math.ceil(.1 * al.sepPx), W = Math.ceil(2 * R) + 2 * m;
@@ -243,7 +335,10 @@
     const med = quant(ref, .5), mad = quant(ref.map(v => Math.abs(v - med)), .5), sig = Math.max(4, 1.4826 * mad), thr = med + sens * sig;
     const y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
     for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) if (inTool(x) && g[y * w + x] > thr) raw[y * w + x] = 1;
-    return {band: bandFromMask(strip, raw), thr, med, sig, y1, method: 'bright'};
+    // no unworn body in the photo for a colour model (close-up: the zone reaches the photo end): same blob sorting as
+    // segmentColor, tip damage from the saturated fracture faces + the chip blobs
+    const tm = toolMask(strip), C = classifyBlobs(strip, raw, tm, y1), band = bandFromMask(strip, C.land);
+    return {band, thr, med, sig, y1, method: 'bright', blobs: C.blobs, tip: tipDamage(strip, null, thr, band, C.chip)};
   }
 
   // raw candidate mask -> wear band: 2x2 opening, then the largest connected region
@@ -338,7 +433,7 @@
     const step = Math.max(1, Math.round(Math.sqrt(w * h / 8000)));
     for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) { const i = y * w + x; if (outside(x, y) && !Number.isNaN(g[i])) S.push(px(i)); }
     const tool = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) tool[i] = Number.isNaN(g[i]) ? 0 : 1;
-    if (S.length < 30) return (strip.tool = tool);
+    if (S.length < 30) { if (strip.bdTool) for (let i = 0; i < w * h; i++) if (!strip.bdTool[i]) tool[i] = 0; return (strip.tool = tool); }
     const flat = new Uint8ClampedArray(3 * w * h); for (let i = 0; i < w * h; i++) flat.set(px(i), 3 * i);
     const km = kmeans(S, 3, flat), tau = Math.max(6, quant(S.map(p => Math.sqrt(km.near(p)[1])), .95));
     const st = [];
@@ -348,6 +443,7 @@
       const p = st.pop(), x = p % w;
       for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * h && Math.abs(q % w - x) <= 1 && can(q)) { tool[q] = 0; st.push(q); }
     }
+    if (strip.bdTool) for (let i = 0; i < w * h; i++) if (!strip.bdTool[i]) tool[i] = 0;   // backdrop seen between the end teeth (backdropAlign)
     return (strip.tool = tool);
   }
 
@@ -363,8 +459,11 @@
       const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || !tm[i] || gl[i]) continue;
       score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
     }
-    const rb = refineBand(strip, bandFromMask(strip, raw), score);
-    return Object.assign(rb, {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color', tip: tipDamage(strip, cm, thr, rb.band)});
+    // every candidate blob is sorted (classifyBlobs): a specular streak is dropped, a compact blob at the tip line is tip
+    // damage (chipping, VBC), the rest is flank land (VB); the band = the largest land piece
+    const C = classifyBlobs(strip, raw, tm, y1);
+    const rb = refineBand(strip, bandFromMask(strip, C.land), score);
+    return Object.assign(rb, {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color', blobs: C.blobs, tip: tipDamage(strip, cm, thr, rb.band, C.chip)});
   }
 
   // ---------- 2b. tip / corner damage (chipping, broken end teeth) ----------
@@ -375,16 +474,21 @@
   // removed by an opening of ~0.3 mm; blobs must touch the tip line; the flank band and its rim are left out (flank wear, measured by the band). depthMm = axial depth from the tip line (localized wear VB3 /
   // chipping CH, ISO 8688-2), widthMm = arc width across the flank.
   const TIP_ZONE_D = .3;   // tip region depth, x D
-  function tipDamage(strip, cm, thr, band) {
+  function tipDamage(strip, cm, thr, band, extra) {
     const {w, h, g, cx, R, top, ppm, rgb} = strip, D = 2 * R / ppm, tm = toolMask(strip), Rmm = R / ppm;
     const y1 = Math.min(h, top + Math.round(Math.max(1, TIP_ZONE_D * D) * ppm)), raw = new Uint8Array(w * h);
     const nb = band ? dilateMask(band, w, h, Math.max(1, Math.round(.15 * ppm))) : null;   // flank band + its rim: measured by the band
     const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
     for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
       const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !tm[i] || (nb && nb[i])) continue;
-      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false)) raw[i] = 1;
+      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false) || (extra && extra[i])) raw[i] = 1;
     }
+    // opening ~0.3 mm against thin edge glints; the blobs classifyBlobs already sorted as chips skip it (a fracture face is
+    // speckled at high magnification and would not survive a 0.3 mm opening)
     const k = Math.max(2, Math.round(.3 * ppm)), op = openMask(raw, w, y1, k);
+    if (extra) for (let i = 0; i < w * y1; i++) if (extra[i] && tm[i]) op[i] = 1;
+    // resolution limit: ~0.6 mm on the 4.6 px/mm phone photos this was tuned on = 2.8 px; at microscope scales 0.15 mm
+    const resMm = Math.max(.15, 2.8 / ppm);
     const lab = new Int32Array(w * h), out = new Uint8Array(w * h), touch = top + Math.max(1, Math.round(.3 * ppm));
     let best = {depthMm: 0, widthMm: 0, areaMm2: 0, px: 0}, n = 0;
     for (let s = 0; s < w * y1; s++) if (op[s] && !lab[s]) {
@@ -392,14 +496,14 @@
       while (st.length) { const p = st.pop(); pts.push(p); const x = p % w; for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * y1 && Math.abs(q % w - x) <= 1 && op[q] && !lab[q]) { lab[q] = n; st.push(q); } }
       let r0 = 1e9, r1 = -1;
       for (const p of pts) { const y = p / w | 0; r0 = Math.min(r0, y); r1 = Math.max(r1, y); }
-      if (r0 > touch || pts.length < Math.max(2 * k * k, (.6 * ppm) ** 2)) continue;   // chips smaller than ~0.6 x 0.6 mm are not resolved
+      if (r0 > touch || pts.length < Math.max(2 * k * k, (.6 * ppm) ** 2)) continue;   // chips smaller than ~0.6 x 0.6 mm are not resolved (0.36 mm^2)
       const arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R)));
       // width = median over the blob's rows of the row's arc span (a bounding box would take in glints touching the blob)
       const span = new Map(); for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
       const depthMm = r4((r1 + 1 - Math.max(r0, top)) / ppm), widthMm = r4(quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5));
       // a thin streak running down from the tip (narrower than the 0.6 mm resolution limit, or > 4x deeper than wide) is the
       // specular line on a flute margin following the helix, not a chip (a chip / broken tooth is a compact notch)
-      if (widthMm < .6 || depthMm > 4 * widthMm) continue;
+      if (widthMm < resMm || depthMm > CHIP_ASPECT * widthMm) continue;
       // a fracture face ends: the body right below it (same columns, next TIP_BELOW_MM) is dark. A specular highlight on the
       // cylinder or a flute margin runs on down the tool at about the same brightness (synthetic false fires: below / blob
       // brightness >= 0.60; the human's broken teeth: 0.28-0.36; chosen on .work/valset43-57)
@@ -409,6 +513,36 @@
       if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
     }
     return Object.assign(best, {mask: out, y1, openPx: k});
+  }
+  // ---------- 2c. candidate blobs -> flank land / tip damage / specular streak ----------
+  // One photo, three look-alikes (docs/debug-p5.md, the human's USB-microscope side views): the worn land along the cutting
+  // edge, fracture faces of chipped corners / broken end teeth at the tip, and specular streaks (the light reflected along
+  // the helical flank, bright and smooth, running on down the tool). Per 4-connected blob of a candidate mask (S = strip or
+  // any tool-aligned frame {w, h, g, rgb?, ppm, cx, R, top}; rows = axis from the tip line):
+  //   streak: not a chip, and the tool right below it (along its slant) stays as bright (continuesBelow)
+  //   chip:   it reaches the tip line (<= TOUCH_MM), is >= 2 resolution limits deep (not the rim of the end face) and compact
+  //           (depth <= CHIP_ASPECT x width): material lost at the corner
+  //   land:   the rest (a land along the edge is long and narrow)
+  // blobs below MIN_BLOB_MM^2 are noise.
+  const TOUCH_MM = .3, CHIP_ASPECT = 5, MIN_BLOB_MM = .15;
+  function classifyBlobs(S, mask, tm, y1) {
+    const {w, h, ppm, cx, R, top} = S, H = Math.min(h, y1 || h), n = w * H;
+    const land = new Uint8Array(w * h), chip = new Uint8Array(w * h), streak = new Uint8Array(w * h), lab = new Int32Array(n), blobs = [];
+    const Rmm = R / ppm, arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R))), touch = top + Math.max(1, Math.round(TOUCH_MM * ppm));
+    const resMm = Math.max(.15, 2.8 / ppm);   // resolution limit (see tipDamage): a chip is at least 2 x as deep
+    let id = 0;
+    for (let s0 = 0; s0 < n; s0++) if (mask[s0] && !lab[s0] && (!tm || tm[s0])) {
+      const st = [s0], pts = []; lab[s0] = ++id;
+      while (st.length) { const p = st.pop(); pts.push(p); const x = p % w; for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, p - w, p + w]) if (q >= 0 && q < n && mask[q] && !lab[q] && (!tm || tm[q])) { lab[q] = id; st.push(q); } }
+      if (pts.length < (MIN_BLOB_MM * ppm) ** 2) continue;
+      let r0 = 1e9, r1 = -1; const span = new Map();
+      for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); r0 = Math.min(r0, y); r1 = Math.max(r1, y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
+      const depthMm = (r1 + 1 - Math.max(r0, top)) / ppm, widthMm = quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5);
+      const touches = r0 <= touch, kind = touches && depthMm >= 2 * resMm && depthMm <= CHIP_ASPECT * Math.max(widthMm, 1 / ppm) ? 'chip' : continuesBelow(S, tm, pts, span, r1) ? 'streak' : 'land';
+      const out = kind === 'chip' ? chip : kind === 'land' ? land : streak; for (const p of pts) out[p] = 1;
+      blobs.push({kind, r0, r1, depthMm: r4(depthMm), widthMm: r4(widthMm), areaMm2: r4(pts.length / ppm / ppm)});
+    }
+    return {land, chip, streak, blobs};
   }
   const TIP_BELOW_MM = 1.5, TIP_BELOW_X = .5;
   function continuesBelow(strip, tm, pts, span, r1) {
@@ -487,7 +621,11 @@
     const o = Object.assign({}, DEFAULTS, opts), D = o.diameterMm;
     if (!(D > 0)) throw new Error('diameterMm required');
     const tryRot = deg => {
-      const im = rotate(img, deg), G = gray(im), al = align(G, sobel(G), D, o.expectPxPerMm && o.expectPxPerMm * D);
+      const im = rotate(img, deg), G = gray(im), exp = o.expectPxPerMm && o.expectPxPerMm * D;
+      // close-up on a plain backdrop (tool >= CLOSE_W of the frame width, where align()'s framing prior does not hold) ->
+      // backdrop alignment; otherwise the edge-pair search, and the backdrop one only when that finds nothing
+      const ab = o.align !== 'edges' ? backdropAlign(G, D, exp) : null;
+      const al = ab && ab.sepPx >= CLOSE_W * G.w ? ab : align(G, sobel(G), D, exp) || ab;
       if (!al) return null;
       const [, ty] = al.tipPx, [tx] = al.tipPx, edge = Math.min(ty, tx, G.w - 1 - tx) < .02 * al.sepPx + 2;
       return {G, al, deg, edge};
@@ -501,11 +639,22 @@
     const lenMm = Math.max(zone + .6 * D, o.stripMm || 1.2 * D), raw = rectify(G, al, lenMm);
     let strip = enh && enh.width === img.width && enh.height === img.height ? Object.assign(rectify(gray(rotate(enh, best.deg)), al, lenMm), {raw}) : raw;
     if (o.stripMm) { const {w, g, cx, top} = raw, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
+    if (al.mask) strip.bdTool = stripMask(strip, al);
     const hx = helixEstimate(G, al, D, o.flutes), hEst = hx && hx.confidence !== 'none' ? hx.deg : null;
     // img: the photo as aligned (rotated tip up) for segmenters that work on the photo itself (seg-wear.js)
     return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, helix: hx, rotateDeg: best.deg, img: G.img};
   }
 
+  // backdropAlign's tool mask (photo, downscaled) sampled onto the strip: 1 = tool
+  function stripMask(strip, al) {
+    const {W, H, sc, lab, best} = al.mask, {w, h, cx, top} = strip, m = new Uint8Array(w * h);
+    for (let r = 0; r < h; r++) for (let col = 0; col < w; col++) {
+      const [x, y] = al.toImg(al.uC + col - cx, al.vTip - top + r);   // rectify(): u = uC - R - margin + col + .5, cx = margin + R - .5
+      const X = Math.floor((x + .5) * sc), Y = Math.floor((y + .5) * sc);
+      m[r * w + col] = X >= 0 && Y >= 0 && X < W && Y < H && lab[Y * W + X] === best ? 1 : 0;
+    }
+    return m;
+  }
   const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)}, S.raw ? {raw: trimStrip(S.raw, h)} : {});
 
   function finishSide(P, seg, helixDeg) {
@@ -658,6 +807,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, GLINT, MIN_PPM, HELIX_RANGE, helixEstimate, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, MIN_PPM, HELIX_RANGE, backdropAlign, convexHull, classifyBlobs, continuesBelow, stripMask, TOUCH_MM, CHIP_ASPECT, helixEstimate, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });
