@@ -34,14 +34,29 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 #busy{font-size:13px;color:#555}#busy[hidden]{display:none}
 #run:disabled{opacity:.6}
 #msg{color:#b3261e;font-size:13px;min-height:1em;margin-top:8px}
-#cam{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9}
+#cam{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9;color:#fff;overflow:auto}
 #cam[hidden]{display:none}
-.camwrap{position:relative;display:inline-block}
-#video{display:block;max-width:100vw;max-height:calc(100vh - 90px)}
-#guide{position:absolute;inset:0;width:100%;height:100%}
+#cam.flash .camwrap{opacity:.4}
+#camtop{width:100%;max-width:720px;padding:6px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px}
+#sharpbar{height:8px;background:#333;border-radius:4px;overflow:hidden}
+#sharpbar i{display:block;height:100%;width:0;background:#e33;transition:width .15s}
+#sharpbar i.ok{background:#e9a800}#sharpbar i.sharp{background:#1db954}
+#camhint{min-height:2.6em}
+.camwrap{position:relative;display:inline-block;overflow:hidden;touch-action:none}
+#video{display:block;max-width:100vw;max-height:calc(100vh - 230px);transform-origin:50% 50%}
+#guide{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .gd{fill:none;stroke:#ffd400;stroke-width:3;stroke-dasharray:12 8;vector-effect:non-scaling-stroke}
+#focusring{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #fff;border-radius:50%;pointer-events:none}
+#focusring.done{border-color:#1db954}#focusring[hidden]{display:none}
+#zoomtag{position:absolute;left:8px;top:8px;background:#0008;padding:2px 6px;border-radius:4px;font-size:12px;pointer-events:none}
+.camzoom,.camopts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:4px 12px;font-size:13px}
+.camzoom input{width:min(260px,50vw)}
+#zbtns button,#torch{background:#222;color:#fff;border-color:#555;padding:5px 10px}
+#zbtns button.on,#torch.on{background:#ffd400;color:#000}
+#cam select,#cam .btn{background:#222;color:#fff;border-color:#555}
 .cambar{display:flex;gap:16px;align-items:center;padding:12px;color:#fff}
 #shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
+#shutter.ok{background:#e9a800}#shutter.sharp{background:#1db954}
 </style>
 <link rel="stylesheet" href="css/metro.css">
 <script src="native/android-save.js"></script>
@@ -82,12 +97,20 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 </main>
 
 <div id="cam" hidden>
-  <div class="camwrap"><video id="video" playsinline muted></video><svg id="guide"></svg></div>
+  <div id="camtop"><div id="sharpbar" title="선명도"><i></i></div><span id="camhint">공구에서 10~15 cm 떨어져 줌으로 확대하세요. 화면을 탭하면 그 위치에 초점을 맞춥니다.</span></div>
+  <div class="camwrap" id="camwrap"><video id="video" playsinline muted></video><svg id="guide" preserveAspectRatio="none"></svg><div id="focusring" hidden></div><div id="zoomtag"></div></div>
+  <div class="camzoom"><span id="zbtns"></span><label>줌 <input id="zoom" type="range" min="1" max="8" step="0.1" value="1"></label></div>
+  <div class="camopts"><select id="lens" hidden title="렌즈 선택"></select><button id="torch" hidden>조명</button>
+    <label title="선명하고 흔들림이 없으면 자동으로 촬영"><input type="checkbox" id="autoShot"> 자동 촬영</label>
+    <label title="가능하면 센서 최대 해상도 사진(ImageCapture)으로 촬영"><input type="checkbox" id="hiRes" checked> 고해상도</label>
+    <span id="mfocus" hidden>수동 초점 <input id="focusDist" type="range"> <button id="afBtn">AF</button></span>
+    <label class="btn" title="휴대폰 기본 카메라 앱(매크로 모드 사용 가능)으로 촬영">기본 카메라 앱<input id="nativeCam" type="file" accept="image/*" capture="environment" hidden></label></div>
   <div class="cambar"><button id="camClose">취소</button><button id="shutter" aria-label="촬영"></button><span id="camtxt"></span></div>
 </div>
 
 <script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script><script src="js/wear/seg-wear.js"></script>
 <script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
+<script src="js/capture/camera-core.js"></script><script src="js/capture/camera.js"></script>
 <script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
 <script>
 const $ = s => document.querySelector(s);
@@ -161,34 +184,27 @@ async function loadFiles(files, start) {
 }
 $('#multi').onchange = e => loadFiles([...e.target.files], 0);
 
-let stream, camSlot;
+let camSlot;
 const guideOf = (i, w, h) => i === st.k
   ? {type: 'top', cx: w / 2, cy: h / 2, r: 0.2 * Math.min(w, h)}
   : {type: 'side', cx: w / 2, w: 0.3 * w, y0: 0.12 * h, y1: 0.88 * h};
 
+// 카메라: js/capture/camera.js (광학/디지털 줌, 탭 초점, 선명도 미터, 렌즈/조명, 기본 카메라 앱)
 async function openCam(i) {
   camSlot = i;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment', width: {ideal: 1920}, height: {ideal: 1080}}, audio: false});
-  } catch (e) { return msg('카메라를 열 수 없습니다: ' + e.message); }
-  const v = $('#video'); v.srcObject = stream; await v.play();
-  $('#cam').hidden = false;
-  const w = v.videoWidth, h = v.videoHeight, g = guideOf(i, w, h), svg = $('#guide');
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.innerHTML = g.type === 'top'
-    ? `<circle class="gd" cx="${g.cx}" cy="${g.cy}" r="${g.r}"/>`
-    : `<path class="gd" d="M${g.cx - g.w / 2},${g.y1} V${g.y0 + g.w * .3} Q${g.cx},${g.y0 - g.w * .15} ${g.cx + g.w / 2},${g.y0 + g.w * .3} V${g.y1}"/>`;
-  $('#camtxt').textContent = i === st.k ? '끝면을 원 안에' : `측면 ${i + 1}: 외곽을 보조선에`;
+  await Tool3D.capture.open({
+    guide: (w, h) => guideOf(i, w, h),
+    label: i === st.k ? '끝면을 원 안에' : `측면 ${i + 1}: 외곽을 보조선에`,
+    onShot: c => {
+      st.shots[i] = c; st.hints[i] = guideOf(i, c.width, c.height); renderSlots();
+      if (i < st.k && !st.shots[i + 1]) openCam(i + 1);   // 다음 면 이어서 촬영 (렌즈/줌 유지)
+      else closeCam();
+    },
+    onFile: f => loadFiles([f], i),
+    onError: msg
+  });
 }
-function closeCam() { stream && stream.getTracks().forEach(t => t.stop()); $('#cam').hidden = true; }
-$('#camClose').onclick = closeCam;
-$('#shutter').onclick = () => {
-  const v = $('#video'), c = cv(v.videoWidth, v.videoHeight);
-  c.getContext('2d').drawImage(v, 0, 0);
-  st.shots[camSlot] = c; st.hints[camSlot] = guideOf(camSlot, c.width, c.height);
-  closeCam(); renderSlots();
-  if (camSlot < st.k && !st.shots[camSlot + 1]) openCam(camSlot + 1);   // 다음 면 이어서 촬영
-};
+function closeCam() { Tool3D.capture.close(); }
 
 // ---------- 영상 처리 공통 ----------
 function pix(src, maxDim) {
