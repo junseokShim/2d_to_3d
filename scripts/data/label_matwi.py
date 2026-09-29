@@ -188,10 +188,59 @@ def label(p, setrow, typ):
                 vbPxMax=float(hts.max()), vbPxP90=float(np.percentile(hts[hts > 0], 90)) if (hts > 0).any() else 0.0, vbPxMean=float(hts[hts > 0].mean()) if (hts > 0).any() else 0.0, wearCols=float((hts > 0).mean()))
     return img, m, info
 
+SET_MIN_CORR = 0.6      # a set's detected band height must track the expert VB (Pearson r over the set) ...
+RATIO_BAND = (0.7, 1.4)  # ... and an image's px-per-um ratio must lie within this factor of its set's median
+
+
+def finalize(root):
+    """Stage -> processed/. Sets whose detected band tracks VB (r >= SET_MIN_CORR) keep class 2 on images whose ratio is
+    consistent; every other image keeps tool (1) but its wear zone (edge .. edge + 1.5 x the set's VB-predicted height, or
+    the detected band) becomes 255 ignore -> labelQuality 'tool-only'. Images with a failed tool mask are dropped."""
+    import shutil
+    stage = os.path.join(root, 'work/matwi')
+    info = json.load(open(os.path.join(stage, 'stage_info.json')))
+    out = {d: os.path.join(root, 'processed', d) for d in ('images', 'masks', 'labelinfo')}
+    for d in out.values(): os.makedirs(d, exist_ok=True)
+    bys = {}
+    for k, v in info.items(): bys.setdefault(v['set'], []).append(k)
+    stats = {}; counts = dict(verified=0, toolonly=0, dropped=0)
+    for s_, ks in sorted(bys.items()):
+        vb = np.array([info[k]['vbUm'] for k in ks]); p90 = np.array([info[k]['vbPxP90'] for k in ks])
+        r = float(np.corrcoef(vb, p90)[0, 1]) if len(ks) > 5 and vb.std() > 0 and p90.std() > 0 else float('nan')
+        ratio = p90 / np.maximum(vb, 1); med = float(np.median(ratio[p90 > 0])) if (p90 > 0).any() else 0.0
+        stats[s_] = dict(n=len(ks), corr=r, pxPerUmMedian=med)
+        for k, v, rt in zip(ks, vb, ratio):
+            it = info[k]
+            m = cv2.imread(os.path.join(stage, k + '_mask.png'), cv2.IMREAD_GRAYSCALE)
+            if m is None or it['toolFrac'] < 0.05 or it['edgeInliers'] < 0.4: counts['dropped'] += 1; it['status'] = 'dropped'; continue
+            ok = (r >= SET_MIN_CORR) and med > 0 and RATIO_BAND[0] * med <= rt <= RATIO_BAND[1] * med and 'adhesion' not in it['wearType']
+            if not ok:
+                # wear zone -> ignore: every pixel within 1.5x of max(detected band, VB-predicted band) under the edge
+                hgt = max(it['vbPxP90'], v * (med if med > 0 else 0.5)) * 1.5 + 10
+                wear = m == 2
+                m[wear] = IGN
+                img = cv2.imread(os.path.join(stage, k + '_img.png'))
+                g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                _, edge, _, _ = edge_line(g)
+                yy = np.arange(m.shape[0])[:, None]
+                zone = (yy >= edge[None, :] - 3) & (yy < edge[None, :] + hgt)
+                m[zone & (m == 1)] = IGN
+                it['labelQuality'] = 'tool-only'; counts['toolonly'] += 1
+            else:
+                it['labelQuality'] = 'wear-verified'; counts['verified'] += 1
+            it['pxPerMmEst'] = med * 1000 if med > 0 and r >= SET_MIN_CORR else None
+            it['status'] = 'kept'
+            shutil.copyfile(os.path.join(stage, k + '_img.png'), os.path.join(out['images'], k + '.png'))
+            cv2.imwrite(os.path.join(out['masks'], k + '.png'), m)
+            json.dump(it, open(os.path.join(out['labelinfo'], k + '.json'), 'w'))
+    json.dump(dict(sets=stats, counts=counts, policy=dict(SET_MIN_CORR=SET_MIN_CORR, RATIO_BAND=RATIO_BAND)),
+              open(os.path.join(stage, 'finalize_report.json'), 'w'), indent=1)
+    print(json.dumps(stats, indent=0)); print(counts)
+
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('root'); ap.add_argument('--limit', type=int, default=0)
-    ap.add_argument('--sets', default=''); ap.add_argument('--dry', action='store_true'); ap.add_argument('--every', type=int, default=1)
+    ap.add_argument('--sets', default=''); ap.add_argument('--dry', action='store_true'); ap.add_argument('--every', type=int, default=1); ap.add_argument('--finalize', action='store_true')
     a = ap.parse_args()
     raw = os.path.join(a.root, 'raw/matwi')
     rows = load_rows(raw)
@@ -199,13 +248,18 @@ if __name__ == '__main__':
     rows = rows[::a.every]
     if a.limit: rows = rows[:a.limit]
     stage = os.path.join(a.root, 'work/matwi'); os.makedirs(stage, exist_ok=True)
-    recs = []
+    if a.finalize: finalize(a.root); sys.exit(0)
+    sfile = os.path.join(stage, 'stage_info%s.json' % ('_dry' if a.dry else ''))
+    done = json.load(open(sfile)) if os.path.exists(sfile) else {}
+    recs = list(done.items())
     for r, p, sr in rows:
         sid = 'matwi_S%s_%03d' % (r['Set'], int(float(r['ImageID'])))
+        if sid in done: continue
         img, m, info = label(p, sr, r['type'])
         info.update(source='matwi', set=r['Set'], vbUm=float(r['wear']), wearType=r['type'], rawImage=os.path.relpath(p, a.root).replace('\\', '/'))
         if not a.dry:
             cv2.imwrite(os.path.join(stage, sid + '_img.png'), img); cv2.imwrite(os.path.join(stage, sid + '_mask.png'), m)
         recs.append((sid, info))
+        if len(recs) % 20 == 0: json.dump(dict(recs), open(sfile, 'w'), indent=0)
         print(sid, r['wear'], r['type'], 'vbPx %.0f p90 %.0f mean %.0f cols %.2f' % (info['vbPxMax'], info['vbPxP90'], info['vbPxMean'], info['wearCols']), 'tool %.2f' % info['toolFrac'], 'sam %.2f' % info['samScore'], flush=True)
-    json.dump(dict(recs), open(os.path.join(stage, 'stage_info%s.json' % ('_dry' if a.dry else '')), 'w'), indent=0)
+    json.dump(dict(recs), open(sfile, 'w'), indent=0)
