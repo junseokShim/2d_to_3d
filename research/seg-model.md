@@ -157,3 +157,28 @@ Fresh sets `.work/valset43-57` (tuning), `58-72` (check), `73-87` (final check);
   perpendicular VB, edge recession) and Alicona EdgeQuality / WearMeasurementModule (Nd, L, Pd, Ddmax/mean, Ldmax/mean,
   Ldcmax/mean, VBmax/mean; no Ldr / volumes from one photo) report it. `wearResult.post`, metro panel card 후처리,
   test/wear/post-run.js.
+
+## seg9 / seg10 (2026-09-29): thin-land fine-tunes ft6 / ft7, `vb-edge-on` flag, model kept at ft4
+
+Fresh sets `.work/valset88-102` (tuning), `103-117` (check, then tuning of the flag), `118-132` (final check, run once).
+
+- **ft6 / ft7** (seg9): ft4 + a second render pool of phone-like thin flank lands (`gen_pool_thin.py`, `--pool2/--win2`),
+  boundary CE weight 4. it6000 exports: held-out `test/wear/seg` wear IoU ft4 .305, ft6 .375, ft7 .393; target tool IoU
+  s1-s4, top ft4 .92 .91 .73 .72 .84, ft6 .93 .91 .72 .72 .90, ft7 .93 .91 .72 .72 .89.
+- **`vb-edge-on` operator flag**: the land's widest rows (>= 90 % of VBmax, +-0.3 mm) have their ridge at |u| > .85 R on
+  more than half of them -> a 1-3 px sliver multiplied by the foreshortening (x 1.9-3.5) sets VBmax (v113 t4: all four sides
+  0.505). Tuned offline on 88-117 from per-side dumps (`SEG_DUMP=1` seg-run, `.work/edgesim.py`): any |u| .8-.92 / share
+  .3-.7 gives the same result within 1 side. Env overrides `SEG_EDGE_ON`, `SEG_EDGE_SHARE` (experiments only).
+- Silent-wrong sides (worn + clean, full engine, with the flag):
+
+| export | 88-117 (flag off -> on) | confident-right 88-117 | **final 118-132** (off -> on) | confident-right 118-132 | mean val wear IoU 118-132 |
+|---|---|---|---|---|---|
+| **ft4 it8000 (kept)** | 13 -> 10 | 20 | **8 -> 7** | 8 (+3 sent to operator by the flag) | .387 |
+| ft6 it6000 | 14 -> 10 | 27 | not run | | |
+| ft7 it6000 (candidate) | 12 -> 8 | 25 | **11 -> 10** | 9 | .433 |
+
+- Decision rule (set before the final check): switch only if silent-wrong goes down with held-out wear IoU and target tool
+  IoU not down. ft7 lowered silent-wrong on 88-117 but not on the untouched 118-132 (7 -> 10), so **ft4 it8000 stays**;
+  ft6/ft7 segment the land better (IoU) but the VBmax read from it is not more reliable.
+- Remaining silent-wrong on 118-132 (ft4): t41/t42 sides read 0.1-0.2 mm over the rendered zone-B VBmax, t2chip read 0.
+  As seg9 found, most of these the exact-label (oracle) pipeline also misses: VB maths, not the network.
