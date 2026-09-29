@@ -358,8 +358,9 @@
     return sessionP;
   }
   // microscope variant (models/wear-seg-micro.onnx.js, scripts/seg/train_micro.py): loaded only in microscope mode;
-  // without the file the phone model is used (micro: false)
-  let microP = null;
+  // without the file the phone model is used (micro: false). Not shipped: the leave-one-view-out Keyence folds gave
+  // no VB gain on held-out views (research/keyence-reference.md), so the failed load is kept (one attempt per session)
+  let microP = null, microWarned = false;
   function loadMicro() {
     if (microP) return microP;
     microP = (async () => {
@@ -369,7 +370,7 @@
       T.segMicroModelB64 = null;
       return {ort, session};
     })();
-    microP.catch(() => { microP = null; });
+    microP.catch(() => {});
     return microP;
   }
   const ortRunner = ({ort, session}) => async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
@@ -394,7 +395,7 @@
   }
   const segment = async img => segmentImage(ortRunner(await load()), img);
   const runner = async () => ortRunner(await load());   // browser runProbs for segmentImageProbs (js/micro)
-  const microRunner = async () => { try { return Object.assign(ortRunner(await loadMicro()), {micro: true}); } catch (e) { console.warn('seg: microscope model not loaded, phone model used', e); return Object.assign(await runner(), {micro: false}); } };
+  const microRunner = async () => { try { return Object.assign(ortRunner(await loadMicro()), {micro: true}); } catch (e) { if (!microWarned) console.info('seg: no microscope model, phone model used', e.message); microWarned = true; return Object.assign(await runner(), {micro: false}); } };
 
   return {createSegmenter, segmentImage, segmentImageProbs, runner, microRunner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
 });
