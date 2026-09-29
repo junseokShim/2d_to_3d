@@ -27,6 +27,18 @@
   // so at argmax it spills wear into the tool body (val T3: VBmax bias +25 px, sharp tools read x2). The threshold was picked
   // on the val split only (VBmax MAE 25 -> 6.7 px, VBB 12.4 -> 6.5); WEAR_LO / WEAR_HI bracket it for the boundary part of U
   const WEAR_THR = .985, WEAR_LO = .95, WEAR_HI = .995;
+  // View routing: a flank close-up (Keyence VHX, MUDESTREDA: one cutting edge, field of view 1-3 mm) is measured here; a
+  // side view of the whole tool (USB microscope at low magnification, tip at the top, both silhouette edges, like a phone
+  // photo) goes through the camera side-view pipeline. The field of view in tool diameters decides: long side / px-per-mm
+  // (the magnification's calibration) >= VIEW_FOV x D -> 'side'. Human USB samples: 0.47-1.39 D; Keyence 0.1-0.3 D at D 10;
+  // MUDESTREDA ~0.2 D. The operator can override the detected view in step 1.
+  const VIEW_FOV = .4;
+  function detectView(img, {pxPerMm, diameterMm} = {}) {
+    const L = Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height);
+    if (!(pxPerMm > 0) || !(diameterMm > 0) || !(L > 0)) return {view: 'closeup', fovMm: null, fovD: null, why: 'no-calibration'};
+    const fovMm = L / pxPerMm, fovD = fovMm / diameterMm;
+    return {view: fovD >= VIEW_FOV ? 'side' : 'closeup', fovMm: r4(fovMm), fovD: r4(fovD), why: 'field-of-view'};
+  }
   const VB_REF = 'reference';   // default VB method: 'reference' (Keyence-style line on the unworn edge) | 'edge' (fitted edge)
   const r4 = v => Math.round(v * 1e4) / 1e4;
   const med = a => { const b = Array.from(a).sort((p, q) => p - q); return b.length ? b[b.length >> 1] : 0; };
@@ -316,6 +328,6 @@
     return {strip, band, rowVbMm};
   }
 
-  return {MAGS, NET_LONG, WEAR_THR, WEAR_LO, WEAR_HI, VB_REF, REF_UNWORN, REF_MIN, PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats, robustLine, refEdge,
+  return {MAGS, VIEW_FOV, detectView, NET_LONG, WEAR_THR, WEAR_LO, WEAR_HI, VB_REF, REF_UNWORN, REF_MIN, PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats, robustLine, refEdge,
     analyzeImage, fluteStrip, r4};
 });

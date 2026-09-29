@@ -156,12 +156,12 @@ function renderSlots() {
 
 // 촬영 품질 배지 (js/enhance/quality.js): 사진을 불러오자마자 측면마다 pass/warn/fail + 재촬영 조언
 const qCache = new WeakMap();           // shot -> {D, r}
-const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '✕ 재촬영 권장'};
+const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '! 품질 낮음 · 측정은 진행 (결과 확인)'};
 function shotQuality(i) {
   const s = st.shots[i], Q = window.Tool3D?.enhance?.quality, W = window.Tool3D?.wear; if (!s || !Q || !W?.toImage) return null;
-  const c = qCache.get(s); if (c && c.D === st.D) return c.r;
-  let r = null; try { r = Q.assess(W.toImage(s), {diameterMm: st.D}); } catch (e) { console.warn('quality:', e); }
-  qCache.set(s, {D: st.D, r}); return r;
+  const c = qCache.get(s); if (c && c.D === st.D && c.ppm === st.ppm) return c.r;
+  let r = null; try { r = Q.assess(W.toImage(s), {diameterMm: st.D, pxPerMm: st.ppm}); } catch (e) { console.warn('quality:', e); }
+  qCache.set(s, {D: st.D, ppm: st.ppm, r}); return r;
 }
 function qualityBadge(i) {
   const box = document.createElement('div'); box.className = 'qbox'; box.dataset.q = i;
@@ -413,8 +413,10 @@ async function measureWear(shots, opts) {
   } catch (e) { console.warn('wear AI unavailable, classic used:', e); }
   try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
 }
-$('#run').onclick = async () => {
-  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.run();   // 현미경 입력: 영상 전체 분할 → 절삭날 기준 VB (js/micro)
+$('#run').onclick = () => window.Tool3D?.microUI?.active() ? Tool3D.microUI.run() : cameraRun();   // 현미경 입력: 날 근접 영상은 js/micro, 공구 전체 측면은 runCameraPath
+// 현미경 입력의 공구 전체 측면 영상 → 카메라 측면 파이프라인 (px/mm = 배율 교정)
+window.runCameraPath = async (shots, pxPerMm) => { shots.forEach((s, i) => { st.shots[i] = s; st.hints[i] = null; }); st.ppm = pxPerMm > 0 ? pxPerMm : null; try { await cameraRun(); } finally { st.ppm = null; } };
+async function cameraRun() {
   msg(); const {k, D} = st, btn = $('#run');
   if (btn.disabled) return;
   for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
@@ -429,7 +431,7 @@ $('#run').onclick = async () => {
     det = {q, Lmm, bad, strips: q.map((v, i) => v ? rectify(st.shots[i], v, D, Lmm) : null)};
     if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
     const hUser = +$('#helix').value;                                          // 작업자 입력 헬릭스각 (비우면 사진 추정)
-    engine = await measureWear(st.shots, Object.assign({flutes: k, diameterMm: D}, hUser > 0 ? {helixDeg: hUser} : {}));   // -> Tool3D.wearResult
+    engine = await measureWear(st.shots, Object.assign({flutes: k, diameterMm: D}, hUser > 0 ? {helixDeg: hUser} : {}, st.ppm ? {pxPerMm: st.ppm} : {}));   // -> Tool3D.wearResult
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   try { analyze(); } catch (e) { console.warn('analyze:', e); msg('3D 텍스처 생성 실패: 마모 측정 결과만 표시합니다.'); }
