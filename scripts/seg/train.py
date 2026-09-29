@@ -1,7 +1,7 @@
 """Train the wear segmentation model (U-Net, ImageNet-pretrained MobileNetV3-Large encoder, 5 classes).
 
-Data: synthetic pool (render.py -> gen_pool.py) composited on the fly (augment.py, data.py), plus labelled real images
-from the shared dataset (C:/agent_research_team/datasets/toolwear, manifest.json, splits train/val/target) when present.
+Data: synthetic pool (render.py -> gen_pool.py) composited on the fly (augment.py, data.py), plus the labelled images of
+the shared dataset (processed/<source>_*.png; data.split_of: syn_ every 10th + mud_ tool T3 = val, target_ eval only).
 
 usage: train.py --pool .work/pool --out .work/runs/r1 [--iters 40000] [--bs 16] [--size 384] [--init ckpt]
 """
@@ -55,6 +55,24 @@ def evaluate(model, batches, dev):
     return ious(cm), cm
 
 
+def preview(batches, path, n=12):
+    """montage of training samples with the label overlaid (sanity check of the data pipeline)"""
+    import cv2
+    from target_eval import COL
+    tiles = []
+    for im, lb in batches:
+        for i in range(len(im)):
+            o = im[i].copy(); m = lb[i] >= 2
+            o[m] = (.4 * o[m] + .6 * COL[lb[i][m]]).astype(np.uint8)
+            c, _ = cv2.findContours((lb[i] > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            cv2.drawContours(o, c, -1, (0, 255, 0), 1)
+            tiles.append(cv2.resize(np.hstack([im[i], o]), None, fx=.5, fy=.5))
+            if len(tiles) == n:
+                rows = [np.hstack(tiles[j:j + 3]) for j in range(0, n, 3)]
+                cv2.imwrite(path, np.vstack(rows)[..., ::-1])
+                return
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--pool', default='.work/pool')
@@ -63,10 +81,11 @@ def main():
     ap.add_argument('--bs', type=int, default=16)
     ap.add_argument('--size', type=int, default=384)
     ap.add_argument('--lr', type=float, default=1e-3)
+    ap.add_argument('--warm', type=float, default=.05)
     ap.add_argument('--workers', type=int, default=10)
     ap.add_argument('--init', default='')
     ap.add_argument('--encoder', default='tu-mobilenetv3_large_100')
-    ap.add_argument('--real_frac', type=float, default=0.25)
+    ap.add_argument('--mix', default='pool:1', help='sampling weights per source, e.g. pool:.5,syn:.25,mud:.25')
     ap.add_argument('--eval_every', type=int, default=2000)
     ap.add_argument('--nval', type=int, default=400)
     a = ap.parse_args()
@@ -79,36 +98,48 @@ def main():
         s = ' '.join(str(v) for v in s)
         print(s, flush=True)
         log.write(s + '\n'); log.flush()
+    P('args', vars(a))
+    import target_eval
     prod = data.Producer(a.workers)
     model = build(a.encoder).to(dev)
     if a.init:
         model.load_state_dict(torch.load(a.init, map_location=dev))
+    mix = {k: float(v) for k, v in (t.split(':') for t in a.mix.split(','))}
     metas = data.load_pool(a.pool)
     val_ids = sorted(i for i in metas if i % 20 == 0)
-    # fixed validation set, generated once (same seeds every eval)
-    vt = [('synth', 7_000_003 * k + 11, a.pool, metas[val_ids[k % len(val_ids)]], a.size) for k in range(a.nval)]
-    val = list(prod.batches(vt, 16))
+    # fixed validation sets, generated once (same seeds every eval), one per source
+    vals = {'pool': list(prod.batches([('synth', 7_000_003 * k + 11, a.pool, metas[val_ids[k % len(val_ids)]], a.size)
+                                       for k in range(a.nval)], 16))}
     real_va = data.load_real('val')
-    rval = list(prod.batches([('real', 900 + k, ip, mp_, a.size) for k, (ip, mp_, _) in enumerate(real_va * 3)], 8)) if real_va else []
-    P(f'pool {len(metas)} val ids {len(val_ids)} real val {len(real_va)}')
+    for src, items in real_va.items():
+        n = min(a.nval, 3 * len(items))
+        vals[src] = list(prod.batches([('real', 900 + k, ip, mp_, a.size) for k, (ip, mp_, _) in enumerate((items * 3)[:n])], 16))
+    P(f'pool {len(metas)} val ids {len(val_ids)} real val ' + ' '.join(f'{k} {len(v)}' for k, v in real_va.items()))
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.iters, pct_start=.05)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.iters, pct_start=a.warm)
     scaler = torch.amp.GradScaler()
     cw = torch.tensor([.5, 1, 3, 3, 3], device=dev)
     it, t0, best, run = 0, time.time(), -1, None
     rs = np.random.default_rng(int(time.time()))
+    first = True
     while it < a.iters:
         metas = data.load_pool(a.pool)            # the generator keeps adding renders
         tr = [metas[i] for i in metas if i % 20 != 0]
         real_tr = data.load_real('train')
+        srcs = [k for k in mix if (k == 'pool' and tr) or real_tr.get(k)]
+        pw = np.array([mix[k] for k in srcs]); pw /= pw.sum()
         n = a.bs * min(a.eval_every, a.iters - it)
         tasks = []
         for _ in range(n):
-            if real_tr and rs.random() < a.real_frac:
-                ip, mp_, _ = real_tr[rs.integers(len(real_tr))]
-                tasks.append(('real', int(rs.integers(2 ** 62)), ip, mp_, a.size))
-            else:
+            k = srcs[rs.choice(len(srcs), p=pw)]
+            if k == 'pool':
                 tasks.append(('synth', int(rs.integers(2 ** 62)), a.pool, tr[rs.integers(len(tr))], a.size))
+            else:
+                ip, mp_, _ = real_tr[k][rs.integers(len(real_tr[k]))]
+                tasks.append(('real', int(rs.integers(2 ** 62)), ip, mp_, a.size))
+        if first:
+            preview(prod.batches(tasks[:12], 12), os.path.join(a.out, 'train_preview.jpg'))
+            first = False
         for im, lb in prod.batches(tasks, a.bs):
             x, y = to_input(im, dev), torch.from_numpy(lb).long().to(dev)
             with torch.autocast('cuda', dtype=torch.float16):
@@ -122,14 +153,19 @@ def main():
             it += 1
             run = loss.item() if run is None else .98 * run + .02 * loss.item()
             if it % 200 == 0 or it in (1, 20):
-                P(f'it {it} loss {run:.4f} lr {sched.get_last_lr()[0]:.2e} {time.time() - t0:.0f}s pool {len(tr)} real {len(real_tr)}')
-        iou, cm = evaluate(model, val, dev)
-        score = iou[2] * .5 + iou[3] * .25 + iou[4] * .25
-        msg = f'EVAL it {it} synth IoU bg {iou[0]:.3f} tool {iou[1]:.3f} flank {iou[2]:.3f} chip {iou[3]:.3f} adh {iou[4]:.3f} score {score:.3f}'
-        if rval:
-            riou, _ = evaluate(model, rval, dev)
-            msg += ' | real-val IoU ' + ' '.join(f'{v:.3f}' for v in riou)
-        P(msg)
+                P(f'it {it} loss {run:.4f} lr {sched.get_last_lr()[0]:.2e} {time.time() - t0:.0f}s pool {len(tr)} real ' +
+                  ' '.join(f'{k} {len(v)}' for k, v in real_tr.items()))
+        score, ws = 0, 0
+        for src, vb in vals.items():
+            iou, _ = evaluate(model, vb, dev)
+            P(f'EVAL it {it} {src:5s} IoU bg {iou[0]:.3f} tool {iou[1]:.3f} flank {iou[2]:.3f} chip {iou[3]:.3f} adh {iou[4]:.3f}')
+            w = mix.get(src, .25)
+            has = [c for c in (2, 3, 4) if src == 'pool' or c == 2]      # real sets label flank wear only (chip/adh sparse)
+            score += w * np.mean([iou[c] for c in has]); ws += w
+        score /= max(ws, 1e-9)
+        tr_res = target_eval.evaluate(model, a.out, f'_{it:06d}', dev)
+        P(f'TARGET it {it} ' + target_eval.fmt(tr_res))
+        P(f'SCORE it {it} {score:.4f}')
         torch.save(model.state_dict(), os.path.join(a.out, 'last.pt'))
         if score > best:
             best = score

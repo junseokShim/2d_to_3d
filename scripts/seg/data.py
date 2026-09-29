@@ -1,6 +1,6 @@
 """Light-weight sample producer (numpy + cv2 only; no torch in the worker processes, which keeps Windows' commit
 charge low).  Producer(n).batches(task_iter, bs) yields (uint8 images [B,H,W,3], uint8 labels [B,H,W])."""
-import os, math, json, multiprocessing as mp
+import os, re, math, json, multiprocessing as mp
 import numpy as np, cv2
 import augment
 
@@ -32,6 +32,10 @@ def real_sample(rng, ip, mp_, size, strength=1.0):
     if rng.random() < .5:
         im, lb = im[:, ::-1], lb[:, ::-1]
     f = im.astype(np.float32) / 255
+    if rng.random() < .5 * strength:                        # low source resolution (phone at 4 .. 20 px/mm)
+        r = augment.U(rng, .12, .7)
+        small = cv2.resize(f, (max(8, int(size * r)), max(8, int(size * r))), interpolation=cv2.INTER_AREA)
+        f = cv2.resize(small, (size, size), interpolation=cv2.INTER_LINEAR if rng.random() < .5 else cv2.INTER_CUBIC)
     f = f * np.array([augment.U(rng, .8, 1.2), augment.U(rng, .9, 1.1), augment.U(rng, .8, 1.2)], np.float32) * augment.U(rng, .6, 1.3)
     if rng.random() < .4 * strength:
         f = cv2.GaussianBlur(f, (0, 0), augment.U(rng, .3, 1.5))
@@ -93,21 +97,35 @@ def load_pool(pool):
     return metas
 
 
-def load_real(split, root=DS_ROOT):
-    """labelled real images of the shared dataset for a split: [(image, mask, item)]"""
-    mf = os.path.join(root, 'manifest.json')
-    if not os.path.exists(mf):
-        return []
-    try:
-        man = json.load(open(mf, encoding='utf8'))
-    except Exception:
-        return []
-    items = man.get('items', man.get('images', [])) if isinstance(man, dict) else man
-    out = []
-    for it in items if isinstance(items, list) else []:
-        if not isinstance(it, dict) or it.get('split') != split or not it.get('mask'):
+def split_of(name):
+    """processed/ file stem -> (source, split). syn_*: every 10th render is val; mud_*: tool T3 held out (val);
+    target_*: the human's photos, eval only (never trained on)."""
+    src = name.split('_', 1)[0]
+    if src == 'target':
+        return src, 'target'
+    if src == 'mud':
+        m = re.match(r'mud_(T\d+)', name)
+        return src, 'val' if m and m.group(1) == 'T3' else 'train'
+    if src == 'syn':
+        d = re.findall(r'\d+', name)
+        return src, 'val' if d and int(d[-1]) % 10 == 0 else 'train'
+    return src, 'train'
+
+
+def load_real(split, root=DS_ROOT, sources=None):
+    """labelled images of the shared dataset (processed/{images,masks}/<source>_*.png) for a split:
+    {source: [(image, mask, stem)]}"""
+    out = {}
+    d = os.path.join(root, 'processed')
+    if not os.path.isdir(os.path.join(d, 'images')):
+        return out
+    for f in sorted(os.listdir(os.path.join(d, 'images'))):
+        stem, ext = os.path.splitext(f)
+        mp_ = os.path.join(d, 'masks', stem + '.png')
+        if ext.lower() not in ('.png', '.jpg') or not os.path.exists(mp_):
             continue
-        ip, mp_ = os.path.join(root, it['image']), os.path.join(root, it['mask'])
-        if os.path.exists(ip) and os.path.exists(mp_):
-            out.append((ip, mp_, it))
+        src, sp = split_of(stem)
+        if sp != split or (sources and src not in sources):
+            continue
+        out.setdefault(src, []).append((os.path.join(d, 'images', f), mp_, stem))
     return out
