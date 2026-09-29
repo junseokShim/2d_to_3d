@@ -649,6 +649,7 @@
   // image border (the tool runs out of the frame there, so that end is the shank), tries 90/270/180 degree rotations.
   // enh (optional): the same photo after Tool3D.enhance (same size). Geometry (silhouette, scale, tip) is always taken
   // from the original photo; only the strip pixels used for segmentation come from the enhanced one (strip.raw = original).
+  const MIN_BELOW_MM = 1;
   function prepareSide(img, opts, enh) {
     const o = Object.assign({}, DEFAULTS, opts), D = o.diameterMm;
     if (!(D > 0)) throw new Error('diameterMm required');
@@ -659,7 +660,15 @@
       const ab = o.align !== 'edges' ? backdropAlign(G, D, exp) : null;
       const al = ab && (ab.sepPx >= CLOSE_W * G.w || ab.cut.left || ab.cut.right) ? ab : align(G, sobel(G), D, exp) || ab;
       if (!al) return null;
-      const [, ty] = al.tipPx, [tx] = al.tipPx, edge = Math.min(ty, tx, G.w - 1 - tx) < .02 * al.sepPx + 2;
+      // a side view shows the tool below its tip line: a 'tip line' with less than MIN_BELOW_MM of photo below it (along the
+      // axis, anywhere across the tool: a tool wider than the frame has its axis outside the photo) is the frame edge or a flute
+      // shadow of a close-up whose end is out of the frame (12Pi 12-1-2) -> not aligned
+      const need = MIN_BELOW_MM * al.pxPerMm, inF = ([x, y]) => x >= 0 && y >= 0 && x < G.w && y < G.h;
+      let below = 0;
+      for (let q = 0; q <= 8 && below < need; q++) { const u = al.uL + (al.uR - al.uL) * q / 8; if (!inF(al.toImg(u, al.vTip))) continue; let b = 0; while (b < need && inF(al.toImg(u, al.vTip + b + 1))) b++; below = Math.max(below, b); }
+      if (below < need) return null;
+      const [, ty] = al.tipPx, [tx] = al.tipPx, cut = al.cut && (al.cut.left || al.cut.right),
+        edge = (cut ? ty : Math.min(ty, tx, G.w - 1 - tx)) < .02 * al.sepPx + 2;   // a tool wider than the frame has its axis near / past the frame side
       return {G, al, deg, edge};
     };
     const rots = o.rotateDeg != null ? [o.rotateDeg] : [0, 90, 270, 180];
