@@ -128,17 +128,21 @@
     const o = opts(), F = M.flute(e.strip, e.band, S.D, o), q = S.quality[i], lowQ = !!q && q.verdict === 'fail';
     if (!F.has.some(Boolean)) return M.assistFlute(e.strip, S.D, o, lowQ ? 'no-band, low-quality' : 'no-band');
     if (lowQ) F.assist = {reason: 'low-quality', guess: false, score: 0};
+    // tip / corner damage (wear-core: chipping, broken end tooth) is already in VBC/VBmax but needs the operator's eye
+    const sd = S.sides[i]; if (!F.assist && sd && sd.reasons && sd.reasons.includes('tip-damage')) F.assist = {reason: 'tip-damage', guess: false, score: 0, tipMm: sd.vbTipMm};
     return F;
   }
   function confirmAssist() { const F = S.F[S.sel]; if (!F || !F.assist) return; F.edited = true; recompute(); }
   function select(i) { S.sel = i; S.pts = []; S.selNode = null; mark('[data-fl]', 'fl', String(i)); fit(); renderBudget(); renderAssist(); }
-  const RSN = {'no-band': '자동 마모 밴드 없음', 'low-quality': '사진 품질 불량(신뢰도 낮음)', 'no-band, low-quality': '자동 마모 밴드 없음 · 사진 품질 불량'};
+  const RSN = {'tip-damage': '끝날/코너 파손 감지 (VBC로 VBmax에 반영)', 'no-band': '자동 마모 밴드 없음', 'low-quality': '사진 품질 불량(신뢰도 낮음)', 'no-band, low-quality': '자동 마모 밴드 없음 · 사진 품질 불량'};
   function renderAssist() {
     const b = $('#mtAssist'), F = S.F && S.F[S.sel], e = S.ev && S.ev[S.sel]; if (!b) return;
     if (!F || !F.assist) { b.hidden = true; return; }
     b.hidden = false; b.dataset.mode = e ? e.mode : 'awaiting-operator';
     b.innerHTML = e && e.mode === 'operator-assisted'
       ? `<b>F${S.sel + 1} · operator-assisted</b> 작업자 보정 결과 (σ ${e.sigmaPx} px 수동 불확도 적용)`
+      : F.assist.reason === 'tip-damage'
+      ? `<b>F${S.sel + 1} · Tip / corner damage ${(+F.assist.tipMm || 0).toFixed(2)} mm (VBC)</b> <span>${RSN['tip-damage']}. 사진에서 끝날 파손을 확인하고 필요하면 측면 마모 경계를 보정하세요.</span> <button id="mtAssistOk" title="끝날 파손 값을 작업자가 확인 (operator-assisted)">파손 확인</button>`
       : `<b>F${S.sel + 1} · Drag the wear boundary to measure</b> <span>${RSN[F.assist.reason] || F.assist.reason}. 절삭날 선(청록)은 형상에서 미리 배치됨 — 노란 마모 경계 노드를 끌어 VB를 측정하세요.</span> <button id="mtAssistOk" title="마모가 없음을 작업자가 확인 (VB 0, operator-assisted)">마모 없음 확인</button>`;
     const ok = $('#mtAssistOk'); if (ok) ok.onclick = confirmAssist;
   }

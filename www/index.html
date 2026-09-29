@@ -71,6 +71,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <div class="ctl">
       <label>마모 민감도 <input id="sens" type="range" min="1" max="4" step="0.1" value="2.5"></label>
       <label>검사 범위(×D) <input id="zone" type="range" min="0.2" max="1.5" step="0.1" value="0.5"></label>
+      <label title="카탈로그 헬릭스각. 비워 두면 사진에서 추정 (15–55°)">헬릭스각(°) <input id="helix" type="number" min="10" max="60" step="0.5" placeholder="자동" style="width:5em"></label>
     </div>
     <div id="engine" class="hint"></div>
     <table id="res"></table>
@@ -404,7 +405,8 @@ $('#run').onclick = async () => {
     const Lmm = Math.max(.8 * D, Math.min(...q.map(v => v.Lmm)));
     det = {q, Lmm, strips: q.map((v, i) => rectify(st.shots[i], v, D, Lmm))};
     if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
-    engine = await measureWear(st.shots, {flutes: k, diameterMm: D});        // -> Tool3D.wearResult
+    const hUser = +$('#helix').value;                                          // 작업자 입력 헬릭스각 (비우면 사진 추정)
+    engine = await measureWear(st.shots, Object.assign({flutes: k, diameterMm: D}, hUser > 0 ? {helixDeg: hUser} : {}));   // -> Tool3D.wearResult
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
@@ -476,7 +478,8 @@ function analyze() {
       ['VB 날별 max', wr.perFlute.map(f => f.vbMaxMm.toFixed(3)).join(', ') + ' mm'],
       ['마모 면적 / 체적 (ISO)', `${wr.totals.areaMm2.toFixed(3)} mm² / ${wr.totals.volumeMm3.toFixed(4)} mm³`]);
     for (const r of rows.slice(8)) r[0] += ' [v0.1]';
-    if (wr.helixDeg) rows[2][1] = `${(+wr.helixDeg).toFixed(1)}° (v0.1: ${R.헬릭스각_추정_deg}°)`;
+    const hi = window.Tool3D?.wearDebug?.helix, HSRC = {operator: '작업자 입력', estimated: '사진 추정', default: '추정 불가 → 30° 가정'};
+    if (wr.helixDeg) rows[2][1] = `${(+wr.helixDeg).toFixed(1)}°${hi ? ` (${HSRC[hi.source] || hi.source}${hi.source === 'estimated' ? `, 신뢰도 ${hi.confidence}` : ''})` : ''} (v0.1: ${R.헬릭스각_추정_deg}°)`;
   }
   R.engine = engine; if (engine) rows.unshift(['마모 측정 엔진', engine]);
   $('#res').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
@@ -484,7 +487,8 @@ function analyze() {
   R.mesh = buildMesh(D, k, sl, ph0, Lmm, Wt, Hs, Cs);
   R.atlas = atlas;
   view.set(R.mesh, atlas, Lmm);
-  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: wr && wr.helixDeg || beta, hand: -hand, phaseRad: -ph0});   // render hook (v0.1 azimuth runs left-handed: '/' flutes give hand=-1 here = RH)
+  window.Tool3D && Tool3D.render && Tool3D.render.update({flutes: k, diameterMm: D, helixDeg: wr && wr.helixDeg || beta, handEst: -hand, phaseRad: -ph0});   // render hook (v0.1 azimuth runs left-handed: '/' flutes give hand=-1 here = RH). The photo-texture hand guess is unreliable (LH on RH tools): reported only; the viewer uses the user's RH/LH choice > wearResult.helixHand > RH
+  window.Tool3D?.map3d?.run({shots: st.shots, flutes: k, diameterMm: D});   // per-face segmentation -> 3D (js/map3d)
 }
 
 // 파라메트릭 엔드밀 메쉬 (표시 좌표: y=공구축, 팁이 위)
@@ -611,7 +615,7 @@ $('#dlInputs').onclick = async () => {
     files.push({name, data}); names.push(name);
   }
   if (!files.length) return msg('내보낼 사진이 없습니다.');
-  const params = {app: 'Tool3D', exportedAt: new Date().toISOString(), flutes: k, diameterMm: D, sens: +$('#sens').value, zoneXD: +$('#zone').value,
+  const params = {app: 'Tool3D', exportedAt: new Date().toISOString(), flutes: k, diameterMm: D, sens: +$('#sens').value, zoneXD: +$('#zone').value, helixDeg: +$('#helix').value || null,
     shots: names, hints: st.hints.slice(0, k + 1), engine: engine || null};
   files.push({name: 'params.json', data: new TextEncoder().encode(JSON.stringify(params, null, 2))});
   save('tool3d-inputs.zip', zipStore(files));
@@ -627,5 +631,7 @@ renderSlots();
 <script src="js/render/wear-overlay.js"></script>
 <script src="js/render/surface-material.js"></script>
 <script src="js/render/viewer.js"></script>
+<script src="js/map3d/map3d-core.js"></script>
+<script src="js/map3d/map3d.js"></script>
 </body>
 </html>

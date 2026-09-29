@@ -33,6 +33,10 @@ near('synthetic VBB = 0.2', r.q.vbb.v, .2, .002);
 near('synthetic VBmax = 0.2', r.vbMaxMm, .2, .002);
 check('synthetic VBN/VBC present', r.q.vbn.v > .19 && r.q.vbc.v > .19);
 check('edge side detected', G.edge === 'a' || G.edge === 'b', G.edge);
+{ // tip / corner damage from wear-core (strip.tip) -> VBC and VBmax, flank band kept in vbFlankMax
+  const Gt = M.flute(Object.assign({}, strip, {tip: {depthMm: 1.5, widthMm: 1}}), band, Dm), rt = M.evaluate(Gt, o);
+  check('tip damage 1.5 mm -> VBmax = VBC = 1.5, flank 0.2, source corner/tip', rt.vbMaxMm === 1.5 && rt.q.vbc.v === 1.5 && Math.abs(rt.q.vbFlankMax.v - .2) < .002 && rt.vbSource === 'corner/tip (VBC)', JSON.stringify({vb: rt.vbMaxMm, vbc: rt.q.vbc.v, fl: rt.q.vbFlankMax.v, src: rt.vbSource}));
+}
 // 3. drag-to-correct: move the wear-front (non-edge) boundary out by 5 px at every node -> VB + 0.1 mm
 const front = G.edge === 'a' ? 'b' : 'a', sgn = front === 'b' ? 1 : -1;
 for (let i = 0; i < G.nodeRows.length; i++) M.setNode(G, front, i, 5 * sgn);

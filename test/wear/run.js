@@ -40,6 +40,38 @@ console.log('\n# no wear -> VB ~ 0');
 {
   const r = W.analyzeSide(synth.side(Object.assign({}, cases[0], {vb: () => 0})), {diameterMm: 10});
   near('VBmax mm', r.vbMaxMm, 0, .03);
+  // background above the tip must never read as wear (v0.5.4 did on 9 of these 30)
+  const fp = [];
+  for (let seed = 1; seed <= 10; seed++) for (const t of [-4, 0, 3]) {
+    const q = W.analyzeSide(synth.side(Object.assign({}, cases[0], {vb: () => 0, tiltDeg: t, seed})), {diameterMm: 10});
+    if (!q || q.vbMaxMm > .03) fp.push(`seed ${seed} tilt ${t}: ${q && q.vbMaxMm}`);
+  }
+  check('no wear, 10 seeds x 3 tilts: VBmax <= 0.03', !fp.length, fp.join('; '));
+}
+
+console.log('\n# tip damage (broken end tooth, bright fracture face) -> measured, flagged for the operator; clean tips -> none');
+{
+  const base = {w: 420, h: 560, D: 10, ppm: 20, tiltDeg: 1, axisDx: 0, tipV: -170, helixDeg: 30, flutes: 4, zoneMm: 3, bg: 'dark'};
+  const side = o => { const P = W.prepareSide(synth.sideReal(Object.assign({}, base, o)), {diameterMm: 10}); return W.finishSide(P, W.classicSegment(P), 30); };
+  for (const [dMm, wMm, uMm] of [[1.2, 1.5, -1], [2, 2.5, 1.5]]) {
+    const s = side({vb: () => 0, seed: 11, fracture: {uMm, wMm, dMm}});
+    near(`fracture ${dMm} mm deep: tip depth mm`, s.tip.depthMm, dMm, .15);
+    const arcW = 5 * (Math.asin((uMm + wMm / 2) / 5) - Math.asin((uMm - wMm / 2) / 5));   // truth: arc width on the D10 cylinder
+    near(`fracture ${wMm} mm wide (arc ${arcW.toFixed(2)}): tip width mm`, s.tip.widthMm, arcW, .25);
+    check('fracture: flagged for the operator (tip-damage)', s.needsOperator && s.reasons.includes('tip-damage'), s.reasons.join(','));
+    check('fracture: counted in VBmax as corner/tip VBC (never a confident 0)', s.vbMaxMm >= s.tip.depthMm && s.vbTipMm === s.tip.depthMm && s.vbSource === 'corner/tip (VBC)', JSON.stringify({vb: s.vbMaxMm, flank: s.vbFlankMaxMm, src: s.vbSource}));
+  }
+  const fp = [];
+  for (const seed of [11, 12, 13, 40, 41, 42]) for (const vbm of [0, .2]) {
+    const s = side({vb: z => z <= 3 ? vbm : 0, seed, bg: seed % 2 ? 'light' : 'dark'});
+    if (s.tip.depthMm > 0) fp.push(`seed ${seed} vb ${vbm}: ${s.tip.depthMm}`);
+  }
+  check('clean tips (6 seeds x unworn/flank-worn, dark+light bg): no tip damage', !fp.length, fp.join('; '));
+  // specular line on the flute margin running down from the tip (thin helical streak) is not a chip
+  const gl = [40, 41].map(seed => { const P = W.prepareSide(synth.sideReal(Object.assign({}, base, {flutes: 2, tiltDeg: 0, vb: () => 0, seed})), {diameterMm: 10}); return W.finishSide(P, W.classicSegment(P), 30); });
+  check('margin glint streak at the tip (2 flutes, tilt 0): no tip damage, VBmax 0', gl.every(s => s.tip.depthMm === 0 && s.vbMaxMm === 0), gl.map(s => `${s.tip.depthMm}x${s.tip.widthMm}`).join('; '));
+  const ok = side({vb: () => 0, seed: 11});
+  check('clean tip at 20 px/mm: confident zero (no operator needed)', ok.vbMaxMm === 0 && !ok.needsOperator, ok.reasons.join(','));
 }
 
 console.log('\n# full measure(): 4 sides + top -> board contract');

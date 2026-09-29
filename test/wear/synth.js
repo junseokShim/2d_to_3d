@@ -70,6 +70,9 @@ function sideReal(o) {
         }
       }
     }
+    // broken end tooth: bright fracture face at the tip, {uMm: centre across the flank, wMm, dMm: depth from the tip}
+    const fr = o.fracture;
+    if (fr && Math.abs(u) < R && v >= 0 && z < fr.dMm && Math.abs(u / ppm - fr.uMm) < fr.wMm / 2) rgb = [235 + 15 * rnd(), 235 + 15 * rnd(), 232 + 15 * rnd()];
     const n = (rnd() - .5) * 14;
     data.set([rgb[0] + n, rgb[1] + n, rgb[2] + n, 255], 4 * (y * w + x));
   }

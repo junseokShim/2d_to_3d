@@ -167,7 +167,9 @@
       let mx = 0, nSeed = 0; for (const v of an.score) if (v > mx) mx = v; for (const v of region) nSeed += v;
       // no colour of its own: texture-only wear is accepted only on a strong AI score, else it is structure the bank missed
       if (!seg) seg = mx > 2 * aiK ? {band: core.bandFromMask(strip, region), edge: 'ai-map'} : {band: new Uint8Array(w * h), edge: 'none'};
-      return Object.assign(seg, {thr: an.tau, med: 0, sig: 0, y1, method: 'ai', classicBand: cls.band,
+      // tip damage (chipping / broken end teeth) is measured the classic way, outside the AI band
+      const tip = cm && core.tipDamage ? core.tipDamage(strip, cm, cls.thr, seg.band) : cls.tip;
+      return Object.assign(seg, {thr: an.tau, med: 0, sig: 0, y1, method: 'ai', classicBand: cls.band, tip,
         ai: {edge: seg.edge, sep: seg.sep, seedPx: nSeed, tau: an.tau, nRef: an.nRef, nQuery: an.nQuery, fh: feat.fh, fw: feat.fw, maxScore: mx, cells: an.score, sc: inp.sc}});
     }
     const segmentAI = async P => { const F = await featuresOf(P); return finish(F, anomalyPooled([F.cells])[0]); };
