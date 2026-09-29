@@ -222,3 +222,37 @@ What the numbers say:
   from 10Pi, and 12Pi's land at x2-3 zoom looks like a 10Pi chip), so VBC/VBmax get worse. Needs more human tools with
   labelled flank land (not chips) before a retrain can pass; 12Pi's px/mm is itself only +-15-25 %.
 - Adding xd/qitw raises flank IoU on QIT wear and ExtraDrey FF but lowers it on FFL and Keyence.
+
+## seg14 / seg15 (2026-09-30): land renders + retrain round, model kept at ft4
+
+Change vs seg11/13: `gen_pool_micro.py land` adds worn peripheral-land renders (0.3-1.5 mm, matte grey, no fracture;
+pool `.work/pool_micro14`, 2000 images, 961 land). Folds `g_<T>` and fA from ft4, 3000 it bs 8 lr 1e-4, mix
+pool:.4,syn:.2,mud:.1,micro:.15,hum:.08,xd:.04,qitw:.03 (`.work/q14.sh`; extra sets `.work/ev14x.sh` -> `.work/ev14_*.txt`).
+
+Held-out human tool (fA row on human tools is seen, reference only):
+
+| tool | model | tool IoU | chip | damage | flank | chipDepth err | VBC err | VBmax err (mm) |
+|---|---|---|---|---|---|---|---|---|
+| 10Pi_1 | ft4 | .979 | .624 | .437 | 0 | .779 | .037 | .658 |
+| | g_10Pi_1 | .981 | .700 | .592 | 0 | .139 | .070 | .329 |
+| | fA (seen) | .981 | .749 | .706 | 0 | .152 | .080 | .188 |
+| 10Pi_2 | ft4 | .978 | .674 | .351 | 0 | .258 | .414 | .506 |
+| | g_10Pi_2 | .980 | .706 | .445 | 0 | .114 | .050 | .427 |
+| | fA (seen) | .981 | .685 | .548 | 0 | .076 | .040 | .259 |
+| 12Pi | ft4 | .609 | .149 | .220 | .033 | 1.283 | 1.194 | .891 |
+| | g_12Pi | .803 | .160 | .541 | .010 | 2.656 | 2.659 | 1.082 |
+| | fA (seen) | .958 | .186 | .601 | .117 | 2.313 | 3.210 | .682 |
+
+Other sets, ft4 -> fA (flank IoU): QIT wear val .105 -> .162; Keyence (3) .253 -> .210 (tool .553 -> .579);
+ExtraDrey FF .222 -> .259, FFL .234 -> .122 (tool .39/.60 -> .93/.94).
+Target (phone) tool IoU s1-s4, top: ft4 .922 .909 .726 .720 .844; fA .929 .911 .724 .717 .771.
+
+**Decision: not shipped, `www/models/wear-seg.onnx.js` stays ft4.** Gates: 10Pi held-out chipDepth/VBC not worse than
+ft4 by > .05 mm (pass: VBC 10Pi_1 .070 vs .037), 12Pi held-out VBmax <= .891 (FAIL 1.082), target tool IoU within .02
+on every view (FAIL top .844 -> .771). Tests on the merged branch (ft4): seg-run 14/1, ai-run 8/0, run 55/0,
+human-run 15/3, same as main.
+
+What the numbers say: land renders did not stop 12Pi's land being painted as chip (held-out VBC 2.66 mm, same as
+seg13's 2.63); 10Pi gains from human labels repeat (chip depth .78/.26 -> .14/.11 mm). fA's top-view tool loss and
+ExtraDrey FFL flank loss repeat seg13 exactly, so they come from the xd/qitw/hum mix, not from the land pool.
+Next step needs labelled flank land on more human tools, not more renders.
