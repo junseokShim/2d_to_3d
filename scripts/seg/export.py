@@ -84,6 +84,8 @@ def main():
     ap.add_argument('--encoder', default='tu-mobilenetv3_large_100')
     ap.add_argument('--fixture', default=os.path.join(ROOT, 'test', 'wear', 'seg', 'parity.png'))
     ap.add_argument('--cw', default='', help='class weights used in training, e.g. .5,1,3,3,3 (bias = -log w)')
+    ap.add_argument('--var', default='segModelB64', help='JS global (Tool3D.<var>); segSideModelB64 for the side-view model')
+    ap.add_argument('--parity', default='', help='parity json out (default parity.json next to the fixture; none = skip)')
     ap.add_argument('--calib', type=int, default=0, help='fit the per-class logit bias on this many val samples (0 = none)')
     a = ap.parse_args()
     m = train.build(a.encoder, weights=None)
@@ -106,7 +108,7 @@ def main():
         yt = net(x).numpy()
     print('onnx', os.path.getsize(a.out), 'bytes; max |p_onnx - p_torch| =', float(np.abs(y - yt).max()))
     # parity fixture for the wasm runtime (node): a real-looking input and the torch result
-    if os.path.exists(a.fixture):
+    if os.path.exists(a.fixture) and a.parity != 'none':
         im = cv2.imread(a.fixture, cv2.IMREAD_COLOR)[..., ::-1]
         h, w = im.shape[:2]
         xi = torch.from_numpy(np.ascontiguousarray(im).astype(np.float32) / 255).permute(2, 0, 1)[None]
@@ -115,7 +117,7 @@ def main():
         am = p.argmax(0)
         fx = {'w': w, 'h': h, 'counts': np.bincount(am.ravel(), minlength=5).tolist(), 'probSums': p.reshape(5, -1).sum(1).tolist(),
               'argmaxHash': int((am.ravel().astype(np.int64) * (np.arange(am.size) % 9973 + 1)).sum())}
-        json.dump(fx, open(os.path.join(os.path.dirname(a.fixture), 'parity.json'), 'w'), indent=1)
+        json.dump(fx, open(a.parity or os.path.join(os.path.dirname(a.fixture), 'parity.json'), 'w'), indent=1)
         print('fixture', fx['counts'])
     with open(a.out, 'rb') as f:
         b = base64.b64encode(f.read()).decode()
@@ -123,7 +125,7 @@ def main():
         f.write('/* Tool3D wear segmentation: U-Net, MobileNetV3-Large encoder (timm ImageNet-1k weights, Apache-2.0), trained on synthetic '
                 'phone photos of worn end mills (scripts/seg). Classes 0 bg, 1 tool, 2 flank wear, 3 chipping, 4 adhesion. ONNX, base64. '
                 'Built by scripts/seg/export.py */\n')
-        f.write('(self.Tool3D=self.Tool3D||{}).segModelB64="' + b + '";\n')
+        f.write('(self.Tool3D=self.Tool3D||{}).' + a.var + '="' + b + '";\n')
     print('wrote', a.out + '.js', os.path.getsize(a.out + '.js'), 'bytes')
 
 
