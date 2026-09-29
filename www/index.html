@@ -58,7 +58,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 #shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
 #shutter.ok{background:#e9a800}#shutter.sharp{background:#1db954}
 </style>
-<link rel="stylesheet" href="css/metro.css">
+<link rel="stylesheet" href="css/metro.css"><link rel="stylesheet" href="css/micro.css">
 <script src="native/android-save.js"></script>
 </head>
 <body>
@@ -68,13 +68,14 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <label class="row"><span>날 수(flute)</span><select id="flutes"></select></label>
     <label class="row"><span>공구경 φ</span><select id="dia"></select></label>
     <p class="hint">날 수 2~6, 공구경 4~12 mm</p>
+    <div id="inmode"></div>
   </section>
 
   <section>
     <h2>② 촬영 / 불러오기</h2>
-    <p class="hint">팁을 위로 두고 보조선에 공구 외곽을 맞춰 주세요. 날 수만큼 공구를 돌려가며 측면을 찍고, 마지막에 윗면(끝면)을 찍습니다.</p>
+    <p class="hint" id="slotHint">팁을 위로 두고 보조선에 공구 외곽을 맞춰 주세요. 날 수만큼 공구를 돌려가며 측면을 찍고, 마지막에 윗면(끝면)을 찍습니다.</p>
     <div id="slots"></div>
-    <div class="ctl"><label class="btn">여러 장 한번에 불러오기<input id="multi" type="file" accept="image/*" multiple hidden></label>
+    <div class="ctl" id="multiRow"><label class="btn">여러 장 한번에 불러오기<input id="multi" type="file" accept="image/*" multiple hidden></label>
       <span class="hint">파일명 순서대로 측면 1…N, 윗면</span></div>
   </section>
 
@@ -112,6 +113,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 <script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
 <script src="js/capture/camera-core.js"></script><script src="js/capture/camera.js"></script>
 <script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
+<script src="js/micro/micro-core.js"></script><script src="js/micro/micro-ui.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -137,6 +139,7 @@ function thumb(src) {
 
 function renderSlots() {
   st.k = +$('#flutes').value; st.D = +$('#dia').value;
+  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.renderSlots($('#slots'));   // 현미경 입력 (js/micro)
   const box = $('#slots'); box.innerHTML = '';
   for (let i = 0; i <= st.k; i++) {
     const d = document.createElement('div'); d.className = 'slot';
@@ -410,6 +413,7 @@ async function measureWear(shots, opts) {
   try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
 }
 $('#run').onclick = async () => {
+  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.run();   // 현미경 입력: 영상 전체 분할 → 절삭날 기준 VB (js/micro)
   msg(); const {k, D} = st, btn = $('#run');
   if (btn.disabled) return;
   for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
