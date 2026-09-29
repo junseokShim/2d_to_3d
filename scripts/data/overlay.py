@@ -1,5 +1,6 @@
 """QA overlays: python overlay.py <root> <out.jpg> <id1,id2,...|glob> [--w 520] [--cols 2]
-Tints mask classes over the image (1 tool blue, 2 wear green, 3 chip red, 4 adhesion yellow) with the class outline."""
+Tints mask classes over the image (1 tool blue, 2 wear green, 3 chip red, 4 adhesion yellow) with the class outline;
+255 = ignore is darkened with a magenta tint."""
 import argparse, glob, os
 import cv2, numpy as np
 
@@ -7,8 +8,11 @@ PAL = np.array([[0, 0, 0], [200, 80, 40], [0, 255, 0], [0, 0, 255], [0, 220, 255
 
 
 def over(img, m, alpha=0.35):
+    ign = m == 255
+    m = np.where(ign, 0, m)
     col = PAL[np.clip(m, 0, 4)]
     o = img.copy(); sel = m > 1
+    o[ign] = (img[ign] * 0.55 + np.array([160, 0, 160]) * 0.2).clip(0, 255).astype(np.uint8)
     o[sel] = (img[sel] * (1 - alpha * 1.5) + col[sel] * alpha * 1.5).clip(0, 255).astype(np.uint8)
     o[m == 1] = (img[m == 1] * (1 - alpha * .4) + col[m == 1] * alpha * .4).astype(np.uint8)
     for c in range(1, 5):
