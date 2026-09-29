@@ -185,6 +185,9 @@
       source: dn && dc ? 'seg+color' : dc ? 'color' : 'seg', netDepthMm: dn, colorDepthMm: dc};
   }
 
+  // wear-post.js (Keyence / Alicona style post-processing): Node require, browser Tool3D.wear.post
+  const postApi = () => { try { return typeof module === 'object' && module.exports ? require('./wear-post.js') : (self.Tool3D && self.Tool3D.wear && self.Tool3D.wear.post) || null; } catch (e) { return null; } };
+
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
   function createSegmenter(runProbs, core, opts = {}) {
     const faces = [];
@@ -247,11 +250,17 @@
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
       for (const c of [2, 3, 4]) areas[c] = r4(areas[c] / ppmNet / ppmNet);
       const al = P.al, Rmm = R / strip.ppm, k = opts.flutes || 0;
+      // Keyence / Alicona style reports of the land (wear-post.js), on the tool surface (cylinder unwrapped)
+      let post = null; const PO = postApi();
+      if (PO) try {
+        const Rn = win.netD / 2;
+        post = PO.analyze({mask: wc, w: Wn, h: Hn, pxPerMm: ppmNet, rows: [Yw, zEnd0], toMm: (X, Y) => [Rn / ppmNet * Math.asin(Math.max(-1, Math.min(1, (X - Wn / 2) / Rn))), Y / ppmNet]});
+      } catch (e) { post = null; }
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1,
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
-        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}};
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
           vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}}};
@@ -331,6 +340,8 @@
     try { topFace = top && debug.top ? await seg.segmentTop(top, debug.top, opts.diameterMm) : null; } catch (e) { debug.segTopError = String(e && e.message || e); }
     T.faceSeg = seg.faces.filter(Boolean).concat(topFace ? [topFace] : []);
     result.faces = T.faceSeg.map(f => ({face: f.face, angleDeg: f.angleDeg, areasMm2: f.areasMm2, confidence: f.confidence}));
+    // per side: Keyence / Alicona style post-processing of the land (null where the network found no land)
+    result.post = seg.faces.map(f => f && f.post ? {keyence: f.post.keyence, alicona: f.post.alicona, lengthMm: f.post.lengthMm, edgeSide: f.post.edgeSide} : null);
     debug.segMs = Date.now() - t0; debug.faceSeg = T.faceSeg;
     T.wearResult = result; T.wearDebug = debug;
     window.dispatchEvent(new CustomEvent('tool3d:wear', {detail: result}));
