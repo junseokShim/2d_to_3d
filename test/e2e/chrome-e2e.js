@@ -129,11 +129,11 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await ev(`document.querySelector('#mtTool').value='E2E-01';document.querySelector('#mtTool').dispatchEvent(new Event('input'));document.querySelector('#mtOp').value='e2e';document.querySelector('#mtOp').dispatchEvent(new Event('input'));1`);
   const waitFile = async re => { for (let t = 0; t < 30; t++) { const f = fs.readdirSync(dl).find(n => re.test(n) && !/crdownload$/.test(n)); if (f) return path.join(dl, f); await sleep(300); } return null; };
   await ev(`document.querySelector('#mtPdf').click();1`); const pf = await waitFile(/^tool3d-report-E2E-01-.*\.pdf$/);
-  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count 1/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t)}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
+  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [12]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 2/.test(t) && /Post-processing - Keyence VHX \/ Alicona style/.test(t)}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
   await ev(`document.querySelector('#mtCsv').click();1`); const cf = await waitFile(/^tool3d-E2E-01-.*\.csv$/);
-  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length}))(fs.readFileSync(cf, 'utf8')) : 'missing';
+  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /keyence_flute,n,u_mm/.test(t) && /edgequality_flute,Nd/.test(t) && /tolerance,value/.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
   await ev(`document.querySelector('#mtHtml').click();1`); const hf = await waitFile(/^tool3d-report-E2E-01-.*\.html$/);
-  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length}))(fs.readFileSync(hf, 'utf8')) : 'missing';
+  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /Post-processing — Keyence VHX style/.test(t) && /Ddmax/.test(t)}))(fs.readFileSync(hf, 'utf8')) : 'missing';
   if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
   await ev(`document.querySelector('#mtSave').click();document.querySelector('#mtSave').click();1`);
   m.history = await ev(`JSON.parse(localStorage.getItem('tool3d.metro.history')||'{}')['E2E-01']?.length||0`);
@@ -144,6 +144,25 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   m.mobileNoHScroll = await ev(`document.documentElement.scrollWidth<=innerWidth+1`);
   await shotEl('#metro', 'metro-mobile.png');
   await s('Emulation.setDeviceMetricsOverride', {width: 1280, height: 1600, deviceScaleFactor: 1, mobile: false}); await sleep(500);
+  // ---------- ⑤ post-processing (js/post): Keyence VHX overlay + Alicona deviation / EdgeQuality / trend ----------
+  const Pp = res.checks.post = {};
+  await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.setTab('keyence');1`); await sleep(600);
+  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {n:f&&f.length,lines:f&&f.map(x=>x.lines.length),vbMaxUm:f&&f.map(x=>x.stats.maxUm),metroVb:Tool3D.metro.summary().flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),mag:f&&f[0].mag.label,list:document.querySelectorAll('#pkList tr').length,stats:document.querySelectorAll('#pkStats tr').length,
+    ink:(()=>{const c=document.querySelector('#pkCanvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let r=0,b=0;for(let i=0;i<d.length;i+=4){if(d[i]>200&&d[i+1]<90&&d[i+2]<90)r++;if(d[i+2]>200&&d[i]<80&&d[i+1]<90)b++}return {red:r,blue:b}})()}})())`)));
+  await shotEl('#post', 'post-keyence.png');
+  await ev(`Tool3D.post.setTab('alicona');1`); await sleep(1500);
+  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,v=document.querySelector('#paView');return {view:v.dataset.state,devVerts:+v.dataset.devVerts||0,eqRows:document.querySelectorAll('#paEq tr').length,wmm:R.wmm,faces:R.faces.length,tol:R.tol.rows.length,badge:document.querySelector('#psOverall').textContent}})())`)));
+  await shotEl('#post', 'post-alicona.png');
+  // synthetic chips + flank on the model (map3d mock) -> chip list, deviation colours; two saved results -> tool-life trend
+  await ev(`Tool3D.map3d.mock();1`); await sleep(1200);
+  await ev(`Tool3D.post.saveHistory();1`); await sleep(300); await ev(`Tool3D.post.saveHistory();1`); await sleep(600);
+  Object.assign(Pp, {mock: JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,v=document.querySelector('#paView');return {chips:R.chips.length,chipSide:R.chips.some(c=>c.where==='side'),chipRows:document.querySelectorAll('#paChips tr').length,Dmin:R.wmm&&R.wmm.DminUm,Vv:R.wmm&&R.wmm.VvMm3,devVerts:+v.dataset.devVerts||0,hist:R.hist.length,trendTag:document.querySelector('#paTrTag').textContent,
+    colours:(()=>{const c=v.querySelector('canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let g=0,m=0;for(let i=0;i<d.length;i+=4){const r=d[i],G=d[i+1],b=d[i+2];if(G>r+30&&G>b+20)g++;if(b>G+40&&(r>G+20||b>150))m++}return {green:g,blueMag:m}})()}})())`))});
+  await shotEl('#post', 'post-alicona-mock.png');
+  await ev(`Tool3D.render.setMap(null);Tool3D.post.setTab('keyence');1`); await sleep(300);
+  Pp.ok = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .02) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats === 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
+    Pp.view === 'ok' && Pp.eqRows === 15 && Pp.tol === 5 && Pp.faces === 5 && !!Pp.wmm && Pp.mock.chips > 0 && Pp.mock.chipSide && Pp.mock.Dmin < 0 && Pp.mock.Vv > 0 && Pp.mock.devVerts > 0 &&
+    Pp.mock.colours.green > 500 && Pp.mock.colours.blueMag > 50 && Pp.mock.hist >= 2 && /µm\//.test(Pp.mock.trendTag) && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
   const A = res.checks.assisted = {};
   const deg = require('./degraded-inputs.js')(path.join(OUT, 'degraded')).slice(0, 4).map(f => f.replace(/\//g, '\\'));
@@ -249,7 +268,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
-    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok)};
+    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), postProcessing: !!(c.post && c.post.ok)};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

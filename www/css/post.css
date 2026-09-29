@@ -1,0 +1,37 @@
+/* Tool3D post-processing panel (www/js/post): Keyence VHX / Alicona style views. Same look as the metrology panel. */
+#post{grid-column:1/-1;padding:0;overflow:hidden;--ps-line:#d5d9e0}
+#post h2{margin:0;font-size:17px}#post h2 small{font-weight:400;color:#c8d2dc;font-size:12px;margin-left:6px}
+.ps-head{background:#1f2a36;color:#fff;padding:12px 16px}
+.ps-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.ps-badge{padding:6px 12px;border-radius:4px;font-weight:700;font-size:13px;background:#889;color:#fff}
+.ps-badge[data-pass="1"]{background:#1e9e4a}.ps-badge[data-pass="0"]{background:#d0342c}
+.ps-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.ps-bar>button{font-size:13px;padding:6px 10px;background:#2a3846;color:#fff;border-color:#3b4a5a}
+.ps-note{font-size:11px;color:#c8d2dc}
+.ps-seg{display:inline-flex;border:1px solid #3b4a5a;border-radius:6px;overflow:hidden}
+.ps-seg button{border:0;border-radius:0;border-right:1px solid #3b4a5a;padding:6px 10px;font-size:13px;background:#2a3846;color:#dfe6ee}
+.ps-seg button:last-child{border-right:0}.ps-seg button.on{background:#1f5fbf;color:#fff}.ps-seg button:disabled{opacity:.4}
+.ps-empty{padding:16px}
+#psBody{padding:14px}#psBody[hidden]{display:none}
+.ps-pane[hidden]{display:none}
+.ps-grid{display:grid;grid-template-columns:1fr;gap:14px}
+@media(min-width:1000px){.ps-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}}
+.ps-cwrap{background:#000;border-radius:6px;overflow:hidden}
+#pkCanvas{width:100%;height:470px;display:block}
+canvas.ps-dark{background:#000;border-radius:4px}
+#post canvas{width:100%;display:block}
+.ps-card{border:1px solid var(--ps-line);border-radius:8px;padding:10px;margin-bottom:12px;background:#fff}
+.ps-h{font-weight:600;font-size:13px;margin-bottom:6px}.ps-h small{font-weight:400;color:#667788;margin-left:4px}
+.ps-ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;font-size:13px}
+.ps-ctl input[type=number]{width:70px;font:inherit;padding:3px 6px}
+.ps-tab{font-size:12.5px;margin:0 0 10px}.ps-tab th{background:#e8edf2;text-align:left;padding:4px;font-weight:600}
+.ps-tab td{padding:3px 4px}.ps-tab td:last-child{text-align:right}
+.ps-al td:nth-child(2){text-align:right;font-variant-numeric:tabular-nums}.ps-al td:last-child{text-align:left;color:#556}
+.ps-tab input{width:74px;font:inherit;padding:2px 4px}
+.ps-max td{color:#c0201a}.ps-foot td{font-weight:600;border-top:2px solid var(--ps-line)}
+.ps-ok{color:#1e9e4a}.ps-ng{color:#d0342c}
+.ps-3d{position:relative;height:340px;background:#14171c;border-radius:6px;overflow:hidden;touch-action:none}
+.ps-legend{position:absolute;left:8px;top:8px;display:flex;gap:4px;align-items:stretch;color:#e6e9ee;font:11px system-ui;pointer-events:none}
+.ps-lgbar{width:12px;height:150px;border-radius:2px}
+.ps-lgt{display:flex;flex-direction:column;justify-content:space-between;height:150px}
+.ps-lgu{align-self:flex-end}
