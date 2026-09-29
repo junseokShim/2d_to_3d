@@ -10,7 +10,11 @@
  *  - exposure: luminance percentiles, clipped-dark / clipped-bright fractions, usable dynamic range.
  *  - glare: saturated (all channels > 245) fraction inside the tool (whole frame if the tool is not located).
  *  - cast: grey-world channel gain spread (|R/G - 1|, |B/G - 1|); corrected by enhance.js, so only a warning.
- *  - pxPerMm: from the tool silhouette (wear-core align) and diameterMm.
+ *  - pxPerMm: from a known calibration (opts.pxPerMm, e.g. the microscope magnification) or else the tool silhouette
+ *    (wear-core align) and diameterMm.
+ * The check advises, it never blocks measuring: the overall verdict is pass | warn (a check at 'fail' level only sets
+ * severe: true and adds its advice). opts.view = 'closeup' (microscope flank close-up, no whole-tool silhouette in view)
+ * skips the silhouette checks instead of asking for a re-shoot.
  */
 (function (root, factory) {
   const api = factory();
@@ -105,6 +109,7 @@
 
   function locate(img, o) {
     if (o.align) return o.align;
+    if (o.view === 'closeup') return null;
     const core = o.core || (typeof require === 'function' ? (() => { try { return require('../wear/wear-core.js'); } catch (e) { return null; } })() : null) || (typeof self !== 'undefined' && self.Tool3D && self.Tool3D.wear);
     if (!core || !core.align || !(o.diameterMm > 0)) return null;
     try { const G = core.gray(img); return core.align(G, core.sobel(G), o.diameterMm); } catch (e) { return null; }
@@ -120,9 +125,11 @@
     for (let i = 0; i < w * h; i++) { const l = g[i]; if (l < 12) dark++; if (d[4 * i] > 250 && d[4 * i + 1] > 250 && d[4 * i + 2] > 250) br++; if (l > 20 && l < 235) { sr += d[4 * i]; sg += d[4 * i + 1]; sb += d[4 * i + 2]; } }
     m.darkFrac = dark / (w * h); m.brightFrac = br / (w * h);
     m.cast = sg ? Math.max(Math.abs(sr / sg - 1), Math.abs(sb / sg - 1)) : 0;
-    const al = locate(img, o);
+    const al = locate(img, o), known = o.pxPerMm > 0 ? o.pxPerMm : null;
+    if (known) m.pxPerMm = known;
     if (al) {
-      m.pxPerMm = al.pxPerMm; m.tiltDeg = al.tiltDeg;
+      if (!known) m.pxPerMm = al.pxPerMm;
+      m.tiltDeg = al.tiltDeg;
       // glare inside the tool: pixels between the silhouette edges, from the tip down 1 D
       let n = 0, s = 0; const R = al.sepPx / 2;
       for (let v = al.vTip; v < al.vTip + 2 * R; v += 2) for (let u = al.uC - .9 * R; u <= al.uC + .9 * R; u += 2) {
@@ -131,18 +138,19 @@
       }
       m.glare = n ? s / n : 0;
       const sb = silhouetteBlur(g, w, h, al); if (sb != null) m.blurPx = sb;
-      if (m.blurPx != null) m.blurMm = m.blurPx / al.pxPerMm;
     } else m.glare = m.brightFrac;
-    return Object.assign(verdict(m, !!al), {metrics: round(m)});
+    if (m.blurPx != null && m.pxPerMm > 0) m.blurMm = m.blurPx / m.pxPerMm;
+    return Object.assign(verdict(m, !!al, o.view), {metrics: round(m)});
   }
 
   const round = m => { const r = {}; for (const k in m) r[k] = m[k] == null ? null : Math.round(m[k] * 1e4) / 1e4; return r; };
 
-  // each check -> ok | warn | fail + retake advice; overall = worst
-  function verdict(m, located) {
+  // each check -> ok | warn | fail + retake advice; overall = pass | warn (never blocks: severe marks a check at fail level)
+  function verdict(m, located, view) {
     const checks = [], add = (key, level, msg, advice) => checks.push({key, level, msg, advice});
     const lv = (v, [a, b], higherBad = true) => higherBad ? (v > b ? 'fail' : v > a ? 'warn' : 'ok') : (v < b ? 'fail' : v < a ? 'warn' : 'ok');
-    if (!located) add('silhouette', 'fail', '공구 윤곽을 찾지 못함', '공구를 화면 중앙에 세로로(팁이 위) 두고, 배경은 무지(단색)로, 공구 전체 폭이 보이게 다시 촬영');
+    if (!located) view === 'closeup' ? add('silhouette', 'ok', '근접 영상: 공구 윤곽 검사 생략', '')
+      : add('silhouette', 'warn', '공구 윤곽을 찾지 못함 (측정은 진행)', '공구 전체 측면이면: 공구를 화면 중앙에 세로로(팁이 위) 두고 배경은 무지(단색)로. 날 근접 영상이면 무시해도 됨');
     if (m.pxPerMm != null) { const l = lv(m.pxPerMm, LIM.pxPerMm, false); add('pxPerMm', l, `해상도 ${m.pxPerMm.toFixed(1)} px/mm`, l === 'ok' ? '' : '더 가까이(매크로) 또는 확대 촬영: 20 px/mm 이상(1 px = 0.05 mm) 권장'); }
     if (m.blurMm != null || m.blurPx != null) {
       const l = m.blurMm != null ? lv(m.blurMm, LIM.blurMm) : lv(m.blurPx, LIM.blurPx);
@@ -154,7 +162,7 @@
     { const l = lv(m.glare, LIM.glare); add('glare', l, `반사(포화) ${(100 * m.glare).toFixed(1)} %`, l === 'ok' ? '' : '직접 조명 대신 확산광(트레이싱지/흰 종이 반사) 사용, 광원 각도를 바꿔 날 끝 반사를 피해서 촬영'); }
     { const l = m.cast > LIM.cast[1] ? 'warn' : 'ok'; add('colour', l, `색 틀어짐 ${(100 * m.cast).toFixed(0)} %`, l === 'ok' ? '' : '자동 보정됨. 가능하면 백색광(주광색) 조명 사용'); }
     const rank = {ok: 0, warn: 1, fail: 2}, worst = checks.reduce((a, c) => rank[c.level] > rank[a] ? c.level : a, 'ok');
-    return {verdict: worst === 'ok' ? 'pass' : worst, checks, advice: checks.filter(c => c.level !== 'ok' && c.advice).map(c => c.advice)};
+    return {verdict: worst === 'ok' ? 'pass' : 'warn', severe: worst === 'fail', checks, advice: checks.filter(c => c.level !== 'ok' && c.advice).map(c => c.advice)};
   }
 
   return {assess, verdict, blurSigma, noiseSigma, LIM};
