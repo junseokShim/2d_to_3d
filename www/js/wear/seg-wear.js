@@ -162,9 +162,14 @@
   // wear-core's colour tip-damage stage (tipDamage: fresh bright fracture faces at the tip) on the same strip. The network's
   // chipping class misses broken end teeth on real photos (the human's D10 read VBmax ~0.2 / chip 0 while tipDamage found
   // 1.3-2.7 mm), so its evidence is folded in: never a confident small VB on a visibly chipped tip.
-  function classicTip(core, P) {
+  // A blob the network calls background for the most part is not tool material (the colour stage's tool mask leaked into
+  // the backdrop): dropped.
+  function classicTip(core, P, cls) {
     if (!core || !core.classicSegment) return null;
-    try { const t = core.classicSegment(P).tip; return t && t.depthMm > 0 ? Object.assign({}, t, {source: 'color'}) : null; } catch (e) { return null; }
+    let t; try { t = core.classicSegment(P).tip; } catch (e) { return null; }
+    if (!t || !(t.depthMm > 0)) return null;
+    let n = 0, bg = 0; for (let j = 0; j < t.mask.length; j++) if (t.mask[j]) { n++; if (!cls[j]) bg++; }
+    return bg > .5 * n ? null : Object.assign({}, t, {source: 'color'});
   }
   // tip damage (VBC) = the deeper of the network's chips and the colour stage; the side goes to the operator anyway
   // ('tip-damage'), and 'tip-disagree' says the two stages do not agree (one >= TIP_DIS mm, the other < half of it)
@@ -236,7 +241,7 @@
       }
       const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
       if (vbSpreadMm > UNC_ABS || vbSpreadMm > UNC_REL * Math.max(vbArg, .1) || (vbFlip !== null && Math.abs(vbFlip - vbArg) > UNC_FLIP)) flags.push('vb-uncertain');
-      const tip = mergeTip(tipChips(wc, cls, Wn, Hn, win, P, strip, y1), opts.oracle || opts.classicTip === false ? null : classicTip(core, P), flags);
+      const tip = mergeTip(tipChips(wc, cls, Wn, Hn, win, P, strip, y1), opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
