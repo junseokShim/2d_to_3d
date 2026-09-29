@@ -112,7 +112,8 @@
     const fy = P.H - 30; P.line(L, fy - 12, R, fy - 12, .4, '#b8c0c8');
     P.text(L, fy, 'Tool3D metrology - estimate from photographs, not a certified measurement. Scale traceable only via the stated reference.', 7, {color: '#667788'});
     P.text(R, fy, 'Signature: ____________________', 8, {align: 'right'});
-    return M.pdfBytes(P);
+    const post = T.postReport && T.postReport.pdfPage ? T.postReport.pdfPage() : null;   // js/post: Keyence / Alicona page
+    return M.pdfBytes(post ? [P, post] : P);
   }
 
   // ---------- HTML (self-contained, A4 print) ----------
@@ -154,6 +155,7 @@ ${d.flutes.map((e, i) => `<tr><td>F${i + 1}${e.edited ? '*' : ''}${e.mode === 'o
 <p class="note">Calibration: ${d.calib.method === 'diameter' ? `tool diameter Ø${d.D} ± ${S.prefs.diaTolMm} mm` : `reference target ${S.prefs.refMm} mm (deviation vs diameter ${d.calib.deviationPct.toFixed(2)} %)`}; ${Object.entries(d.calib.parts).map(([k, v]) => `${k} ${(100 * v).toFixed(2)} %`).join(', ')}.</p>
 ${d.manual.length ? `<h2>Manual measurements</h2><table><tr><th>Type</th><th>Flute</th><th>Value mm</th><th>U mm</th></tr>${d.manual.map(m => `<tr><td>${m.kind}</td><td>F${m.flute}</td><td>${f3(m.mm)}</td><td>${f3(m.U)}</td></tr>`).join('')}</table>` : ''}
 <p class="note">${esc(METHOD)}</p>
+${T.postReport && T.postReport.html ? T.postReport.html() || '' : ''}
 <footer><span>Tool3D metrology — estimate from photographs, not a certified measurement.</span><span>Signature: ____________________</span></footer></body></html>`;
   }
 
@@ -162,6 +164,6 @@ ${d.manual.length ? `<h2>Manual measurements</h2><table><tr><th>Type</th><th>Flu
     pdf() { const b = pdf(); if (b) save(`tool3d-report-${safeId()}-${fileStamp()}.pdf`, new Blob([b], {type: 'application/pdf'})); return b; },
     html() { const h = htmlDoc(); if (h) save(`tool3d-report-${safeId()}-${fileStamp()}.html`, new Blob([h], {type: 'text/html'})); return h; },
     print() { const h = htmlDoc(); if (!h) return; const w = window.open('', '_blank'); if (!w) return this.html(); w.document.write(h); w.document.close(); setTimeout(() => { try { w.print(); } catch (e) { /* closed */ } }, 600); },
-    csv() { if (!ready()) return null; const t = M.csv(data()); save(`tool3d-${safeId()}-${fileStamp()}.csv`, new Blob(['﻿' + t], {type: 'text/csv'})); return t; }
+    csv() { if (!ready()) return null; const t = M.csv(data()) + (T.postReport && T.postReport.csv ? String.fromCharCode(13, 10) + (T.postReport.csv() || '') : ''); save(`tool3d-${safeId()}-${fileStamp()}.csv`, new Blob(['﻿' + t], {type: 'text/csv'})); return t; }
   };
 })();
