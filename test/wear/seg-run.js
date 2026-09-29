@@ -58,7 +58,7 @@ function iou(seg, lab, pred) {
   // The reference is the VB the engine reads from the exact label masks (seg-oracle.js): it isolates the network's error
   // from the alignment and the VB maths. Only sides both runs segmented are compared (a side the alignment cannot place
   // falls back to the classic engine in both; that is wear-core's business, counted separately).
-  const pairs = [], cleanVb = [];
+  const pairs = [], cleanVb = [], app = {ok: 0, flagged: 0, silent: [], cleanOk: 0, cleanFlagged: 0, cleanSilent: []};
   let nSides = 0, segSides = 0;
   for (const [name, c] of Object.entries(cases)) {
     if (name === 'nw') continue;
@@ -70,7 +70,10 @@ function iou(seg, lab, pred) {
     const row = [];
     for (let i = 0; i < k; i++) {
       nSides++; if (isSeg(debug, i)) segSides++;
-      const g = R.perFlute[i].vbMaxMm, o = O.perFlute[i].vbMaxMm;
+      const g = R.perFlute[i].vbMaxMm, o = O.perFlute[i].vbMaxMm, want = c.e.vbMaxMm[i], flag = debug.sides[i] && debug.sides[i].needsOperator;
+      // what the app shows: a VBmax within 0.1 mm of the rendered land (clean: < 0.1 mm), or the side is sent to the operator
+      if (name === 'clean') { if (g < .1) app.cleanOk++; else if (flag) app.cleanFlagged++; else app.cleanSilent.push(`${name}${i + 1} ${f3(g)}`); }
+      else if (Math.abs(g - want) <= .1) app.ok++; else if (flag) app.flagged++; else app.silent.push(`${name}${i + 1} ${f3(g)} vs ${f3(want)}`);
       if (!isSeg(debug, i) || !isSeg(dO, i)) { row.push(`${f3(g)}/-`); continue; }
       row.push(`${f3(g)}/${f3(o)}`);
       if (name === 'clean') cleanVb.push(g); else pairs.push({g, o});
@@ -82,6 +85,10 @@ function iou(seg, lab, pred) {
   check('the network reads >= 80 % of the aligned sides', segSides >= .8 * nSides, `${segSides}/${nSides}`);
   check('worn sides: VBmax within 0.1 mm (+-35 %) of the exact-label VBmax on >= 60 %', within >= .6 * pairs.length, `${within}/${pairs.length}, mean |err| ${f3(mae)} mm`);
   check('clean tool: VBmax < 0.1 mm on every side', cleanVb.every(v => v < .1), cleanVb.map(f3).join(' '));
+  check('app: every worn side within 0.1 mm of the rendered VB or flagged for the operator', !app.silent.length,
+    `${app.ok} within, ${app.flagged} flagged, ${app.silent.length} silent-wrong ${app.silent.join(', ')}`);
+  check('app: every clean side < 0.1 mm or flagged for the operator', !app.cleanSilent.length,
+    `${app.cleanOk} < 0.1, ${app.cleanFlagged} flagged, ${app.cleanSilent.length} silent-wrong ${app.cleanSilent.join(', ')}`);
 
   console.log("\n# 4. the human's photos (test/wear/samples; tip/end-teeth damage visible, D10 at ~11 px/mm)");
   const SD = path.join(__dirname, 'samples'), sides = [1, 2, 3, 4].map(i => readPng(path.join(SD, `side${i}.png`)));

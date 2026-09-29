@@ -24,6 +24,7 @@
   const ABOVE = .3, BELOW = .3, SIDE = .8;  // window around the zone, in tool diameters
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
+  const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
   const MIN_TOOL = .5;                      // share of the silhouette the network must see as tool, else the side falls back
   const r4 = v => Math.round(v * 1e4) / 1e4, ceil32 = v => Math.max(32, Math.ceil(v / 32) * 32);
 
@@ -174,6 +175,16 @@
       let cs = 0, cn = 0; for (let j = 0; j < n; j++) if (wc[j]) { cs += conf[j]; cn++; }
       const confidence = cn ? cs / cn : 0;
       if (toolFrac < MIN_TOOL) throw new Error(`seg: the network sees only ${Math.round(100 * toolFrac)} % of the tool in the zone`);
+      // the window starts ABOVE * D over the tip line: that strip must be background. Tool there = the alignment put the
+      // tip too low (the worn corner is outside the zone) -> the side goes to the operator instead of a confident 0
+      const Yt = Math.round((ABOVE - .1) * win.netD), Rw = win.netD / 2;
+      let an = 0, at = 0;
+      for (let Y = 0; Y < Yt; Y++) for (let X = 0; X < Wn; X++) {
+        if (Math.abs(X + .5 - Wn / 2) >= .6 * Rw) continue;
+        const [px, py] = win.toPhoto(X, Y); if (px < 0 || py < 0 || px >= P.img.width || py >= P.img.height) continue;   // clamped border: not evidence
+        an++; if (wc[Y * Wn + X]) at++;
+      }
+      const aboveTip = an ? at / an : 0, flags = aboveTip > MAX_ABOVE ? ['tip-misplaced'] : [];
       // flank band = flank wear + chipping inside the zone; one photo measures the flute it faces = the largest piece
       const m = new Uint8Array(w * h);
       for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const c = cls[y * w + x]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R) m[y * w + x] = 1; }
@@ -194,9 +205,9 @@
       const al = P.al, Rmm = R / strip.ppm, k = opts.flutes || 0;
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
-        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), bandPieces: sizes.length - 1};
-      return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls,
-        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn}};
+        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1};
+      return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
+        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn}};
     }
     const segmenter = (P, i) => segmentSide(P, i);
     segmenter.faces = faces;

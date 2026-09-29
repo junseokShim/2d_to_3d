@@ -13,7 +13,7 @@ const COL = [[0, 0, 0], [90, 90, 90], [0, 255, 255], [255, 40, 40], [255, 0, 200
   fs.mkdirSync(out, {recursive: true});
   const base = await loadSeg(); let calls = [];
   const run = async (x, H, Wd) => { const p = await base(x, H, Wd); calls.push({x, H, W: Wd, p}); return p; };
-  const DIR = path.join(__dirname, 'seg'), idx = JSON.parse(fs.readFileSync(path.join(DIR, 'index.json'), 'utf8')), cases = {};
+  const DIR = process.env.SEG_SET ? path.resolve(process.env.SEG_SET) : path.join(__dirname, 'seg'), idx = JSON.parse(fs.readFileSync(path.join(DIR, 'index.json'), 'utf8')), cases = {};
   for (const e of idx) if (e.view !== 'top') (cases[e.case] = cases[e.case] || {e, sides: []}).sides.push(readPng(path.join(DIR, e.file)));
   const SD = path.join(__dirname, 'samples');
   cases.human = {e: {flutes: 4, D: 10}, sides: [1, 2, 3, 4].map(i => readPng(path.join(SD, `side${i}.png`)))};

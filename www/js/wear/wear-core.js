@@ -502,15 +502,17 @@
       align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
       helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band,
       tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
-    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip));
+    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip, seg.flags));
   }
 
   // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
   // flank band nor the tip shows anything; otherwise the side goes to the operator (never a confident 0, never an
   // unconfirmed big number): 'low-resolution', 'tip-damage' (chipping / broken end tooth: VB3/CH, not a flank band).
+  const OUTLIER_X = 1.6;   // flank VB > 1.6 x the median of the other sides (and > +0.1 mm) -> 'vb-outlier'
   const MIN_PPM = 15;   // 1 px = 0.067 mm: a 0.1 mm land is 1.5 px (the quality check warns below 20, fails below 8)
-  function evidence(ppm, vbMax, tip) {
-    const reasons = [];
+  // flags: the segmenter's own reasons (e.g. 'tip-misplaced', 'ai-fallback')
+  function evidence(ppm, vbMax, tip, flags) {
+    const reasons = (flags || []).slice();
     if (ppm < MIN_PPM) reasons.push('low-resolution');
     if (tip && tip.depthMm > 0) reasons.push('tip-damage');
     const kind = vbMax > 0 && tip && tip.depthMm > 0 ? 'band+tip' : vbMax > 0 ? 'band' : tip && tip.depthMm > 0 ? 'tip' : 'none';
@@ -544,6 +546,18 @@
     const helixInfo = {deg: r4(helixUsed), source: helixDeg ? 'operator' : hs.length ? 'estimated' : 'default', confidence: helixDeg ? 'operator' : hs.length ? conf : 'none',
       perSide: hx.map(h => h && {deg: h.deg, confidence: h.confidence, tensorDeg: h.tensorDeg, coherence: h.coherence, periodDeg: h.periodDeg, clamped: h.clamped})};
     const S2 = P.map((p, i) => p && finishSide(p, segs[i], helixUsed));
+    // one flute's land much wider than the tool's other sides (the confident ones when >= 2, else every other measured
+    // side) -> the operator confirms it: a real outlier (one damaged flute) keeps its number, a misread band does not pass silently
+    const conf0 = S2.map(s => s && !s.needsOperator);
+    S2.forEach((s, i) => {
+      if (!s || !conf0[i] || !(s.vbFlankMaxMm > 0)) return;
+      let ref = S2.filter((t, j) => t && j !== i && conf0[j]).map(t => t.vbFlankMaxMm);
+      if (ref.length < 2) ref = S2.filter((t, j) => t && j !== i).map(t => t.vbFlankMaxMm);
+      if (!ref.length) return;
+      ref.sort((a, b) => a - b);
+      const med = ref[ref.length >> 1];
+      if (s.vbFlankMaxMm > OUTLIER_X * med && s.vbFlankMaxMm > med + .1) Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-outlier'), confidence: 'low'});
+    });
     const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
     const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));
     const result = {
@@ -610,7 +624,7 @@
   // segmenter.prepare(args) may ask for other prepare options (the AI stage wants a longer strip of unworn body)
   async function measureAsync(args, segmenter, engine) {
     const A = prepareAll(segmenter.prepare ? Object.assign({}, args, segmenter.prepare(args)) : args);
-    const fallback = (p, e) => { const s = classicSegment(p); s.aiError = String(e && e.message || e); return s; };
+    const fallback = (p, e) => { const s = classicSegment(p); s.aiError = String(e && e.message || e); s.flags = ['ai-fallback']; return s; };
     const segs = segmenter.batch   // batch: all sides of the tool at once (e.g. one memory bank pooled over every side)
       ? (await segmenter.batch(A.P).catch(e => A.P.map(() => e))).map((s, i) => !A.P[i] ? null : !s || s instanceof Error ? fallback(A.P[i], s) : s)
       : await Promise.all(A.P.map(async (p, i) => { if (!p) return null; try { return await segmenter(p, i); } catch (e) { return fallback(p, e); } }));
