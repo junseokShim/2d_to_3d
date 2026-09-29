@@ -238,7 +238,11 @@
       // (one photo measures the flute it faces)
       const tm = core && core.toolMask ? core.toolMask(strip) : null, m = new Uint8Array(w * h);
       for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const j = y * w + x, c = cls[j]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R && (!tm || tm[j])) m[j] = 1; }
-      const CB = core && core.classifyBlobs ? core.classifyBlobs(strip, m, tm, y1, pts => { let c3 = 0; for (const p of pts) if (cls[p] === 3) c3++; return c3 > .5 * pts.length; }) : {land: m, chip: null, blobs: []};
+      // the sorting needs the photo to resolve a land from a chip (validated on the human's microscope views, >= 47 px/mm); on
+      // phone photos below core.MIN_PPM (a 0.6 mm resolution limit) a land running into a chip would all go to the tip damage
+      // and leave no flank band -> there the flank band = the largest wear piece, as before the sorting
+      const sortBlobs = core && core.classifyBlobs && !(P.al.pxPerMm < (core.MIN_PPM || 0));
+      const CB = sortBlobs ? core.classifyBlobs(strip, m, tm, y1, pts => { let c3 = 0; for (const p of pts) if (cls[p] === 3) c3++; return c3 > .5 * pts.length; }) : {land: m, chip: null, blobs: []};
       const {lab, sizes} = components(CB.land, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
