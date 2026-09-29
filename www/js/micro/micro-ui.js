@@ -8,12 +8,18 @@
   const $ = s => document.querySelector(s), el = (tag, attrs = {}, html = '') => Object.assign(document.createElement(tag), attrs, html ? {innerHTML: html} : {});
   const store = (() => { try { return window.localStorage; } catch (e) { return null; } })() || {getItem: () => null, setItem: () => {}};
   const PREF = 'tool3d.micro.prefs', MAXPX = 2400;
-  const S = Object.assign({mode: 'camera', mag: 50, corner: 'none', cornerMm: .2, vbRef: 'reference'}, (() => { try { return JSON.parse(store.getItem(PREF) || '{}') || {}; } catch (e) { return {}; } })(), {imgs: [], last: null});
-  const savePrefs = () => { try { store.setItem(PREF, JSON.stringify({mode: S.mode, mag: S.mag, corner: S.corner, cornerMm: S.cornerMm, vbRef: S.vbRef})); } catch (e) { /* private mode */ } };
+  const S = Object.assign({mode: 'camera', mag: 50, corner: 'none', cornerMm: .2, vbRef: 'reference', view: 'auto'}, (() => { try { return JSON.parse(store.getItem(PREF) || '{}') || {}; } catch (e) { return {}; } })(), {imgs: [], last: null});
+  const savePrefs = () => { try { store.setItem(PREF, JSON.stringify({mode: S.mode, mag: S.mag, corner: S.corner, cornerMm: S.cornerMm, vbRef: S.vbRef, view: S.view})); } catch (e) { /* private mode */ } };
   const cal = () => MC().calStore(store);
   const msg = t => { const m = $('#msg'); if (m) m.textContent = t || ''; };
   const f3 = v => v == null ? '—' : (+v).toFixed(3);
   const CORNER = {none: '영상에 없음', start: '왼쪽 끝', end: '오른쪽 끝'};
+  const VIEW = {auto: '자동 감지', side: '공구 전체 측면 (카메라 측면 경로)', closeup: '절삭날 근접 (여유면)'};
+  // detected (or operator-set) view of one image: 'side' -> camera side-view pipeline, 'closeup' -> micro-core
+  const viewOf = img => {
+    if (S.view === 'side' || S.view === 'closeup') return {view: S.view, why: 'override'};
+    const c = cal().get(S.mag); return MC().detectView(img, {pxPerMm: c && c.pxPerMm, diameterMm: +($('#dia') || {}).value});
+  };
   const VBREF = {reference: '미마모 날 기준선 (Keyence)', edge: '절삭날 직선'};
   const FLAG = {'vb-uncertain': 'VB 경계 불확실', 'edge-ragged': '절삭날 선 불규칙', 'edge-short': '절삭날이 영상 일부에만 보임', 'no-wear': '마모 밴드 없음', review: '작업자 검토 필요'};
 
@@ -32,6 +38,7 @@
     <label class="row"><span>µm/px</span><input id="miUm" type="number" step="0.0001" min="0" style="width:7em" placeholder="현미경 값"><button id="miUmSave">저장</button></label>
     <div class="ctl"><label class="btn">기준 영상으로 교정<input id="miRef" type="file" accept="image/*" hidden></label><button id="miCalDel" class="mi-ghost">교정 삭제</button></div>
     <p class="hint">배율마다 교정이 기기에 저장됩니다. px/mm 는 공구경이 아니라 이 교정에서 옵니다.</p></div>
+  <label class="row"><span>영상 종류</span><select id="miView">${Object.entries(VIEW).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select> <small id="miViewState" class="mi-state"></small></label>
   <label class="row"><span>코너 위치</span><select id="miCorner">${Object.entries(CORNER).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
   <label class="row"><span>C 구역 (mm)</span><input id="miCornerMm" type="number" step="0.05" min="0" style="width:6em"></label>
   <label class="row"><span>VB 기준선</span><select id="miVbRef">${Object.entries(VBREF).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
@@ -53,6 +60,7 @@
     $('#miUmSave').onclick = () => { const c = MC().calibUm(+$('#miUm').value); if (!c) return msg('µm/px 값을 입력하세요.'); cal().set(S.mag, c); msg(); renderCal(); };
     $('#miCalDel').onclick = () => { cal().remove(S.mag); renderCal(); };
     $('#miRef').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openCalDlg(f); };
+    $('#miView').value = S.view; $('#miView').onchange = e => { S.view = e.target.value; savePrefs(); renderSlots($('#slots')); };
     $('#miCorner').value = S.corner; $('#miCorner').onchange = e => { S.corner = e.target.value; savePrefs(); };
     $('#miVbRef').value = S.vbRef; $('#miVbRef').onchange = e => { S.vbRef = e.target.value; savePrefs(); };
     $('#miCornerMm').value = S.cornerMm; $('#miCornerMm').onchange = e => { S.cornerMm = Math.max(0, +e.target.value || 0); savePrefs(); };
@@ -124,13 +132,16 @@
     for (let i = 0; i < k; i++) {
       const imgs = S.imgs[i] || (S.imgs[i] = []), d = el('div', {className: 'slot mi-slot'});
       d.dataset.flute = i;
-      d.innerHTML = `<b>F${i + 1} 절삭날 <small>${imgs.length}장</small></b><div class="th mi-th">${imgs.length ? '' : '없음'}</div>
+      const vw = imgs.length ? viewOf(imgs[0]) : null;
+      d.innerHTML = `<b>F${i + 1} 절삭날 <small>${imgs.length}장</small></b>${vw ? `<small class="mi-view" data-view="${vw.view}">${vw.view === 'side' ? '공구 전체 측면 → 카메라 경로' : '절삭날 근접'}${vw.why === 'override' ? ' (수동)' : ''}</small>` : ''}<div class="th mi-th">${imgs.length ? '' : '없음'}</div>
         <label class="btn">영상 추가<input type="file" accept="image/*" multiple hidden></label>${imgs.length ? '<button class="mi-ghost">비우기</button>' : ''}`;
       const th = d.querySelector('.th'); imgs.forEach(im => th.append(thumb(im)));
       d.querySelector('input').onchange = e => addImages(i, [...e.target.files]);
       const clr = d.querySelector('button'); if (clr) clr.onclick = () => { S.imgs[i] = []; renderSlots(box); };
       box.append(d);
     }
+    const vs = $('#miViewState'), all = S.imgs.slice(0, k).filter(l => l && l.length).map(l => viewOf(l[0]));
+    if (vs) vs.textContent = all.length ? '감지: ' + all.map(v => v.view === 'side' ? '측면' : '근접').join(' / ') + (all[0].fovD != null ? ` (시야 ${all[0].fovMm.toFixed(1)} mm = ${all[0].fovD.toFixed(2)} D)` : '') : '';
   }
   async function addImages(i, files) {
     files.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
@@ -152,6 +163,15 @@
     if (!c) return msg(`현미경 ${S.mag}x 교정이 없습니다. ① 에서 µm/px 를 입력하거나 기준 영상으로 교정하세요.`);
     const flutes = [...Array(k).keys()].filter(i => S.imgs[i] && S.imgs[i].length);
     if (!flutes.length) return msg('현미경 영상을 날마다 1장 이상 불러오세요.');
+    // side views of the whole tool (tip at the top, silhouette) -> camera side-view pipeline at the calibrated px/mm
+    const views = flutes.map(i => viewOf(S.imgs[i][0]));
+    if (views.every(v => v.view === 'side') && typeof window.runCameraPath === 'function') {
+      await window.runCameraPath([...Array(k).keys()].map(i => (S.imgs[i] || [])[0] || null), c.pxPerMm);
+      if (T.wearResult) Object.assign(T.wearResult, {inputMode: 'microscope', view: 'side', magnification: S.mag});
+      if (T.wearDebug) Object.assign(T.wearDebug, {inputMode: 'microscope', view: 'side', magnification: S.mag});
+      return;
+    }
+    if (views.some(v => v.view === 'side')) msg('측면/근접 영상이 섞여 있어 모두 절삭날 근접 영상으로 측정합니다. ① 영상 종류에서 바꿀 수 있습니다.');
     btn.disabled = true; $('#busy').hidden = false; $('#engine').textContent = '';
     await new Promise(ok => requestAnimationFrame(() => setTimeout(ok, 0)));
     try {
@@ -218,6 +238,7 @@
     return c;
   }
 
-  T.microUI = {active: () => S.mode === 'microscope', renderSlots, run, setMode, setMag, setImages, get state() { return S; }};
+  const setView = v => { S.view = VIEW[v] ? v : 'auto'; savePrefs(); const e = $('#miView'); if (e) e.value = S.view; renderSlots($('#slots')); };
+  T.microUI = {active: () => S.mode === 'microscope', renderSlots, run, setMode, setMag, setImages, setView, viewOf, get state() { return S; }};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build); else build();
 })();
