@@ -12,13 +12,17 @@ const fs = require('fs'), path = require('path');
 const MC = require('../../www/js/micro/micro-core.js'), readPng = require('../wear/png.js'), {readLabel} = require('../wear/png-write.js'), {oracle} = require('./mud.js');
 const DS = process.env.TOOLWEAR || 'C:/agent_research_team/datasets/toolwear', KD = path.join(DS, 'reference', 'keyence');
 // label for the maths: 255 (ignore) filled from the nearest labelled pixel (BFS), so ignored dust / UI boxes in the
-// background are background and the band on the coating side of the wear boundary splits evenly (mud.js maps 255 -> tool)
+// background are background and the band on the coating side of the wear boundary splits evenly (mud.js maps 255 -> tool).
+// Wear (2/3) grows at most WEAR_FILL px into an ignore region: thin ignore rims inside the land close, but an overlay box
+// sitting on the wear boundary (152822 has no clean twin: the "[1]77.60um" label box) is not turned into wear.
+const WEAR_FILL = 6;
 function filled(lab) {
-  const {w, h, m} = lab, o = Uint8Array.from(m), q = [];
+  const {w, h, m} = lab, o = Uint8Array.from(m), d = new Uint16Array(o.length), q = [];
   for (let i = 0; i < o.length; i++) if (o[i] !== 255) q.push(i);
   for (let k = 0; k < q.length; k++) {
-    const i = q[k], x = i % w;
-    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < o.length && o[j] === 255) { o[j] = o[i]; q.push(j); }
+    const i = q[k], x = i % w, c = o[i];
+    if ((c === 2 || c === 3) && d[i] >= WEAR_FILL) continue;
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < o.length && o[j] === 255) { o[j] = c; d[j] = d[i] + 1; q.push(j); }
   }
   return {w, h, m: o, ign: Uint8Array.from(m, v => v === 255 ? 1 : 0)};
 }
@@ -32,13 +36,19 @@ function uOf(r, W, H, P) {
 }
 const vbAt = (r, u, half) => { let m = 0; for (let k = Math.max(0, Math.round(u - half)); k <= Math.min(r.vbPx.length - 1, Math.round(u + half)); k++) m = Math.max(m, r.vbPx[k]); return m; };
 // Keyence method on the mask: from the arrow foot on the Keyence reference line (labelinfo footW, fitted to the overlay
-// pixels) along its normal into the tool: far = last wear (2/3) pixel (gaps <= 2 px bridged), edge = first tool pixel
-// (negative = the actual edge lies outside the reference line)
-function kline(lab, foot, nv, span) {
-  const at = t => { const x = Math.round(foot[0] + nv[0] * t), y = Math.round(foot[1] + nv[1] * t); return x < 0 || y < 0 || x >= lab.w || y >= lab.h ? -1 : lab.m[y * lab.w + x]; };
+// pixels) along its normal into the tool: far = last wear (2/3) pixel (scanned from the reference line on, gaps <= 2 px bridged), edge = first tool pixel
+// (negative = the actual edge lies outside the reference line). far is the median over rays shifted +-4..12 px along the
+// edge on the raw mask: the ray on the arrow itself runs under the arrow / label box overlay when the image has
+// no clean twin (152822), and one ray is noisy on a ragged boundary.
+function ray(lab, foot, nv, span, s) {
+  const tv = [-nv[1], nv[0]], at = t => { const x = Math.round(foot[0] + tv[0] * s + nv[0] * t), y = Math.round(foot[1] + tv[1] * s + nv[1] * t); return x < 0 || y < 0 || x >= lab.w || y >= lab.h ? -1 : lab.m[y * lab.w + x]; };
   let far = null, gap = 0, edge = null;
-  for (let t = -span; t < 3 * span; t += .25) { const c = at(t); if (edge == null && c > 0 && c !== 255) edge = t; if (c === 2 || c === 3) { far = t; gap = 0; } else if (far != null && ++gap > 8) break; }
+  for (let t = -span; t < 3 * span; t += .25) { const c = at(t); if (edge == null && c > 0 && c !== 255) edge = t; if ((c === 2 || c === 3) && t >= 0) { far = t; gap = 0; } else if (far != null && ++gap > 8) break; }
   return {far, edge};
+}
+function kline(lab, raw, foot, nv, span) {
+  const f = [-12, -10, -8, -6, -4, 4, 6, 8, 10, 12].map(s => ray(raw, foot, nv, span, s).far).filter(v => v != null).sort((a, b) => a - b);
+  return {far: f.length ? f[f.length >> 1] : null, edge: ray(lab, foot, nv, span, 0).edge};
 }
 // IoU at network resolution (app threshold rule), label nearest pixel in the rotated frame; 255 ignored
 function iou(seg, O) {
@@ -69,10 +79,10 @@ function iou(seg, O) {
     if (n) { const On = n.q === side.q ? O : orc(lab, n.q); IoU = iou(n.seg, On); }
     const base = {id: info.id, mag: info.magnification, ppm, q: side.q, maskMax: um(t.stats.vbMax * ppm), maskB: um(t.stats.vbb * ppm), appMax: n ? um(n.stats.vbMax * ppm) : null, appB: n ? um(n.stats.vbb * ppm) : null,
       appQ: n ? n.q : null, appFlags: n ? n.flags.join(',') : nerr, edgeDeg: Math.atan(t.line.b) * 180 / Math.PI, IoU};
-    const ms = (info.measurements || []).filter(m => m.p1w), clean = filled(readLabel(path.join(KD, 'masks', 'keyence_' + info.cleanTwin + '.png')));
+    const ms = (info.measurements || []).filter(m => m.p1w), cleanRaw = readLabel(path.join(KD, 'masks', 'keyence_' + info.cleanTwin + '.png')), clean = filled(cleanRaw);
     if (!ms.length) rows.push(Object.assign(base, {k: '-', keyence: null}));
     for (const m of ms) {
-      const foot = m.footW || m.p2w, u = uOf(t, lab.w, lab.h, foot), kl = kline(clean, foot, m.normalW || [(m.p1w[0] - m.p2w[0]) / Math.hypot(m.p1w[0] - m.p2w[0], m.p1w[1] - m.p2w[1]), (m.p1w[1] - m.p2w[1]) / Math.hypot(m.p1w[0] - m.p2w[0], m.p1w[1] - m.p2w[1])], 200), isVB = /VB/.test(m.what);
+      const foot = m.footW || m.p2w, u = uOf(t, lab.w, lab.h, foot), kl = kline(clean, cleanRaw, foot, m.normalW || [(m.p1w[0] - m.p2w[0]) / Math.hypot(m.p1w[0] - m.p2w[0], m.p1w[1] - m.p2w[1]), (m.p1w[1] - m.p2w[1]) / Math.hypot(m.p1w[0] - m.p2w[0], m.p1w[1] - m.p2w[1])], 200), isVB = /VB/.test(m.what);
       const r = Object.assign({}, base, {k: m.label, keyence: m.valueUm, what: isVB ? 'VB' : 'edge offset',
         maskAt: isVB ? um(vbAt(t, u, 6)) : null, appAt: isVB && n && n.q === t.q ? um(vbAt(n, uOf(n, lab.w, lab.h, foot), 6)) : null,
         kMask: isVB ? (kl.far == null ? null : um(kl.far)) : (kl.edge == null ? null : um(-kl.edge)), kLine: m.linePxW != null ? um(m.linePxW) : null, kArrowPx: Math.hypot(m.p1w[0] - m.p2w[0], m.p1w[1] - m.p2w[1])});
