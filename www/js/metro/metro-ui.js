@@ -21,6 +21,8 @@
     const p = S.prefs, o = {helixDeg: S.helix, limitMm: +p.limitMm || .3, warnFrac: (+p.warnPct || 80) / 100, diaTolMm: +p.diaTolMm || 0};
     if (p.cornerMm !== '' && +p.cornerMm >= 0) o.cornerMm = +p.cornerMm;
     if (p.apMm !== '' && +p.apMm > 0) o.apMm = +p.apMm;
+    const zo = S.zones;   // microscope (js/micro): zone C only where the corner is in view, no notch zone, unless typed in
+    if (zo) for (const k of ['cornerMm', 'apMm', 'notchHalfMm']) if (zo[k] != null && (k === 'notchHalfMm' || p[k] === '')) o[k] = zo[k];
     return o;
   };
 
@@ -66,7 +68,7 @@
     <div class="mt-lights" id="mtLights"></div>
     <table class="mt-tab" id="mtTable"></table>
     <div class="mt-card" id="mtPost" hidden></div>
-    <div class="mt-card"><div class="mt-h">VB(z) profile <small>z = 팁에서 축방향 거리</small></div><canvas id="mtChart"></canvas></div>
+    <div class="mt-card"><div class="mt-h">VB(z) profile <small id="mtZlbl">z = 팁에서 축방향 거리</small></div><canvas id="mtChart"></canvas></div>
     <div class="mt-card" id="mtCal"></div>
     <div class="mt-card" id="mtBudget"></div>
     <div class="mt-card" id="mtHist"></div>
@@ -112,6 +114,7 @@
     if (!wr || !dbg || !dbg.strips) { $('#mtGrid').hidden = true; $('#mtEmpty').hidden = false; S.ready = false; return; }
     S.D = wr.diameterMm; S.k = wr.flutes; S.helix = wr.helixDeg; S.engine = ctx && ctx.engine || dbg.engine || ''; S.shots = ctx && ctx.shots || [];
     S.base = wr; S.sides = dbg.sides || []; S.quality = ctx && ctx.quality || [];
+    S.inputMode = dbg.inputMode || 'camera'; S.mag = dbg.magnification || null; S.fixedCal = dbg.calib || null; S.zones = dbg.zones || null;   // microscope: js/micro
     S.F = dbg.strips.map((e, i) => e && fluteFor(e, i));
     S.img = []; S.photo = []; S.enhImg = {}; S.manual = []; S.pts = []; S.selNode = null;
     const firstAssist = S.F.findIndex(F => F && F.assist);
@@ -119,6 +122,7 @@
     $('#mtFlutes').innerHTML = S.F.map((f, i) => `<button data-fl="${i}" ${f ? '' : 'disabled'} style="--c:${COLORS[i % 6]}">F${i + 1}</button>`).join('');
     root.querySelectorAll('[data-fl]').forEach(b => b.onclick = () => select(+b.dataset.fl));
     $('#mtGrid').hidden = false; $('#mtEmpty').hidden = true; S.ready = true;
+    $('#mtZlbl').textContent = S.inputMode === 'microscope' ? `z = 절삭날을 따라 거리 (현미경 ${S.mag}x, 영상 사이 간격 포함)` : 'z = 팁에서 축방향 거리';
     sizeCanvas(); select(S.sel); recompute(true); renderManual();
     if (firstAssist >= 0) setTool('edit');   // 보조 측정: 해당 날을 편집 모드로 열어 둠
   }
@@ -149,6 +153,7 @@
   }
   function calib() {
     const r = S.ref && S.ref.px > 0 ? {px: S.ref.px, mm: +S.prefs.refMm, tolMm: +S.prefs.refTolMm} : null;
+    if (S.fixedCal && !r) return S.fixedCal;   // microscope: px/mm of the magnification's calibration, not the diameter
     return M.calibration(S.sides.map(s => s && s.align), S.D, opts(), r);
   }
   // evaluate every flute, refresh the panel and hand the corrected numbers to the 3D view (Tool3D.wearResult)
@@ -174,7 +179,7 @@
   function worst() { let w = null; S.ev.forEach((e, i) => { if (e && (!w || e.q.vbMax.v > S.ev[w].q.vbMax.v)) w = i; }); return w; }
   function summary() {
     const o = opts(), wi = worst(), e = wi == null ? null : S.ev[wi];
-    return {toolId: S.prefs.toolId, operator: S.prefs.operator, D: S.D, k: S.k, helixDeg: S.helix, engine: S.engine, limitMm: o.limitMm, warnFrac: o.warnFrac,
+    return {toolId: S.prefs.toolId, operator: S.prefs.operator, D: S.D, k: S.k, helixDeg: S.helix, engine: S.engine, inputMode: S.inputMode || 'camera', magnification: S.mag, limitMm: o.limitMm, warnFrac: o.warnFrac,
       calib: S.cal, flutes: S.ev, worst: wi, overall: e && e.status, vbMax: e && e.q.vbMax, manual: S.manual.map(m => ({kind: m.kind, flute: m.flute + 1, mm: m.mm, U: m.U}))};
   }
 
@@ -213,7 +218,7 @@
     const c = S.cal, P = c.parts, pct = v => (100 * v).toFixed(2) + ' %';
     const d = c.method === 'diameter' ? c : c.diameter;
     $('#mtCal').innerHTML = `<div class="mt-h">교정 · Scale</div>
-      <div class="mt-kv"><span>배율</span><b>${c.pxPerMm.toFixed(2)} ± ${c.U_pxPerMm.toFixed(2)} px/mm</b><span>방식</span><b>${c.method === 'diameter' ? `공구경 Ø${S.D} (±${S.prefs.diaTolMm} mm)` : '기준 타깃 (눈금자/체커보드)'}</b>
+      <div class="mt-kv"><span>배율</span><b>${c.pxPerMm.toFixed(2)} ± ${c.U_pxPerMm.toFixed(2)} px/mm</b><span>방식</span><b>${c.method === 'diameter' ? `공구경 Ø${S.D} (±${S.prefs.diaTolMm} mm)` : c.method === 'microscope' ? `현미경 ${c.magnification}x 교정 (${c.source === 'um/px' ? 'µm/px 입력' : '스테이지 마이크로미터'})` : '기준 타깃 (눈금자/체커보드)'}</b>
       <span>U<sub>rel</sub> (k=2)</span><b>${pct(2 * c.uRel)}</b><span>구성</span><b>${Object.entries(P).map(([k, v]) => `${k} ${pct(v)}`).join(' · ')}</b>
       ${c.method === 'reference' ? `<span>공구경 대비</span><b>${c.deviationPct > 0 ? '+' : ''}${c.deviationPct.toFixed(2)} % (Ø 배율 ${d.pxPerMm.toFixed(2)})</b>` : ''}</div>
       <div class="mt-row"><label>공구경 공차 ±<input id="mtDtol" type="number" step="0.001" min="0" value="${S.prefs.diaTolMm}"> mm</label></div>

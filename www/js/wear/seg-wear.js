@@ -302,6 +302,15 @@
     return {mask: cls, w: Wn, h: Hn, classes: CLASSES.slice(), confidence: r4(cs / conf.length), scale: [sx, sy]};
   }
 
+  // whole image at a chosen scale (image px -> network px), probabilities kept: microscope close-ups (js/micro) read the
+  // wear land at the scale the network saw MUDESTREDA at and need the soft boundary for the VB uncertainty
+  async function segmentImageProbs(runProbs, img, scale) {
+    const Wn = ceil32(img.width * scale), Hn = ceil32(img.height * scale), sx = img.width / Wn, sy = img.height / Hn;
+    const prob = await runProbs(windowInput(img, Wn, Hn, (X, Y) => [(X + .5) * sx - .5, (Y + .5) * sy - .5]), Hn, Wn);
+    const {cls, conf} = argmax(prob, Wn * Hn);
+    return {prob, mask: cls, conf, w: Wn, h: Hn, scale: [sx, sy]};
+  }
+
   // ---------- browser: lazy-load onnxruntime-web (shared with ai-wear.js) + the model ----------
   let sessionP = null;
   const base = () => { const s = typeof document !== 'undefined' && [...document.scripts].find(e => /js\/wear\/seg-wear\.js/.test(e.src)); return s ? s.src.replace(/js\/wear\/seg-wear\.js.*$/, '') : ''; };
@@ -358,6 +367,7 @@
     return result;
   }
   const segment = async img => segmentImage(ortRunner(await load()), img);
+  const runner = async () => ortRunner(await load());   // browser runProbs for segmentImageProbs (js/micro)
 
-  return {createSegmenter, segmentImage, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
+  return {createSegmenter, segmentImage, segmentImageProbs, runner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
 });
