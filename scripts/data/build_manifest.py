@@ -6,6 +6,8 @@ Splits are by source and tool (never by frame of one tool across splits), target
   qit    : cutting edge 4 -> val, edges 1-3 train (one tool only; tool-only labels)
   aqifi  : train (2 images)
   target : eval (the human's real photos; never train on them)
+  qitw   : qit_w_* VBmax-guided wear labels on QIT side views (same frames as qit_*): edge 4 -> val, others train
+  hum    : human USB-microscope photos, eval only; item 'fold' = tool (10Pi_1 / 10Pi_2 / 12Pi) for leave-one-tool-out
   python build_manifest.py <root>
 """
 import glob, json, os, re, sys
@@ -25,6 +27,12 @@ SOURCES = {
                 labelQuality='tool-only'),
     'aqifi': dict(source='aqifi_endmill', name='Desktop-CNC end-mill wear (Zenodo 21845441)', licence='CC-BY-4.0', url='https://doi.org/10.5281/zenodo.21845441',
                   toolType='3.175 mm 2-flute end mill', view='end', labelQuality='semi-auto (SAM + manual band)'),
+    'qitw': dict(source='qit_cemc_wear', name='QIT-CEMC side views, wear band guided by expert VBmax (this project)', licence='MIT (github.com/wwz456/QIT-CEMC-dataset)',
+                 url='scripts/data/label_qit_wear.py', toolType='coated 4-flute end mill', view='side (peripheral edge), 4.5X, green backdrop',
+                 labelQuality='VBmax-guided band'),
+    'hum': dict(source='human_usb_microscope', name="Human's USB-microscope photos (10Pi_1, 10Pi_2, 12Pi)", licence='project-internal, eval only',
+                url='datasets/human_samples/공구 이미지; reference/human_gt.json', toolType='solid end mill D10 / D12', view='side (tip up) + top',
+                labelQuality='manual (hand ROIs/polygons, zoom-checked)'),
     'target': dict(source='target', name="Human's real phone photos (repo test/wear/samples)", licence='project-internal, eval only', url='test/wear/samples',
                    toolType='end mill (target domain)', view='4 sides + top', labelQuality='manual polygons'),
 }
@@ -39,7 +47,8 @@ def split_of(pre, sid, info):
         s = re.match(r'matwi_S(\d+)_', sid).group(1)
         return {'3': 'val', '17': 'test'}.get(s, 'train')
     if pre == 'qit': return 'val' if info.get('edge') == 4 else 'train'
-    if pre == 'target': return 'eval'
+    if pre == 'qitw': return 'val' if info.get('edge') == 4 else 'train'
+    if pre in ('target', 'hum'): return 'eval'
     return 'train'
 
 
@@ -47,7 +56,8 @@ def tool_of(pre, sid, info):
     if pre == 'syn': return sid
     if pre == 'mud': return re.match(r'mud_(T\d+)', sid).group(1)
     if pre == 'matwi': return 'Set' + re.match(r'matwi_S(\d+)_', sid).group(1)
-    if pre == 'qit': return 'qit_tool'
+    if pre in ('qit', 'qitw'): return 'qit_tool'
+    if pre == 'hum': return info.get('tool')
     return sid
 
 
@@ -56,7 +66,7 @@ if __name__ == '__main__':
     P = os.path.join(root, 'processed')
     items, per = [], {}
     for mp in sorted(glob.glob(os.path.join(P, 'masks/*.png'))):
-        sid = os.path.basename(mp)[:-4]; pre = sid.split('_')[0]
+        sid = os.path.basename(mp)[:-4]; pre = 'qitw' if sid.startswith('qit_w_') else sid.split('_')[0]
         if pre not in SOURCES: continue
         lp = os.path.join(P, 'labelinfo', sid + '.json')
         info = json.load(open(lp)) if os.path.exists(lp) else {}
@@ -69,6 +79,8 @@ if __name__ == '__main__':
                   split=sp, labelQuality=lq, view=info.get('view'), pxPerMm=pxmm, h=int(m.shape[0]), w=int(m.shape[1]), pixels={str(k): v for k, v in px.items()})
         for k in ('vbUm', 'vbMm', 'vbMaxMm', 'wearType', 'state', 'wearState', 'cycle', 'edge', 'set'):
             if info.get(k) is not None: it[k] = info[k]
+        if pre == 'hum': it['fold'] = info.get('tool')
+        if pre == 'qitw': it['toolOnlyId'] = info.get('toolOnlyId')
         items.append(it)
         s = per.setdefault(pre, dict(n=0, splits={}, quality={}, pixels={}))
         s['n'] += 1; s['splits'][sp] = s['splits'].get(sp, 0) + 1; s['quality'][lq] = s['quality'].get(lq, 0) + 1
@@ -104,6 +116,8 @@ if __name__ == '__main__':
           '- **mud**: flank wear bands by DP wear-land tracer (v3); tools T1/T2 skipped (land not visible), 8 manual drops; T8R13B1-4 breakage = class 3; adhesion on worn span = 4.',
           '- **matwi**: automatic band did not track the expert VB (per-set Pearson r mostly < 0.6), so images of failing sets are **tool-only**: wear zone below the edge = 255, no class 2. Only images in sets with r >= 0.6 and a consistent px/um ratio keep class 2 (`wear-verified`, band regularised). Expert VB (um) and type are in each item.',
           '- **qit**: green backdrop, 640x480. Wear land not reliably visible, so **tool-only**: 90 px band along every tool edge = 255. QMS3D software screenshots skipped. Expert VBmax / area per edge in each item.',
+          '- **qitw**: 72 QIT side views (frames also in `qit_` as tool-only): class 2 = band of 0.8 x VBmax x 95 px/mm along the lower cutting edge (px/mm estimated by hand, +-20 %), 0.8-1.25 x and unverified edge stretches = 255.',
+          '- **hum**: the human USB-microscope photos, eval only; per-image VBC / chip depth / VBmax in `reference/human_gt.json`; leave-one-tool-out by item `fold`.',
           '- **aqifi**: two end-view photos (new/worn).',
           '- **target**: the real photos the app must work on. Eval only.',
           '', 'Licences: MATWI is CC-BY-SA (derived masks share-alike), Mudestreda is GPL-3.0-or-later (copyleft; keep masks/data separate from app code and credit the source). Cite the papers above when publishing.',
