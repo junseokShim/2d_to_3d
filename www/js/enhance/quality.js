@@ -12,9 +12,10 @@
  *  - cast: grey-world channel gain spread (|R/G - 1|, |B/G - 1|); corrected by enhance.js, so only a warning.
  *  - pxPerMm: from a known calibration (opts.pxPerMm, e.g. the microscope magnification) or else the tool silhouette
  *    (wear-core align) and diameterMm.
- * The check advises, it never blocks measuring: the overall verdict is pass | warn (a check at 'fail' level only sets
- * severe: true and adds its advice). opts.view = 'closeup' (microscope flank close-up, no whole-tool silhouette in view)
- * skips the silhouette checks instead of asking for a re-shoot.
+ * The check advises, it never blocks measuring: the run always goes on; 'fail' (severe: true) only comes from the photometric
+ * checks (sharpness, noise, exposure, glare) and sends the result to operator review. Geometry (silhouette found, px/mm from
+ * the silhouette) is at most 'warn': close-ups and cut-off tools have no whole-tool silhouette, so it says nothing about the
+ * photo. opts.view = 'closeup' (microscope flank close-up) skips the silhouette check.
  */
 (function (root, factory) {
   const api = factory();
@@ -126,7 +127,7 @@
     m.darkFrac = dark / (w * h); m.brightFrac = br / (w * h);
     m.cast = sg ? Math.max(Math.abs(sr / sg - 1), Math.abs(sb / sg - 1)) : 0;
     const al = locate(img, o), known = o.pxPerMm > 0 ? o.pxPerMm : null;
-    if (known) m.pxPerMm = known;
+    if (known) { m.pxPerMm = known; m.ppmKnown = 1; }
     if (al) {
       if (!known) m.pxPerMm = al.pxPerMm;
       m.tiltDeg = al.tiltDeg;
@@ -145,15 +146,16 @@
 
   const round = m => { const r = {}; for (const k in m) r[k] = m[k] == null ? null : Math.round(m[k] * 1e4) / 1e4; return r; };
 
-  // each check -> ok | warn | fail + retake advice; overall = pass | warn (never blocks: severe marks a check at fail level)
+  // each check -> ok | warn | fail + advice; overall = worst (never blocks; fail = photometric only, severe: true)
   function verdict(m, located, view) {
     const checks = [], add = (key, level, msg, advice) => checks.push({key, level, msg, advice});
     const lv = (v, [a, b], higherBad = true) => higherBad ? (v > b ? 'fail' : v > a ? 'warn' : 'ok') : (v < b ? 'fail' : v < a ? 'warn' : 'ok');
     if (!located) view === 'closeup' ? add('silhouette', 'ok', '근접 영상: 공구 윤곽 검사 생략', '')
       : add('silhouette', 'warn', '공구 윤곽을 찾지 못함 (측정은 진행)', '공구 전체 측면이면: 공구를 화면 중앙에 세로로(팁이 위) 두고 배경은 무지(단색)로. 날 근접 영상이면 무시해도 됨');
-    if (m.pxPerMm != null) { const l = lv(m.pxPerMm, LIM.pxPerMm, false); add('pxPerMm', l, `해상도 ${m.pxPerMm.toFixed(1)} px/mm`, l === 'ok' ? '' : '더 가까이(매크로) 또는 확대 촬영: 20 px/mm 이상(1 px = 0.05 mm) 권장'); }
+    if (m.pxPerMm != null) { const l0 = lv(m.pxPerMm, LIM.pxPerMm, false), l = l0 === 'fail' ? 'warn' : l0; add('pxPerMm', l, `해상도 ${m.pxPerMm.toFixed(1)} px/mm`, l === 'ok' ? '' : '더 가까이(매크로) 또는 확대 촬영: 20 px/mm 이상(1 px = 0.05 mm) 권장'); }
     if (m.blurMm != null || m.blurPx != null) {
-      const l = m.blurMm != null ? lv(m.blurMm, LIM.blurMm) : lv(m.blurPx, LIM.blurPx);
+      // blur in mm only fails with a calibrated px/mm (a silhouette px/mm on a close-up can be 10x off) or a blur bad in px too
+      const lp = lv(m.blurPx, LIM.blurPx), lm = m.blurMm != null ? lv(m.blurMm, LIM.blurMm) : lp, l = lm === 'fail' && !m.ppmKnown && lp !== 'fail' ? 'warn' : lm;
       add('sharpness', l, `초점 번짐 σ ${m.blurPx.toFixed(1)} px` + (m.blurMm != null ? ` (${(m.blurMm * 1000).toFixed(0)} µm)` : ''), l === 'ok' ? '' : '날 끝(측면)에 초점을 맞추고(화면 탭), 손떨림 없이 거치대/타이머 사용');
     } else add('sharpness', 'warn', '선명도 측정 불가(강한 경계 없음)', '공구와 배경의 대비가 큰 곳에서 다시 촬영');
     { const l = lv(m.noise, LIM.noise); add('noise', l, `노이즈 σ ${m.noise.toFixed(1)}`, l === 'ok' ? '' : '조명을 밝게 하고 ISO를 낮춰(야간/저조도 모드 끄기) 다시 촬영'); }
@@ -162,7 +164,7 @@
     { const l = lv(m.glare, LIM.glare); add('glare', l, `반사(포화) ${(100 * m.glare).toFixed(1)} %`, l === 'ok' ? '' : '직접 조명 대신 확산광(트레이싱지/흰 종이 반사) 사용, 광원 각도를 바꿔 날 끝 반사를 피해서 촬영'); }
     { const l = m.cast > LIM.cast[1] ? 'warn' : 'ok'; add('colour', l, `색 틀어짐 ${(100 * m.cast).toFixed(0)} %`, l === 'ok' ? '' : '자동 보정됨. 가능하면 백색광(주광색) 조명 사용'); }
     const rank = {ok: 0, warn: 1, fail: 2}, worst = checks.reduce((a, c) => rank[c.level] > rank[a] ? c.level : a, 'ok');
-    return {verdict: worst === 'ok' ? 'pass' : 'warn', severe: worst === 'fail', checks, advice: checks.filter(c => c.level !== 'ok' && c.advice).map(c => c.advice)};
+    return {verdict: worst === 'ok' ? 'pass' : worst, severe: worst === 'fail', checks, advice: checks.filter(c => c.level !== 'ok' && c.advice).map(c => c.advice)};
   }
 
   return {assess, verdict, blurSigma, noiseSigma, LIM};

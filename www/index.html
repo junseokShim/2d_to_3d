@@ -156,7 +156,7 @@ function renderSlots() {
 
 // 촬영 품질 배지 (js/enhance/quality.js): 사진을 불러오자마자 측면마다 pass/warn/fail + 재촬영 조언
 const qCache = new WeakMap();           // shot -> {D, r}
-const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '✕ 재촬영 권장'};
+const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '! 품질 낮음 · 측정은 진행 (결과 확인)'};
 function shotQuality(i) {
   const s = st.shots[i], Q = window.Tool3D?.enhance?.quality, W = window.Tool3D?.wear; if (!s || !Q || !W?.toImage) return null;
   const c = qCache.get(s); if (c && c.D === st.D && c.ppm === st.ppm) return c.r;
