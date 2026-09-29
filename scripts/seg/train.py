@@ -110,7 +110,7 @@ def main():
     ap.add_argument('--ignore_tool', default='mud', help='sources whose tool pixels are not trained on (close-ups of flat inserts: '
                     'their granular grey rake face looks like the grey mat behind the photos, the network learned it as tool)')
     ap.add_argument('--cw', default='.5,1,3,6,6', help='cross-entropy class weights bg,tool,flank,chip,adhesion (chip/adhesion are rare)')
-    ap.add_argument('--win', type=float, default=0, help='share of pool samples framed like the app's side window (augment.compose win)')
+    ap.add_argument('--win', type=float, default=0, help='share of pool samples framed like the app side window (augment.compose win)')
     ap.add_argument('--bw', type=float, default=0, help='extra cross-entropy weight on pixels within 2 px of a wear-class boundary (thin lands)')
     ap.add_argument('--save_every', action='store_true', help='keep a checkpoint per eval (it<N>.pt)')
     a = ap.parse_args()
