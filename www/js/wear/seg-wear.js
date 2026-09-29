@@ -23,6 +23,7 @@
   const NET_MIN = 224, NET_MAX = 384;      // tool diameter in network pixels (training covered 60..460, mostly 150..400)
   const ABOVE = .3, BELOW = .3, SIDE = .8;  // window around the zone, in tool diameters
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
+  const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MIN_TOOL = .5;                      // share of the silhouette the network must see as tool, else the side falls back
   const r4 = v => Math.round(v * 1e4) / 1e4, ceil32 = v => Math.max(32, Math.ceil(v / 32) * 32);
 
@@ -123,6 +124,9 @@
       const u = Math.min(.96, Math.abs(X + .5 - Wn / 2) / Rn), f = 1 / Math.sqrt(1 - u * u), n = Math.hypot(bx, by) || 1;
       vbMm[Y] = Math.max(1, 2 * d[jb] - .5) / Math.sqrt((bx / n / f) ** 2 + (by / n) ** 2) / ppm;
     }
+    // running median along the axis over +-VB_SMOOTH_MM: VBmax is the land's width, not a blob where lands meet
+    const h = Math.round(VB_SMOOTH_MM * ppm), sm = new Float32Array(Hn);
+    if (h > 0) { for (let Y = 0; Y < Hn; Y++) { const q = Array.from(vbMm.subarray(Math.max(0, Y - h), Math.min(Hn, Y + h + 1))).sort((p, r) => p - r); sm[Y] = q[q.length >> 1]; } return {vbMm: sm, px: sizes[best]}; }
     return {vbMm, px: sizes[best]};
   }
 

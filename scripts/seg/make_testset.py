@@ -2,7 +2,9 @@
 one side photo per flute (tool turned by 360/k between shots) + one top photo, with ground-truth label PNGs.
 Seeds are disjoint from the training pool (pool ids < 1e6 use seed 1000003*id+17).
 
-usage: make_testset.py OUTDIR [--w 400 --h 440]
+--seed_add N makes a different set with the same recipe (engine-level validation, e.g. .work/valset; the committed
+test set uses 0).
+usage: make_testset.py OUTDIR [--w 400 --h 440] [--seed_add N]
 """
 import os, sys, json, math, argparse
 import numpy as np, cv2
@@ -33,6 +35,7 @@ def main():
     ap.add_argument('out')
     ap.add_argument('--w', type=int, default=400)
     ap.add_argument('--h', type=int, default=440)
+    ap.add_argument('--seed_add', type=int, default=0)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     cases = [dict(name='t4', k=4, D=10, seed=9_000_001, mode='flank', vb=.25, top=True),
@@ -41,6 +44,7 @@ def main():
              dict(name='clean', k=2, D=10, seed=9_000_005, mode='none', vb=0)]
     index = []
     for c in cases:
+        c['seed'] += a.seed_add
         rng = np.random.default_rng(c['seed'])
         tool = render.Tool(rng, D=c['D'])
         tool.k = c['k']; tool.P = 2 * math.pi / tool.k
