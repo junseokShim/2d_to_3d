@@ -42,45 +42,71 @@
   const r4 = v => Math.round(v * 1e4) / 1e4;
 
   // ---------- 1. auto align: tilt, silhouette, scale, tip ----------
+  // ---------- 1. auto align: tilt, silhouette, scale, tip ----------
   // Frame: u across the tool, v along the axis (down = toward shank). Image point = c + u*n + v*a,
   // n = (cos t, -sin t), a = (sin t, cos t), c = image centre.
+  // Silhouette search (v0.6). Candidate lines = peaks of the COUNT of edge pixels (horizontal non-max suppressed, gradient
+  // across the line) per u, so a long continuous line beats a short high-contrast one. A pair is scored by
+  //   min(support of both lines) x (busy inside - quiet outside) contrast x framing prior (tool near the centre, ~0.3 w wide),
+  // then each line is pushed outward to a weaker parallel edge when the region beyond it is quiet background (a dark tool
+  // on a dark mat has a faint silhouette and a strong flute edge just inside it).
+  // v0.5.4 took the outermost strong magnitude peaks: at a wrong tilt a helical flute edge projects as strongly as the
+  // silhouette, which gave tilts of -9..-12 deg and strips of background on real photos (docs/debug-vb0.md).
   function align(G, grad, diameterMm, expectSepPx) {
-    const {w, h} = G, {gx, gy} = grad, cx0 = w / 2, cy0 = h / 2;
+    const {w, h} = G, {gx, gy} = grad, cx0 = w / 2, cy0 = h / 2, T = 40;
     const mag = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) mag[i] = Math.hypot(gx[i], gy[i]);
-    const thr = quant(mag.filter((_, i) => i % 5 === 0), .85);
-    const E = [];                                   // strong edge pixels only (speed)
-    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (mag[i] > thr) E.push(i); }
+    const E = [];                                   // edge pixels: above T and a local max along x (tilt is within +-15 deg)
+    for (let y = 1; y < h - 1; y++) for (let x = 2; x < w - 2; x++) { const i = y * w + x; if (mag[i] >= T && mag[i] >= mag[i - 1] && mag[i] >= mag[i + 1]) E.push(i); }
+    // busyness = local mean gradient magnitude (tool: flutes, lands, glints; background: fine texture), sampled on a grid
+    const rb = Math.max(2, Math.round(Math.max(w, h) / 120)), I = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let s = 0; for (let x = 0; x < w; x++) { s += Math.min(300, mag[y * w + x]); I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + s; } }
+    const busy = (x, y) => { const x0 = Math.max(0, x - rb), x1 = Math.min(w, x + rb + 1), y0 = Math.max(0, y - rb), y1 = Math.min(h, y + rb + 1); return (I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]) / ((x1 - x0) * (y1 - y0)); };
+    const gs = Math.max(1, Math.round(Math.sqrt(w * h / 60000))), Bp = [];
+    for (let y = 0; y < h; y += gs) for (let x = 0; x < w; x += gs) Bp.push(x - cx0, y - cy0, busy(x, y));
     const U = Math.ceil(Math.hypot(w, h)), off = U / 2;
     const project = t => {
-      const c = Math.cos(t), s = Math.sin(t), P = new Float32Array(U + 1);
+      const c = Math.cos(t), s = Math.sin(t), C = new Float32Array(U + 1), Bs = new Float64Array(U + 2), Bn = new Float64Array(U + 2);
       for (const i of E) {
-        const x = i % w - cx0, y = (i / w | 0) - cy0, gu = gx[i] * c - gy[i] * s, gv = gx[i] * s + gy[i] * c;
-        if (Math.abs(gu) > 2.5 * Math.abs(gv)) P[Math.round(x * c - y * s + off)] += Math.abs(gu);
+        const gu = gx[i] * c - gy[i] * s, gv = gx[i] * s + gy[i] * c;
+        if (Math.abs(gu) >= T && Math.abs(gu) >= 2 * Math.abs(gv)) C[Math.round((i % w - cx0) * c - ((i / w | 0) - cy0) * s + off)]++;
       }
-      const Q = new Float32Array(U + 1);            // light smoothing
-      for (let i = 1; i < U; i++) Q[i] = .25 * P[i - 1] + .5 * P[i] + .25 * P[i + 1];
-      return Q;
+      for (let j = 0; j < Bp.length; j += 3) { const k = Math.round(Bp[j] * c - Bp[j + 1] * s + off) + 1; Bs[k] += Bp[j + 2]; Bn[k]++; }
+      for (let k = 1; k <= U + 1; k++) { Bs[k] += Bs[k - 1]; Bn[k] += Bn[k - 1]; }
+      const Q = new Float32Array(U + 1); for (let i = 1; i < U; i++) Q[i] = C[i - 1] + C[i] + C[i + 1];
+      const mb = (p, q) => { p = Math.max(0, Math.round(p)); q = Math.min(U + 1, Math.round(q)); const n = Bn[q] - Bn[p]; return n > 5 ? (Bs[q] - Bs[p]) / n : NaN; };
+      return {Q, mb};
     };
-    const pair = Q => {                             // outermost strong peaks = silhouette
-      let mx = 0; for (const q of Q) mx = Math.max(mx, q);
-      const pk = []; for (let i = 1; i < Q.length - 1; i++) if (Q[i] >= Q[i - 1] && Q[i] > Q[i + 1] && Q[i] > .35 * mx) pk.push(i);
-      if (pk.length < 2) return null;
-      if (expectSepPx) {                            // scale known from the other photos: best pair of about that width
-        let b = null;
-        for (const l of pk) for (const r of pk) if (r > l && Math.abs(r - l - expectSepPx) < .15 * expectSepPx && (!b || Q[l] + Q[r] > b.score)) b = {l, r, score: Q[l] + Q[r]};
-        return b;
+    const pair = ({Q, mb}) => {
+      const pk = []; for (let i = 1; i < U; i++) if (Q[i] >= Q[i - 1] && Q[i] > Q[i + 1]) pk.push(i);
+      pk.sort((p, q) => Q[q] - Q[p]).splice(14);
+      let b = null;
+      for (const l of pk) for (const r of pk) {
+        const sp = r - l;
+        if (expectSepPx ? Math.abs(sp - expectSepPx) >= .15 * expectSepPx : sp < Math.max(8, .03 * Math.min(w, h)) || sp > .85 * w) continue;
+        const bi = mb(l + .1 * sp, r - .1 * sp), bl = mb(l - .3 * sp, l - .06 * sp), br = mb(r + .06 * sp, r + .3 * sp);
+        const bo = Math.max(Number.isNaN(bl) ? 0 : bl, Number.isNaN(br) ? 0 : br), con = (bi - bo) / (bi + bo);
+        if (!(con > 0)) continue;
+        const pc = (l + r) / 2 - off, prior = Math.exp(-.5 * (pc / (.3 * w)) ** 2 - (expectSepPx ? 0 : .5 * (Math.log(sp / (.3 * w)) / .7) ** 2));
+        const score = Math.min(Q[l], Q[r]) / h * con * prior;
+        if (!b || score > b.score) b = {l, r, score, con};
       }
-      const l = pk[0], r = pk[pk.length - 1];
-      return r - l < .03 * Math.min(w, h) ? null : {l, r, score: Q[l] + Q[r]};
+      return b;
     };
     let best = null;
-    const tryT = t => { const p = pair(project(t)); if (p && (!best || p.score > best.score)) best = {t, ...p}; };
+    const tryT = t => { const P = project(t), p = pair(P); if (p && (!best || p.score > best.score)) best = Object.assign({t, P}, p); };
     for (let a = -15; a <= 15; a += 1) tryT(a * DEG);
     if (!best) return null;
-    const t1 = best.t; for (let a = -1; a <= 1.001; a += .1) tryT(t1 + a * DEG);
+    const t1 = best.t; for (let a = -.9; a <= .901; a += .1) tryT(t1 + a * DEG);
+    { // outward to the true silhouette: a parallel edge within 15 % of the width, >= 30 % of the support, quiet beyond it
+      const {Q, mb} = best.P, sp = best.r - best.l, qi = mb(best.l + .1 * sp, best.r - .1 * sp);
+      if (!expectSepPx) {
+        for (let u = best.l - 1; u >= best.l - .15 * sp; u--) if (Q[u] >= Q[u - 1] && Q[u] > Q[u + 1] && Q[u] >= .3 * Q[best.l] && mb(u - .3 * sp, u - .04 * sp) < .6 * qi) best.l = u;
+        for (let u = best.r + 1; u <= best.r + .15 * sp; u++) if (Q[u] >= Q[u - 1] && Q[u] > Q[u + 1] && Q[u] >= .3 * Q[best.r] && mb(u + .04 * sp, u + .3 * sp) < .6 * qi) best.r = u;
+      }
+    }
     // sub-pixel peak position (parabola)
-    const Q = project(best.t), sub = i => { const d = Q[i - 1] - 2 * Q[i] + Q[i + 1]; return d < 0 ? i + .5 * (Q[i - 1] - Q[i + 1]) / d : i; };
+    const Q = best.P.Q, sub = i => { const d = Q[i - 1] - 2 * Q[i] + Q[i + 1]; return d < 0 ? i + .5 * (Q[i - 1] - Q[i + 1]) / d : i; };
     const uL = sub(best.l) - off, uR = sub(best.r) - off, t = best.t, c = Math.cos(t), s = Math.sin(t);
     const sep = uR - uL, ppm = sep / diameterMm, uC = (uL + uR) / 2;
     const toImg = (u, v) => [cx0 + u * c + v * s, cy0 - u * s + v * c];
@@ -134,6 +160,79 @@
     const phi = .5 * Math.atan2(2 * Jxy, Jxx - Jyy), coh = Math.hypot(Jxx - Jyy, 2 * Jxy) / ((Jxx + Jyy) || 1);
     const beta = Math.abs(phi) / DEG;
     return coh < .1 || beta < 10 || beta > 60 ? null : beta;
+  }
+
+  // ---------- helix angle (v0.6) ----------
+  // Two estimates on a long strip (tip region + 0.3 D down to where the tool leaves the frame or a finger covers it):
+  //  (a) orientation on the unwrapped cylinder: s = R asin(u/R), so dg/ds = dg/du * cos(a). On the unwrapped surface every
+  //      flute edge is a straight line at the helix angle from the axis wherever it is (no foreshortening bias, so the
+  //      whole visible width |u| < 0.85 R is used). Gradients are clipped at their 90th percentile so glints do not vote.
+  //  (b) flute crossings at the silhouette edges: at a fixed azimuth the k flutes pass every p = pi D / (k tan(helix))
+  //      along the axis; p = first autocorrelation peak of the grey profile just inside each edge (needs ~1.5 p visible).
+  // Result clamped to 15..55 deg; confidence 'high' when (a) is coherent and (b) agrees within 6 deg, 'medium' when only
+  // (a) is coherent, else 'low' (then the UI asks for the catalogue value).
+  const HELIX_RANGE = [15, 55];
+  // separable binomial blur, n passes of [1 2 1]/4 per axis; a NaN in the support gives NaN
+  function blurNaN(g, w, h, n) {
+    let a = Float32Array.from(g), b = new Float32Array(g.length);
+    for (let p = 0; p < n; p++) for (const st of [1, w]) {
+      for (let i = 0; i < a.length; i++) { const x = i % w, y = (i / w) | 0, ok = st === 1 ? x > 0 && x < w - 1 : y > 0 && y < h - 1; b[i] = ok ? (a[i - st] + 2 * a[i] + a[i + st]) / 4 : NaN; }
+      [a, b] = [b, a];
+    }
+    return a;
+  }
+  function helixEstimate(G, al, D, k) {
+    const ppm = al.pxPerMm, S = rectify(G, al, 5 * D), {w, g, cx, R, rgb} = S, Rmm = R / ppm;
+    const y0 = S.top + Math.round(.3 * D * ppm); let h = S.h;
+    for (let y = y0; y < S.h; y++) {   // stop at the photo end or where a finger (skin hue) covers a fifth of the row
+      let nan = 0, skin = 0; for (let x = Math.round(cx - .8 * R); x <= cx + .8 * R; x++) { const i = y * w + x; if (Number.isNaN(g[i])) nan++; else if (rgb && rgb[3 * i] > rgb[3 * i + 1] + 18 && rgb[3 * i] > rgb[3 * i + 2] + 25) skin++; }
+      if (nan > .2 * 1.6 * R || skin > .2 * 1.6 * R) { h = y; break; }
+    }
+    const lenMm = (h - y0) / ppm; if (lenMm < .5 * D) return null;
+    // (a) structure tensor on the unwrapped surface
+    // pre-blur (binomial): hard pixel-staircase edges bias a squared-gradient tensor towards the image axes
+    const gb = blurNaN(g, w, h, 4), gs = [], gz = [];
+    // cylinder shading and specular streaks run along the axis (z-invariant) and would vote for 0 deg: remove each
+    // column's axial mean; helical flute edges sweep across every column and survive
+    for (let x = 0; x < w; x++) {
+      let m = 0, n = 0; for (let y = y0; y < h; y++) { const v = gb[y * w + x]; if (!Number.isNaN(v)) { m += v; n++; } }
+      if (n) { m /= n; for (let y = 0; y < S.h; y++) gb[y * w + x] -= m; }
+    }
+    for (let y = y0 + 1; y < h - 1; y++) for (let x = Math.ceil(cx - .85 * R); x <= cx + .85 * R; x++) {
+      const i = y * w + x, a = (gb[i + 1] - gb[i - 1]) / 2, b = (gb[i + w] - gb[i - w]) / 2; if (Number.isNaN(a) || Number.isNaN(b)) continue;
+      const ca = Math.sqrt(Math.max(0, 1 - ((x + .5 - cx) / R) ** 2)); gs.push(a * ca); gz.push(b);
+    }
+    // only edge pixels vote: |grad| above 3x the median (noise level; the unwrap factor cos(a) makes noise anisotropic, so
+    // letting it vote biases the angle towards 90 deg), each clipped at the 90th percentile of the edge pixels (glints)
+    const mags = gs.map((v, i) => Math.hypot(v, gz[i])), lo = 3 * (quant(mags, .5) || 1), clip = quant(mags.filter(m => m > lo), .9) || lo;
+    let Jss = 0, Jzz = 0, Jsz = 0;
+    for (let i = 0; i < gs.length; i++) { if (mags[i] <= lo) continue; const f = mags[i] > clip ? clip / mags[i] : 1, a = gs[i] * f, b = gz[i] * f; Jss += a * a; Jzz += b * b; Jsz += a * b; }
+    const phi = .5 * Math.atan2(2 * Jsz, Jss - Jzz), coherence = Math.hypot(Jss - Jzz, 2 * Jsz) / ((Jss + Jzz) || 1);
+    const tensorDeg = Math.abs(phi) / DEG, hand = phi > 0 ? 'L' : 'R';
+    // (b) crossing period at both silhouette edges
+    let periodDeg = null, periodMm = null;
+    if (k > 0) {
+      const lag0 = Math.round(Math.PI * D / (k * Math.tan(HELIX_RANGE[1] * DEG)) * ppm), lag1 = Math.round(Math.PI * D / (k * Math.tan(HELIX_RANGE[0] * DEG)) * ppm);
+      const ac = new Float64Array(lag1 + 2); let used = 0;
+      for (const sd of [-1, 1]) {
+        const pr = []; for (let y = y0; y < h; y++) { let m = 0, n = 0; for (let x = Math.round(cx + sd * .88 * R) - 1; x <= Math.round(cx + sd * .88 * R) + 1; x++) { const v = g[y * w + x]; if (!Number.isNaN(v)) { m += v; n++; } } pr.push(n ? m / n : NaN); }
+        const mu = pr.filter(v => !Number.isNaN(v)).reduce((p, q) => p + q, 0) / pr.length, d = pr.map(v => Number.isNaN(v) ? 0 : v - mu), n = d.length;
+        if (n < 1.5 * lag0) continue;
+        const v0 = d.reduce((p, q) => p + q * q, 0) || 1;
+        for (let L = 1; L <= Math.min(lag1, n - 1); L++) { let c = 0; for (let i = 0; i + L < n; i++) c += d[i] * d[i + L]; ac[L] += c / v0 * n / (n - L); }
+        used++;
+      }
+      if (used) {
+        let best = -1, bl = 0;
+        for (let L = Math.max(2, lag0); L <= Math.min(lag1, Math.floor((h - y0) / 1.5)); L++) if (ac[L] > ac[L - 1] && ac[L] >= ac[L + 1] && ac[L] / used > .15 && ac[L] > best) { best = ac[L]; bl = L; }
+        if (bl) { periodMm = bl / ppm; periodDeg = Math.atan(Math.PI * D / (k * periodMm)) / DEG; }
+      }
+    }
+    const coh = coherence >= .15, agree = periodDeg != null && Math.abs(periodDeg - tensorDeg) <= 6;
+    const raw = coh ? (agree ? (tensorDeg + periodDeg) / 2 : tensorDeg) : periodDeg;
+    const deg = raw == null ? null : Math.max(HELIX_RANGE[0], Math.min(HELIX_RANGE[1], raw));
+    const confidence = raw == null ? 'none' : coh && agree && raw === deg ? 'high' : coh && raw === deg ? 'medium' : 'low';
+    return {deg: deg && r4(deg), confidence, tensorDeg: r4(tensorDeg), coherence: r4(coherence), hand, periodDeg: periodDeg && r4(periodDeg), periodMm: periodMm && r4(periodMm), lengthMm: r4(lenMm), clamped: raw != null && raw !== deg};
   }
 
   // ---------- 2. wear band segmentation on the flank land ----------
@@ -203,13 +302,8 @@
     return b;
   }
 
-  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
-  function colorModel(strip, rows, K = 8) {
-    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
-    for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
-      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
-    }
-    if (S.length < 50) return null;
+  // k-means (luminance-ordered init) over RGB samples; dist(i) = distance of strip pixel i to the nearest centre
+  function kmeans(S, K, rgb) {
     const L = S.map(p => p[0] + p[1] + p[2]), ord = L.map((_, i) => i).sort((a, b) => L[a] - L[b]);
     let C = Array.from({length: K}, (_, k) => S[ord[Math.floor((k + .5) / K * S.length)]].slice());
     const near = p => { let b = 1e9, bi = 0; for (let k = 0; k < C.length; k++) { const d = (p[0] - C[k][0]) ** 2 + (p[1] - C[k][1]) ** 2 + (p[2] - C[k][2]) ** 2; if (d < b) { b = d; bi = k; } } return [bi, b]; };
@@ -218,9 +312,43 @@
       for (const p of S) { const a = acc[near(p)[0]]; a[0] += p[0]; a[1] += p[1]; a[2] += p[2]; a[3]++; }
       C = acc.map((a, k) => a[3] ? [a[0] / a[3], a[1] / a[3], a[2] / a[3]] : C[k]);
     }
-    const dist = i => Math.sqrt(near([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]])[1]);
+    return {C, near, dist: i => Math.sqrt(near([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]])[1])};
+  }
+
+  // k-means colour model of the unworn body (glints excluded); pixel score = distance to the nearest body colour
+  function colorModel(strip, rows, K = 8) {
+    const {w, rgb, g, cx, R} = strip, S = [], step = Math.max(1, Math.round(Math.sqrt((rows[1] - rows[0]) * 2 * R / 20000))), gl = glintMask(strip);
+    for (let y = rows[0]; y < rows[1]; y += step) for (let x = 0; x < w; x += step) {
+      const i = y * w + x; if (Math.abs(x - cx) < .96 * R && !Number.isNaN(g[i]) && !gl[i]) S.push([rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]]);
+    }
+    if (S.length < 50) return null;
+    const {C, near, dist} = kmeans(S, K, rgb);
     const tau = Math.max(12, quant(S.map(p => Math.sqrt(near(p)[1])), .995));
     return {C, dist, tau};
+  }
+
+  // Tool mask: 1 where the tool is. Background colours are learnt from the strip margins (beside the silhouette, above the
+  // tip); background-coloured pixels connected to that background are not tool. The flood may enter the tool outline only
+  // in the tip region (end teeth, corner radius, chipped corners stand above/below the found tip line), never along the
+  // flank, so a grey worn land on the face of the tool is never taken for background.
+  function toolMask(strip) {
+    if (strip.tool) return strip.tool;
+    const {w, h, g, cx, R, top} = strip, rgb = strip.rgb, px = i => rgb ? [rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]] : [g[i], g[i], g[i]];
+    const outside = (x, y) => Math.abs(x + .5 - cx) > 1.04 * R || y < top - 2, S = [];
+    const step = Math.max(1, Math.round(Math.sqrt(w * h / 8000)));
+    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) { const i = y * w + x; if (outside(x, y) && !Number.isNaN(g[i])) S.push(px(i)); }
+    const tool = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) tool[i] = Number.isNaN(g[i]) ? 0 : 1;
+    if (S.length < 30) return (strip.tool = tool);
+    const flat = new Uint8ClampedArray(3 * w * h); for (let i = 0; i < w * h; i++) flat.set(px(i), 3 * i);
+    const km = kmeans(S, 3, flat), tau = Math.max(6, quant(S.map(p => Math.sqrt(km.near(p)[1])), .95));
+    const st = [];
+    const can = i => { const x = i % w, y = i / w | 0; return tool[i] && (outside(x, y) || y < top || Math.abs(x + .5 - cx) > .96 * R) && km.dist(i) <= tau; };
+    for (let i = 0; i < w * h; i++) if (outside(i % w, i / w | 0) && can(i)) { tool[i] = 0; st.push(i); }
+    while (st.length) {
+      const p = st.pop(), x = p % w;
+      for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * h && Math.abs(q % w - x) <= 1 && can(q)) { tool[q] = 0; st.push(q); }
+    }
+    return (strip.tool = tool);
   }
 
   // Classic v2: a pixel is worn when its colour is unlike every colour of the unworn body (either brighter or darker).
@@ -229,13 +357,67 @@
   function segmentColor(strip, zoneRows, o) {
     const rows = strip.rgb && refRows(strip, zoneRows), cm = rows && colorModel(strip, rows);
     if (!cm) return segment(strip, zoneRows, o.sens);
-    const {w, h, g, cx, R, top} = strip, gl = glintMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
+    const {w, h, cx, R, top} = strip, gl = glintMask(strip), tm = toolMask(strip), thr = (o.colorK || 1.5) * cm.tau, y1 = Math.min(h, top + zoneRows), raw = new Uint8Array(w * h);
     const score = new Float32Array(w * h);
     for (let y = Math.max(0, top - 1); y < y1; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || Number.isNaN(g[i]) || gl[i]) continue;
+      const i = y * w + x; if (Math.abs(x - cx) >= .96 * R || !tm[i] || gl[i]) continue;
       score[i] = cm.dist(i) / thr; if (score[i] > 1) raw[i] = 1;
     }
-    return Object.assign(refineBand(strip, bandFromMask(strip, raw), score), {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color'});
+    const rb = refineBand(strip, bandFromMask(strip, raw), score);
+    return Object.assign(rb, {thr, med: cm.tau, sig: 0, y1, score, colorModel: cm, method: 'color', tip: tipDamage(strip, cm, thr, rb.band)});
+  }
+
+  // ---------- 2b. tip / corner damage (chipping, broken end teeth) ----------
+  // The damage on real worn end mills is often at the tip: chipped corners and broken end teeth, whose fresh fracture
+  // faces are bright, often saturated white. The flank-band stage drops saturated pixels as glints and only looks for a
+  // band along the flank, so it reads VB 0 there (docs/debug-vb0.md). Here, in the tip region only (tip line + 0.3 D, at
+  // least 1 mm), a pixel is a candidate when its colour is unlike the unworn body OR it is saturated; thin edge glints are
+  // removed by an opening of ~0.3 mm; blobs must touch the tip line; the flank band and its rim are left out (flank wear, measured by the band). depthMm = axial depth from the tip line (localized wear VB3 /
+  // chipping CH, ISO 8688-2), widthMm = arc width across the flank.
+  const TIP_ZONE_D = .3;   // tip region depth, x D
+  function tipDamage(strip, cm, thr, band) {
+    const {w, h, g, cx, R, top, ppm, rgb} = strip, D = 2 * R / ppm, tm = toolMask(strip), Rmm = R / ppm;
+    const y1 = Math.min(h, top + Math.round(Math.max(1, TIP_ZONE_D * D) * ppm)), raw = new Uint8Array(w * h);
+    const nb = band ? dilateMask(band, w, h, Math.max(1, Math.round(.15 * ppm))) : null;   // flank band + its rim: measured by the band
+    const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
+    for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !tm[i] || (nb && nb[i])) continue;
+      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false)) raw[i] = 1;
+    }
+    const k = Math.max(2, Math.round(.3 * ppm)), op = openMask(raw, w, y1, k);
+    const lab = new Int32Array(w * h), out = new Uint8Array(w * h), touch = top + Math.max(1, Math.round(.3 * ppm));
+    let best = {depthMm: 0, widthMm: 0, areaMm2: 0, px: 0}, n = 0;
+    for (let s = 0; s < w * y1; s++) if (op[s] && !lab[s]) {
+      const st = [s], pts = []; lab[s] = ++n;
+      while (st.length) { const p = st.pop(); pts.push(p); const x = p % w; for (const q of [p - 1, p + 1, p - w, p + w]) if (q >= 0 && q < w * y1 && Math.abs(q % w - x) <= 1 && op[q] && !lab[q]) { lab[q] = n; st.push(q); } }
+      let r0 = 1e9, r1 = -1;
+      for (const p of pts) { const y = p / w | 0; r0 = Math.min(r0, y); r1 = Math.max(r1, y); }
+      if (r0 > touch || pts.length < Math.max(2 * k * k, (.6 * ppm) ** 2)) continue;   // chips smaller than ~0.6 x 0.6 mm are not resolved
+      const arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R)));
+      // width = median over the blob's rows of the row's arc span (a bounding box would take in glints touching the blob)
+      const span = new Map(); for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
+      const depthMm = r4((r1 + 1 - Math.max(r0, top)) / ppm), widthMm = r4(quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5));
+      // a thin streak running down from the tip (narrower than the 0.6 mm resolution limit, or > 4x deeper than wide) is the
+      // specular line on a flute margin following the helix, not a chip (a chip / broken tooth is a compact notch)
+      if (widthMm < .6 || depthMm > 4 * widthMm) continue;
+      for (const p of pts) out[p] = 1;
+      best.areaMm2 = r4(best.areaMm2 + pts.length / ppm / ppm); best.px += pts.length;
+      if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
+    }
+    return Object.assign(best, {mask: out, y1, openPx: k});
+  }
+  // binary opening with a k x k square (separable running minimum / maximum)
+  function openMask(m, w, h, k) {
+    const at = (horiz, a, b) => horiz ? a * w + b : b * w + a;
+    const run = (src, horiz, erode) => {
+      const o = new Uint8Array(w * h), L = horiz ? w : h, N = horiz ? h : w;
+      for (let a = 0; a < N; a++) for (let b = 0; b + k <= L; b++) {
+        if (erode) { let all = 1; for (let j = 0; j < k && all; j++) all = src[at(horiz, a, b + j)]; if (all) o[at(horiz, a, b)] = 1; }   // anchor = first cell of the square
+        else if (src[at(horiz, a, b)]) for (let j = 0; j < k; j++) o[at(horiz, a, b + j)] = 1;                                        // paint the square back
+      }
+      return o;
+    };
+    return run(run(run(run(m, true, true), false, true), true, false), false, false);
   }
 
   // ---------- 3. VB profile along the cutting edge + area + volume ----------
@@ -300,18 +482,36 @@
     const lenMm = Math.max(zone + .6 * D, o.stripMm || 1.2 * D), raw = rectify(G, al, lenMm);
     let strip = enh && enh.width === img.width && enh.height === img.height ? Object.assign(rectify(gray(rotate(enh, best.deg)), al, lenMm), {raw}) : raw;
     if (o.stripMm) { const {w, g, cx, top} = raw, x = Math.round(cx); let h = strip.h; while (h > top + zone * strip.ppm && Number.isNaN(g[(h - 1) * w + x])) h--; strip = trimStrip(strip, h); }
-    const hEst = helix(strip, strip.top + Math.round(zone * strip.ppm));
-    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, rotateDeg: best.deg};
+    const hx = helixEstimate(G, al, D, o.flutes), hEst = hx && hx.confidence !== 'none' ? hx.deg : null;
+    return {o, al, strip, zone, zoneRows: Math.round(zone * strip.ppm), hEst, helix: hx, rotateDeg: best.deg};
   }
 
   const trimStrip = (S, h) => h >= S.h ? S : Object.assign({}, S, {h, g: S.g.subarray(0, S.w * h), rgb: S.rgb && S.rgb.subarray(0, 3 * S.w * h)}, S.raw ? {raw: trimStrip(S.raw, h)} : {});
 
   function finishSide(P, seg, helixDeg) {
     const {o, al, strip, hEst} = P, m = measureBand(strip, seg, Object.assign({}, o, {helixDeg}));
-    return Object.assign(m, {
+    // tip / corner damage (chipping, broken end tooth) counts in the reported VBmax as corner wear VBC (ISO 8688-2 zone C:
+    // material lost from the original cutting corner, depth along the axis). The flank band alone stays in vbFlankMaxMm.
+    const vbFlankMaxMm = m.vbMaxMm, vbTipMm = seg.tip && seg.tip.depthMm > 0 ? r4(seg.tip.depthMm) : 0;
+    m.vbMaxMm = r4(Math.max(vbFlankMaxMm, vbTipMm));
+    strip.tip = vbTipMm ? {depthMm: vbTipMm, widthMm: seg.tip.widthMm} : null;   // metro-core folds it into VBC / VBmax
+    return Object.assign(m, {vbFlankMaxMm, vbTipMm, vbSource: vbTipMm > vbFlankMaxMm ? 'corner/tip (VBC)' : vbFlankMaxMm > 0 ? 'flank (VB)' : 'none',
       align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
-      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band
-    });
+      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band,
+      tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
+    }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip));
+  }
+
+  // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
+  // flank band nor the tip shows anything; otherwise the side goes to the operator (never a confident 0, never an
+  // unconfirmed big number): 'low-resolution', 'tip-damage' (chipping / broken end tooth: VB3/CH, not a flank band).
+  const MIN_PPM = 15;   // 1 px = 0.067 mm: a 0.1 mm land is 1.5 px (the quality check warns below 20, fails below 8)
+  function evidence(ppm, vbMax, tip) {
+    const reasons = [];
+    if (ppm < MIN_PPM) reasons.push('low-resolution');
+    if (tip && tip.depthMm > 0) reasons.push('tip-damage');
+    const kind = vbMax > 0 && tip && tip.depthMm > 0 ? 'band+tip' : vbMax > 0 ? 'band' : tip && tip.depthMm > 0 ? 'tip' : 'none';
+    return {evidence: kind, needsOperator: reasons.length > 0, reasons, confidence: reasons.length ? 'low' : 'ok'};
   }
 
   // classic segmenter (sync): colour model vs the unworn body; legacy brightness threshold with o.method = 'bright'
@@ -324,7 +524,7 @@
 
   // all sides: align (+ scale consistency), then segment each with `segmenter`, then VB with one common helix
   function prepareAll({sides, enhanced, flutes, diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}) {
-    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm}, E = enhanced || [];
+    const k = flutes || sides.length, o = {diameterMm, helixDeg, clearanceDeg, zoneMm, sens, method, stripMm, flutes: k}, E = enhanced || [];
     Object.keys(o).forEach(key => o[key] == null && delete o[key]);
     let P = sides.slice(0, k).map((img, i) => prepareSide(img, o, E[i]));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
@@ -336,6 +536,10 @@
   function assemble({k, P}, segs, {diameterMm, helixDeg, top, sens}, engine) {
     const hs = P.filter(Boolean).map(p => p.hEst).filter(Boolean).sort((a, b) => a - b);
     const helixUsed = helixDeg || (hs.length ? hs[hs.length >> 1] : 30);
+    // helix: operator value (catalogue) > median photo estimate > 30 deg default; confidence from the per-side estimates
+    const hx = P.map(p => p && p.helix), conf = ['high', 'medium', 'low'].find(c => hx.some(h => h && h.confidence === c)) || 'none';
+    const helixInfo = {deg: r4(helixUsed), source: helixDeg ? 'operator' : hs.length ? 'estimated' : 'default', confidence: helixDeg ? 'operator' : hs.length ? conf : 'none',
+      perSide: hx.map(h => h && {deg: h.deg, confidence: h.confidence, tensorDeg: h.tensorDeg, coherence: h.coherence, periodDeg: h.periodDeg, clamped: h.clamped})};
     const S2 = P.map((p, i) => p && finishSide(p, segs[i], helixUsed));
     const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
     const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));
@@ -350,11 +554,15 @@
     const topRes = top ? analyzeTop(top, {diameterMm, sens}) : null;
     const debug = {
       engine,
-      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated}),
+      sides: S2.map(s => s && {align: s.align, threshold: s.threshold, method: s.method, wornLengthMm: s.wornLengthMm, helixDegEstimated: s.helixDegEstimated,
+        vbMaxMm: s.vbMaxMm, vbFlankMaxMm: s.vbFlankMaxMm, vbTipMm: s.vbTipMm, vbSource: s.vbSource, tip: s.tip, evidence: s.evidence, needsOperator: s.needsOperator, reasons: s.reasons, confidence: s.confidence}),
+      helix: helixInfo,
       failedSides: S2.map((s, i) => s ? -1 : i).filter(i => i >= 0), top: topRes,
       warnings: S2.map((s, i) => s && s.align.pxPerMm < 20 ? `side ${i + 1}: ${s.align.pxPerMm.toFixed(1)} px/mm, below 20 px/mm; VB is not reliable (1 px = ${(1 / s.align.pxPerMm).toFixed(2)} mm)` : null).filter(Boolean)
-        .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean)),
-      strips: S2.map(s => s && {strip: s.strip, band: s.band}),
+        .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean))
+        .concat(S2.map((s, i) => s && s.tip && s.tip.depthMm > 0 ? `side ${i + 1}: tip damage (chipping / broken end tooth) ${s.tip.depthMm.toFixed(2)} mm deep x ${s.tip.widthMm.toFixed(2)} mm wide - counted in VBmax as corner/tip wear (VBC); confirm in the measurement panel` : null).filter(Boolean))
+        .concat(helixInfo.source === 'default' || helixInfo.confidence === 'low' ? [`helix angle ${helixInfo.source === 'default' ? 'not measurable in the photos, 30 deg assumed' : `estimate ${helixUsed.toFixed(1)} deg is uncertain`}; enter the catalogue value`] : []),
+      strips: S2.map(s => s && {strip: s.strip, band: s.band, tipMask: s.tipMask}),
       ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
       model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
     };
@@ -406,6 +614,6 @@
     return assemble(A, segs, args, engine);
   }
 
-  return {DEFAULTS, GLINT, glintMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
+  return {DEFAULTS, GLINT, MIN_PPM, HELIX_RANGE, helixEstimate, evidence, glintMask, toolMask, kmeans, tipDamage, openMask, dilateMask, gray, sobel, align, rectify, rotate, segment, segmentColor, bandFromMask, refineBand, refRows, colorModel, measureBand,
     prepareSide, finishSide, classicSegment, analyzeSide, analyzeTop, measure, measureAsync};
 });
