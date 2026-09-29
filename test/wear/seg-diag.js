@@ -22,14 +22,7 @@ const COL = [[0, 0, 0], [90, 90, 90], [0, 255, 255], [255, 40, 40], [255, 0, 200
   for (const e of idx) if (e.view !== 'top') (labs[e.case] = labs[e.case] || []).push(readLabel(path.join(DIR, e.label)));
   for (const [name, c] of Object.entries(cases)) {
     if (!labs[name]) continue;
-    const oracle = (i, toPhoto, Wn, Hn) => {
-      const L = labs[name][i], p = new Float32Array(5 * Wn * Hn);
-      for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) {
-        const [x, y] = toPhoto(X, Y), xi = Math.max(0, Math.min(L.w - 1, Math.round(x))), yi = Math.max(0, Math.min(L.h - 1, Math.round(y)));
-        const v = L.m[yi * L.w + xi]; p[(v < 5 ? v : 0) * Wn * Hn + Y * Wn + X] = 1;
-      }
-      return p;
-    };
+    const oracle = require('./seg-oracle.js')(labs[name]);
     const k = c.e.flutes, seg = SEG.createSegmenter(null, W, {flutes: k, oracle});
     const {result: R} = await W.measureAsync({sides: c.sides, flutes: k, diameterMm: c.e.D}, seg, 'seg');
     console.log(`${name} ORACLE (exact labels): VBmax ${R.perFlute.map(f => f.vbMaxMm.toFixed(3)).join(' ')}  want ${(c.e.vbMaxMm || []).map(v => v.toFixed(3)).join(' ')}`);
