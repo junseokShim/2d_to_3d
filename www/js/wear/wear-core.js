@@ -776,7 +776,11 @@
       if (!ref.length) return;
       ref.sort((a, b) => a - b);
       const med = ref.length % 2 ? ref[ref.length >> 1] : (ref[ref.length / 2 - 1] + ref[ref.length / 2]) / 2;
-      if (med > LOW_MED && s.vbFlankMaxMm < LOW_X * med) Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-low'), confidence: 'low'});
+      if (med > LOW_MED && s.vbFlankMaxMm < LOW_X * med) return Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-low'), confidence: 'low'});
+      // the same on the total (land or tip damage): the flutes of one tool wear alike, so a clean side next to chipped or worn
+      // ones is more likely a miss than a sound flute (12Pi 12-4-2: 0 next to 2.3-2.9 mm)
+      const all = S2.filter((t, j) => t && j !== i).map(t => t.vbMaxMm).sort((a, b) => a - b), mA = all.length % 2 ? all[all.length >> 1] : (all[all.length / 2 - 1] + all[all.length / 2]) / 2;
+      if (mA > LOW_MED && s.vbMaxMm < LOW_X * mA) Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-low'), confidence: 'low'});
     });
     const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
     const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));

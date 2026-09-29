@@ -4,10 +4,10 @@
  "helixDeg": 33.1369,
  "perFlute": [
   {
-   "vbMaxMm": 0.3633,
-   "vbAvgMm": 0.3633,
-   "areaMm2": 0.1882,
-   "volumeMm3": 0.0048,
+   "vbMaxMm": 0,
+   "vbAvgMm": 0,
+   "areaMm2": 0,
+   "volumeMm3": 0,
    "profile": [
     {
      "zMm": 0.1084,
@@ -47,11 +47,11 @@
     },
     {
      "zMm": 2.0604,
-     "vbMm": 0.3633
+     "vbMm": 0
     },
     {
      "zMm": 2.2773,
-     "vbMm": 0.3633
+     "vbMm": 0
     },
     {
      "zMm": 2.4942,
@@ -469,9 +469,9 @@
   },
   {
    "vbMaxMm": 2.6764,
-   "vbAvgMm": 1.1817,
-   "areaMm2": 1.5738,
-   "volumeMm3": 0.1859,
+   "vbAvgMm": 0,
+   "areaMm2": 0,
+   "volumeMm3": 0,
    "profile": [
     {
      "zMm": 0.1115,
@@ -499,23 +499,23 @@
     },
     {
      "zMm": 1.4497,
-     "vbMm": 0.3737
+     "vbMm": 0
     },
     {
      "zMm": 1.6727,
-     "vbMm": 0.5607
+     "vbMm": 0
     },
     {
      "zMm": 1.8958,
-     "vbMm": 2.1109
+     "vbMm": 0
     },
     {
      "zMm": 2.1188,
-     "vbMm": 2.1109
+     "vbMm": 0
     },
     {
      "zMm": 2.3418,
-     "vbMm": 0.7525
+     "vbMm": 0
     },
     {
      "zMm": 2.5649,
@@ -622,7 +622,7 @@
  ],
  "totals": {
   "vbMaxMm": 2.6764,
-  "areaMm2": 2.04,
-  "volumeMm3": 0.2013
+  "areaMm2": 0.278,
+  "volumeMm3": 0.0106
  }
 }
