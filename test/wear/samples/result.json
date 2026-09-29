@@ -1,13 +1,13 @@
 {
  "flutes": 4,
  "diameterMm": 10,
- "helixDeg": 27.9207,
+ "helixDeg": 33.1369,
  "perFlute": [
   {
-   "vbMaxMm": 0.3834,
-   "vbAvgMm": 0.3834,
+   "vbMaxMm": 0.3633,
+   "vbAvgMm": 0.3633,
    "areaMm2": 0.1882,
-   "volumeMm3": 0.0051,
+   "volumeMm3": 0.0048,
    "profile": [
     {
      "zMm": 0.1084,
@@ -47,11 +47,11 @@
     },
     {
      "zMm": 2.0604,
-     "vbMm": 0.3834
+     "vbMm": 0.3633
     },
     {
      "zMm": 2.2773,
-     "vbMm": 0.3834
+     "vbMm": 0.3633
     },
     {
      "zMm": 2.4942,
@@ -160,10 +160,10 @@
    ]
   },
   {
-   "vbMaxMm": 0.5748,
-   "vbAvgMm": 0.5748,
+   "vbMaxMm": 0.5447,
+   "vbAvgMm": 0.5447,
    "areaMm2": 0.278,
-   "volumeMm3": 0.0112,
+   "volumeMm3": 0.0106,
    "profile": [
     {
      "zMm": 0.1068,
@@ -191,11 +191,11 @@
     },
     {
      "zMm": 1.3888,
-     "vbMm": 0.5748
+     "vbMm": 0.5447
     },
     {
      "zMm": 1.6024,
-     "vbMm": 0.5748
+     "vbMm": 0.5447
     },
     {
      "zMm": 1.8161,
@@ -468,10 +468,10 @@
    ]
   },
   {
-   "vbMaxMm": 2.2275,
-   "vbAvgMm": 1.247,
+   "vbMaxMm": 2.1109,
+   "vbAvgMm": 1.1817,
    "areaMm2": 1.5738,
-   "volumeMm3": 0.1962,
+   "volumeMm3": 0.1859,
    "profile": [
     {
      "zMm": 0.1115,
@@ -499,23 +499,23 @@
     },
     {
      "zMm": 1.4497,
-     "vbMm": 0.3943
+     "vbMm": 0.3737
     },
     {
      "zMm": 1.6727,
-     "vbMm": 0.5917
+     "vbMm": 0.5607
     },
     {
      "zMm": 1.8958,
-     "vbMm": 2.2275
+     "vbMm": 2.1109
     },
     {
      "zMm": 2.1188,
-     "vbMm": 2.2275
+     "vbMm": 2.1109
     },
     {
      "zMm": 2.3418,
-     "vbMm": 0.794
+     "vbMm": 0.7525
     },
     {
      "zMm": 2.5649,
@@ -621,8 +621,8 @@
   }
  ],
  "totals": {
-  "vbMaxMm": 2.2275,
+  "vbMaxMm": 2.1109,
   "areaMm2": 2.04,
-  "volumeMm3": 0.2125
+  "volumeMm3": 0.2013
  }
 }

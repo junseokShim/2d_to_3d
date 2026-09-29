@@ -172,6 +172,15 @@
   // Result clamped to 15..55 deg; confidence 'high' when (a) is coherent and (b) agrees within 6 deg, 'medium' when only
   // (a) is coherent, else 'low' (then the UI asks for the catalogue value).
   const HELIX_RANGE = [15, 55];
+  // separable binomial blur, n passes of [1 2 1]/4 per axis; a NaN in the support gives NaN
+  function blurNaN(g, w, h, n) {
+    let a = Float32Array.from(g), b = new Float32Array(g.length);
+    for (let p = 0; p < n; p++) for (const st of [1, w]) {
+      for (let i = 0; i < a.length; i++) { const x = i % w, y = (i / w) | 0, ok = st === 1 ? x > 0 && x < w - 1 : y > 0 && y < h - 1; b[i] = ok ? (a[i - st] + 2 * a[i] + a[i + st]) / 4 : NaN; }
+      [a, b] = [b, a];
+    }
+    return a;
+  }
   function helixEstimate(G, al, D, k) {
     const ppm = al.pxPerMm, S = rectify(G, al, 5 * D), {w, g, cx, R, rgb} = S, Rmm = R / ppm;
     const y0 = S.top + Math.round(.3 * D * ppm); let h = S.h;
@@ -181,14 +190,23 @@
     }
     const lenMm = (h - y0) / ppm; if (lenMm < .5 * D) return null;
     // (a) structure tensor on the unwrapped surface
-    const gs = [], gz = [];
+    // pre-blur (binomial): hard pixel-staircase edges bias a squared-gradient tensor towards the image axes
+    const gb = blurNaN(g, w, h, 4), gs = [], gz = [];
+    // cylinder shading and specular streaks run along the axis (z-invariant) and would vote for 0 deg: remove each
+    // column's axial mean; helical flute edges sweep across every column and survive
+    for (let x = 0; x < w; x++) {
+      let m = 0, n = 0; for (let y = y0; y < h; y++) { const v = gb[y * w + x]; if (!Number.isNaN(v)) { m += v; n++; } }
+      if (n) { m /= n; for (let y = 0; y < S.h; y++) gb[y * w + x] -= m; }
+    }
     for (let y = y0 + 1; y < h - 1; y++) for (let x = Math.ceil(cx - .85 * R); x <= cx + .85 * R; x++) {
-      const i = y * w + x, a = (g[i + 1] - g[i - 1]) / 2, b = (g[i + w] - g[i - w]) / 2; if (Number.isNaN(a) || Number.isNaN(b)) continue;
+      const i = y * w + x, a = (gb[i + 1] - gb[i - 1]) / 2, b = (gb[i + w] - gb[i - w]) / 2; if (Number.isNaN(a) || Number.isNaN(b)) continue;
       const ca = Math.sqrt(Math.max(0, 1 - ((x + .5 - cx) / R) ** 2)); gs.push(a * ca); gz.push(b);
     }
-    const mags = gs.map((v, i) => Math.hypot(v, gz[i])), clip = quant(mags, .9) || 1;
+    // only edge pixels vote: |grad| above 3x the median (noise level; the unwrap factor cos(a) makes noise anisotropic, so
+    // letting it vote biases the angle towards 90 deg), each clipped at the 90th percentile of the edge pixels (glints)
+    const mags = gs.map((v, i) => Math.hypot(v, gz[i])), lo = 3 * (quant(mags, .5) || 1), clip = quant(mags.filter(m => m > lo), .9) || lo;
     let Jss = 0, Jzz = 0, Jsz = 0;
-    for (let i = 0; i < gs.length; i++) { const f = mags[i] > clip ? clip / mags[i] : 1, a = gs[i] * f, b = gz[i] * f; Jss += a * a; Jzz += b * b; Jsz += a * b; }
+    for (let i = 0; i < gs.length; i++) { if (mags[i] <= lo) continue; const f = mags[i] > clip ? clip / mags[i] : 1, a = gs[i] * f, b = gz[i] * f; Jss += a * a; Jzz += b * b; Jsz += a * b; }
     const phi = .5 * Math.atan2(2 * Jsz, Jss - Jzz), coherence = Math.hypot(Jss - Jzz, 2 * Jsz) / ((Jss + Jzz) || 1);
     const tensorDeg = Math.abs(phi) / DEG, hand = phi > 0 ? 'L' : 'R';
     // (b) crossing period at both silhouette edges
