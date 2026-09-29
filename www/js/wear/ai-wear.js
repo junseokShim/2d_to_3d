@@ -212,17 +212,21 @@
   function load() {
     if (sessionP) return sessionP;
     sessionP = (async () => {
-      const T = self.Tool3D, b = base();
-      if (!self.ort) await loadScript(b + 'vendor/ort/ort.wasm.min.js');
-      if (!T.ortGlue) await loadScript(b + 'vendor/ort/ort-wasm-glue.js');
-      if (!T.ortWasmB64) await loadScript(b + 'vendor/ort/ort-wasm-bin.js');
+      const T = self.Tool3D, b = base(), shared = T.wear && T.wear.seg && T.wear.seg.ortInit;   // one runtime per page (seg-wear.js)
+      let ort;
+      if (shared) ort = await shared();
+      else {
+        if (!self.ort) await loadScript(b + 'vendor/ort/ort.wasm.min.js');
+        if (!T.ortGlue) await loadScript(b + 'vendor/ort/ort-wasm-glue.js');
+        if (!T.ortWasmB64) await loadScript(b + 'vendor/ort/ort-wasm-bin.js');
+        ort = self.ort;
+        ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false;
+        ort.env.wasm.wasmBinary = b64(T.ortWasmB64);
+        ort.env.wasm.wasmPaths = {mjs: URL.createObjectURL(new Blob([T.ortGlue], {type: 'text/javascript'}))};
+      }
       if (!T.aiModelB64) await loadScript(b + 'models/wear-backbone.onnx.js');
-      const ort = self.ort;
-      ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false;
-      ort.env.wasm.wasmBinary = b64(T.ortWasmB64);
-      ort.env.wasm.wasmPaths = {mjs: URL.createObjectURL(new Blob([T.ortGlue], {type: 'text/javascript'}))};
       const session = await ort.InferenceSession.create(b64(T.aiModelB64), {executionProviders: ['wasm'], graphOptimizationLevel: 'all'});
-      T.aiModelB64 = T.ortWasmB64 = null;   // free the base64 copies
+      T.aiModelB64 = null; if (!shared) T.ortWasmB64 = null;   // free the base64 copies
       return {ort, session};
     })();
     sessionP.catch(() => { sessionP = null; });

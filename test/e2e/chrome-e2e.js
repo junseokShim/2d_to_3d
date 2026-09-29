@@ -45,7 +45,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   while (Date.now() - tRun < 240000 && !(await ev(`document.querySelector('#engine').textContent`))) await sleep(500);   // AI wear: model load + inference
   res.checks.runMs = Date.now() - tRun; await sleep(1500); res.checks.spinnerShown = await ev(`window.__busySeen===true&&document.querySelector('#busy').hidden`);
   res.checks.engine = await ev(`document.querySelector('#engine').textContent`);
-  res.checks.engineRow = await ev(`[...document.querySelectorAll('#res tr')].some(r=>/엔진/.test(r.textContent)&&/AI \\(PatchCore\\)|classic/.test(r.textContent))`);
+  res.checks.engineRow = await ev(`[...document.querySelectorAll('#res tr')].some(r=>/엔진/.test(r.textContent)&&/AI \\(Seg\\)|AI \\(PatchCore\\)|classic/.test(r.textContent))`);
   res.checks.wearDebugEngine = await ev(`Tool3D.wearDebug&&Tool3D.wearDebug.engine`);
   res.checks.msg = await ev(`document.querySelector('#msg').textContent`);
   res.checks.resRows = await ev(`document.querySelectorAll('#res tr').length`);
@@ -242,7 +242,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     Tool3D.render.hand(null);o.back=hud();o.hand2=Tool3D.render.params.hand;Tool3D.render.setMap(null);return o})())`));
   { const H = res.checks.hand; H.ok = /RH \(default\)/.test(H.def) && H.btn0 === 'RH' && /LH \(user\)/.test(H.user) && H.btn1 === 'LH' && H.hand1 === -1 && H.mapAfter === 5 && /RH \(default\)/.test(H.back) && H.hand2 === 1; }
   const c = res.checks;
-  res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
+  res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(Seg\)|AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
     metroPanel: m.rows === 4 && m.matchesWear === true && m.hasU === true && /VBmax/.test(m.badge), metroDistance: m.distOk, metroCaliper: m.caliperOk, metroEdit: m.editOk,
     metroReport: !!(m.pdf && m.pdf.ok && m.csv && m.csv.ok && m.html && m.html.ok), metroHistory: m.history === 2,
