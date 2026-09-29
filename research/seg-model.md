@@ -1,7 +1,8 @@
 # Tool-wear segmentation model (AI (Seg) engine)
 
 Model shipped: `www/models/wear-seg.onnx.js` (ONNX in base64, run by onnxruntime-web wasm in the app).
-Checkpoint `.work/runs/ft3/best.pt` (= iteration 8000 of fine-tune 3), exported with `scripts/seg/export.py --cw .5,1,3,6,6`.
+Checkpoint `.work/runs/ft4/it8000.pt` (fine-tune 4 = ft3 + app-window framing `--win .5` + boundary loss `--bw 2`), exported with
+`scripts/seg/export.py --cw .5,1,3,6,6`. Before 2026-09-29 afternoon: ft3 it8000 (see the ft3 results below).
 Status 2026-09-29: good at finding the tool and wear on synthetic and public data; VB (flank wear land width) accuracy is
 about ±0.1 mm on synthetic tools; sides the engine cannot trust are sent to the operator. Not validated against a
 reference instrument (Alicona / Keyence) on real tools: there are none yet.
@@ -59,6 +60,23 @@ publication. The GPL data itself is not shipped with the app.
 | ft3 | ft2 it6000 | 8000 | pool .45, syn .35, mud .2, `--ignore_tool mud` | MUDESTREDA tool pixels ignored (its grey insert face looked like the grey mat in the human's photos) |
 
 RTX 3060, bf16, batch 12, 384 px crops, ~0.23 s/iteration.
+
+## Model choice ft3 vs ft4 vs ft5 (2026-09-29)
+
+Fresh engine validation sets `.work/valset31-42` (`make_testset --seed_add i*1000+7`, made for this comparison, used for
+nothing else), full engine (`.work/evalfresh.sh`), 108 worn + 24 clean sides:
+
+| export | mean wear IoU | network ~ exact-label VBmax | worn: within 0.1 / flagged / silent-wrong | clean silent-wrong | target tool IoU s1-s4, top |
+|---|---|---|---|---|---|
+| ft3 it8000 (was shipped) | .286 | 53/85 | 31 / 71 / 6 | 0 | .91 .91 .71 .71 .86 |
+| ft4 it7000 | .347 | 57/85 | 33 / 68 / 7 | 0 | .92 .91 .72 .72 .84 |
+| **ft4 it8000 (shipped)** | **.361** | 55/85 | 32 / 72 / **4** | 0 | .92 .91 .73 .72 .84 |
+| ft5 it6000 | .333 | 56/85 | 30 / 70 / 8 | 0 | .91 .90 .73 .66 .87 |
+| ft5 it8000 | .333 | 56/85 | 31 / 73 / 4 | 0 | **.58** .89 .71 .70 .87 |
+
+ft5 = ft3 + `--win .6`, pool .5 / syn .3 / mud .2, lr 2e-4 (its it8000 lost the human's side 1). Held-out `test/wear/seg`
+with ft4 it8000: wear IoU .305 (passes), seg-run 13 passed / 2 failed (clean side 1 VBmax 0.245 flagged; t42 0.426 vs
+0.289 silent-wrong). Parity torch vs wasm: argmax 0.000 % different.
 
 ## Results (ft3 it8000)
 
