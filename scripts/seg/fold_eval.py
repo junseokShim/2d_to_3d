@@ -134,7 +134,7 @@ def main():
     for name, rows in res.items():
         groups = {}
         for s, r in rows.items():
-            g = re.sub(r'_(s\d_\d|top|\d+)$', '', s)
+            g = re.sub(r'_(s\d_\d|top|\d+|C\d+_side\d)$', '', s)
             groups.setdefault(g, []).append((s, r))
         for g, rs in groups.items():
             side = [r for s, r in rs if not s.endswith('_top')]
