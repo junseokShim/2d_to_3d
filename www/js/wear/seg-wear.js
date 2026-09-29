@@ -22,6 +22,7 @@
   const NC = 5, CLASSES = ['background', 'tool', 'flank wear', 'chipping', 'adhesion'];
   const NET_MIN = 224, NET_MAX = 384;      // tool diameter in network pixels (training covered 60..460, mostly 150..400)
   const ABOVE = .3, BELOW = .3, SIDE = .8;  // window around the zone, in tool diameters
+  const EDGE_ON = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_ON) || .9, EDGE_ON_SHARE = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_SHARE) || .5;   // vb-edge-on flag (seg9, chosen on .work/valset88-102)
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
@@ -113,12 +114,13 @@
   // band normal in the photo (towards the nearest outside pixel) and f = 1 / sqrt(1 - (u/R)^2) the circumferential
   // compression, a projected thickness t is T = t / |(m_x / f, m_y)|.  Largest piece of flank wear + chipping in the zone (one photo = the flute it faces).
   function landWidth(wc, Wn, Hn, win, P, edgeU, vo = {}) {
-    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn);
+    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn)
+    const uRow = new Float32Array(Hn);   // |u| / R of each row's ridge (the land seen edge-on near the silhouette: foreshortening x 1 / sqrt(1 - u^2))
     const m = new Uint8Array(Wn * Hn), Yc = Y0 + Math.round((vo.zc || 0) * win.netD), uR = (vo.umax || 9) * Rn;
     for (let Y = Y0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if ((c === 2 || c === 3) && Math.abs(X + .5 - Wn / 2) < edgeU * Rn) m[Y * Wn + X] = 1; }
     const {lab, sizes} = components(m, Wn, Hn);
     let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
-    if (!best) return {vbMm, px: 0};
+    if (!best) return {vbMm, px: 0, uRow};
     for (let j = 0; j < m.length; j++) m[j] = lab[j] === best ? 1 : 0;
     const d = distIn(m, Wn, Hn);
     for (let Y = Yc; Y < Hn; Y++) {
@@ -132,11 +134,12 @@
       }
       const u = Math.min(.96, Math.abs(X + .5 - Wn / 2) / Rn), f = 1 / Math.sqrt(1 - u * u), n = Math.hypot(bx, by) || 1;
       vbMm[Y] = Math.max(1, 2 * d[jb] - .5) / Math.sqrt((bx / n / f) ** 2 + (by / n) ** 2) / ppm;
+      uRow[Y] = u;
     }
     // running median along the axis over +-VB_SMOOTH_MM: VBmax is the land's width, not a blob where lands meet
     const h = Math.round(VB_SMOOTH_MM * ppm), sm = new Float32Array(Hn);
-    if (h > 0) { for (let Y = 0; Y < Hn; Y++) { const q = Array.from(vbMm.subarray(Math.max(0, Y - h), Math.min(Hn, Y + h + 1))).sort((p, r) => p - r); sm[Y] = q[q.length >> 1]; } return {vbMm: sm, px: sizes[best]}; }
-    return {vbMm, px: sizes[best]};
+    if (h > 0) { for (let Y = 0; Y < Hn; Y++) { const q = Array.from(vbMm.subarray(Math.max(0, Y - h), Math.min(Hn, Y + h + 1))).sort((p, r) => p - r); sm[Y] = q[q.length >> 1]; } return {vbMm: sm, px: sizes[best], uRow}; }
+    return {vbMm, px: sizes[best], uRow};
   }
 
   // chipping / broken corner (class 3) that reaches the tip region -> wear-core's tip damage (VBC): axial depth from the
@@ -246,6 +249,13 @@
       const vbMaxOf = lw => { let v = 0; for (let Y = Yw; Y < zEnd0; Y++) v = Math.max(v, lw.vbMm[Y]); return v; };
       const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
       const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
+      // share of the rows at the land's widest (>= 90 % of VBmax, +-VB_SMOOTH_MM) whose ridge lies at |u| > EDGE_ON R: there a
+      // 1-3 px sliver is multiplied by the foreshortening (x 2.3-3.5), so VBmax is set by the geometry, not by the land
+      const hS = Math.round(VB_SMOOTH_MM * win.k * P.al.pxPerMm);
+      let edgeN = 0, topN = 0;
+      for (let Y = Yw; Y < zEnd0; Y++) if (vbArg > 0 && land.vbMm[Y] >= .9 * vbArg) for (let Z = Math.max(Yw, Y - hS); Z <= Math.min(zEnd0 - 1, Y + hS); Z++) if (land.uRow[Z] > 0) { topN++; if (land.uRow[Z] > EDGE_ON) edgeN++; }
+      const edgeShare = topN ? edgeN / topN : 0;
+      if (edgeShare > EDGE_ON_SHARE) flags.push('vb-edge-on');
       let vbFlip = null;
       if (opts.tta !== false && !opts.oracle) {
         const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
@@ -270,10 +280,10 @@
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1, wearSoftMm2: r4(wearSoft), wearPeak: r4(wearPk),
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
-        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}, post};
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare)}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
-          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}}};
+          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare)}}};
     }
     const segmenter = (P, i) => segmentSide(P, i);
     segmenter.faces = faces;
