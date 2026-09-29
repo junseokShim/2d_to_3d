@@ -27,9 +27,11 @@ Step ① **영상 종류** (default 자동 감지) decides where the images go; 
   before, 3/24 after; |VB - labelled max(VBC, VBmax)| mean 1.74 mm before, 0.86 mm after.
 
 ## Photo quality check (never blocks)
-The quality badge (js/enhance/quality.js) advises only: verdict pass | warn (`severe` marks a check at fail level) and the
-measurement always runs. A known px/mm (microscope calibration) replaces the silhouette estimate; close-ups skip the
-whole-tool silhouette check instead of asking for a re-shoot.
+The quality badge (js/enhance/quality.js) advises only; the measurement always runs. `fail` (`severe`, badge
+"품질 낮음 · 측정은 진행") sends the result to operator review in ④; it comes from sharpness / noise / exposure / glare or a
+whole-tool photo with no silhouette. px/mm is at most a warning, and blur in mm fails only on a trusted scale (microscope
+calibration, or a silhouette spanning >= 45 % of the frame) or when the blur is bad in px too (sigma > 4 px). Close-ups
+skip the silhouette check. QIT-CEMC close-ups (72): 34 fail before, 8 after (the 8 have sigma > 4 px); 26 now warn.
 
 ## Calibration (px/mm never comes from the tool diameter)
 - **µm/px 입력**: type the microscope's own µm/px for this magnification. Assumed tolerance 1 % (rectangular).
