@@ -1247,11 +1247,79 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "tool": [
+   [
+    [
+     462,
+     125
+    ],
+    [
+     548,
+     125
+    ],
+    [
+     525,
+     165
+    ],
+    [
+     500,
+     205
+    ],
+    [
+     475,
+     255
+    ],
+    [
+     452,
+     300
+    ],
+    [
+     432,
+     350
+    ],
+    [
+     412,
+     400
+    ],
+    [
+     398,
+     480
+    ],
+    [
+     318,
+     480
+    ],
+    [
+     338,
+     400
+    ],
+    [
+     355,
+     340
+    ],
+    [
+     366,
+     290
+    ],
+    [
+     385,
+     240
+    ],
+    [
+     405,
+     200
+    ],
+    [
+     428,
+     160
+    ]
+   ]
+  ]
  },
  "12Pi/12-1-2.jpg": {
   "view": "side",
-  "pxPerMmNote": "12Pi -2 shot: tool out of frame on both sides and the view differs from the -1 shot (SIFT registration fails) -> no scale; metrics in px",
+  "pxPerMmNote": "12Pi -2 shot: tool out of frame, SIFT registration to the -1 shot fails. px/mm = px/mm of the -1 shot of the same side (68.83) x 1.66, the pooled zoom ratio of the -1/-2 shots from the worn-land pixel width on sides 1-3 (1.65, 1.69, 1.65; side 4 land too small). The 10Pi -1/-2 pairs share one zoom, the 12Pi pairs do not. Uncertainty ~ +-25 %; VB of the -2 shot is NOT independent of the -1 shot (scale borrowed from the land width).",
   "poly3": [
    [
     [
@@ -1354,7 +1422,80 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "pxPerMm": 114.26,
+  "tool": [
+   [
+    [
+     318,
+     115
+    ],
+    [
+     478,
+     115
+    ],
+    [
+     450,
+     165
+    ],
+    [
+     422,
+     212
+    ],
+    [
+     396,
+     255
+    ],
+    [
+     375,
+     295
+    ],
+    [
+     352,
+     340
+    ],
+    [
+     335,
+     390
+    ],
+    [
+     318,
+     440
+    ],
+    [
+     305,
+     480
+    ],
+    [
+     228,
+     480
+    ],
+    [
+     250,
+     420
+    ],
+    [
+     272,
+     370
+    ],
+    [
+     295,
+     320
+    ],
+    [
+     318,
+     275
+    ],
+    [
+     322,
+     220
+    ],
+    [
+     318,
+     160
+    ]
+   ]
+  ]
  },
  "12Pi/12-2-1.jpg": {
   "view": "side",
@@ -1482,11 +1623,83 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "tool": [
+   [
+    [
+     418,
+     108
+    ],
+    [
+     518,
+     108
+    ],
+    [
+     495,
+     150
+    ],
+    [
+     470,
+     200
+    ],
+    [
+     445,
+     260
+    ],
+    [
+     420,
+     320
+    ],
+    [
+     400,
+     370
+    ],
+    [
+     385,
+     420
+    ],
+    [
+     370,
+     480
+    ],
+    [
+     275,
+     480
+    ],
+    [
+     285,
+     450
+    ],
+    [
+     300,
+     400
+    ],
+    [
+     320,
+     350
+    ],
+    [
+     335,
+     300
+    ],
+    [
+     350,
+     250
+    ],
+    [
+     370,
+     200
+    ],
+    [
+     395,
+     150
+    ]
+   ]
+  ]
  },
  "12Pi/12-2-2.jpg": {
   "view": "side",
-  "pxPerMmNote": "12Pi -2 shot: tool out of frame on both sides and the view differs from the -1 shot (SIFT registration fails) -> no scale; metrics in px",
+  "pxPerMmNote": "12Pi -2 shot: tool out of frame, SIFT registration to the -1 shot fails. px/mm = px/mm of the -1 shot of the same side (74.17) x 1.66, the pooled zoom ratio of the -1/-2 shots from the worn-land pixel width on sides 1-3 (1.65, 1.69, 1.65; side 4 land too small). The 10Pi -1/-2 pairs share one zoom, the 12Pi pairs do not. Uncertainty ~ +-25 %; VB of the -2 shot is NOT independent of the -1 shot (scale borrowed from the land width).",
   "poly3": [
    [
     [
@@ -1585,7 +1798,76 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "pxPerMm": 123.12,
+  "tool": [
+   [
+    [
+     312,
+     145
+    ],
+    [
+     470,
+     145
+    ],
+    [
+     450,
+     210
+    ],
+    [
+     430,
+     260
+    ],
+    [
+     410,
+     310
+    ],
+    [
+     390,
+     350
+    ],
+    [
+     370,
+     400
+    ],
+    [
+     345,
+     450
+    ],
+    [
+     330,
+     480
+    ],
+    [
+     272,
+     480
+    ],
+    [
+     285,
+     430
+    ],
+    [
+     300,
+     380
+    ],
+    [
+     320,
+     330
+    ],
+    [
+     335,
+     280
+    ],
+    [
+     330,
+     240
+    ],
+    [
+     310,
+     180
+    ]
+   ]
+  ]
  },
  "12Pi/12-3-1.jpg": {
   "view": "side",
@@ -1701,11 +1983,89 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "tool": [
+   [
+    [
+     352,
+     125
+    ],
+    [
+     462,
+     125
+    ],
+    [
+     445,
+     160
+    ],
+    [
+     420,
+     210
+    ],
+    [
+     400,
+     250
+    ],
+    [
+     382,
+     295
+    ],
+    [
+     368,
+     330
+    ],
+    [
+     282,
+     330
+    ],
+    [
+     295,
+     290
+    ],
+    [
+     310,
+     245
+    ],
+    [
+     330,
+     200
+    ],
+    [
+     340,
+     150
+    ]
+   ],
+   [
+    [
+     282,
+     330
+    ],
+    [
+     368,
+     330
+    ],
+    [
+     345,
+     390
+    ],
+    [
+     325,
+     480
+    ],
+    [
+     240,
+     480
+    ],
+    [
+     258,
+     400
+    ]
+   ]
+  ]
  },
  "12Pi/12-3-2.jpg": {
   "view": "side",
-  "pxPerMmNote": "12Pi -2 shot: tool out of frame on both sides and the view differs from the -1 shot (SIFT registration fails) -> no scale; metrics in px",
+  "pxPerMmNote": "12Pi -2 shot: tool out of frame, SIFT registration to the -1 shot fails. px/mm = px/mm of the -1 shot of the same side (66.67) x 1.66, the pooled zoom ratio of the -1/-2 shots from the worn-land pixel width on sides 1-3 (1.65, 1.69, 1.65; side 4 land too small). The 10Pi -1/-2 pairs share one zoom, the 12Pi pairs do not. Uncertainty ~ +-25 %; VB of the -2 shot is NOT independent of the -1 shot (scale borrowed from the land width).",
   "poly3": [
    [
     [
@@ -1816,7 +2176,88 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "pxPerMm": 110.67,
+  "tool": [
+   [
+    [
+     318,
+     125
+    ],
+    [
+     478,
+     125
+    ],
+    [
+     468,
+     160
+    ],
+    [
+     450,
+     200
+    ],
+    [
+     430,
+     250
+    ],
+    [
+     410,
+     290
+    ],
+    [
+     390,
+     330
+    ],
+    [
+     370,
+     370
+    ],
+    [
+     350,
+     420
+    ],
+    [
+     330,
+     460
+    ],
+    [
+     318,
+     480
+    ],
+    [
+     255,
+     480
+    ],
+    [
+     270,
+     450
+    ],
+    [
+     290,
+     400
+    ],
+    [
+     310,
+     350
+    ],
+    [
+     330,
+     300
+    ],
+    [
+     325,
+     260
+    ],
+    [
+     305,
+     200
+    ],
+    [
+     300,
+     150
+    ]
+   ]
+  ]
  },
  "12Pi/12-3.jpg": {
   "view": "top",
@@ -1945,11 +2386,97 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "tool": [
+   [
+    [
+     405,
+     135
+    ],
+    [
+     500,
+     135
+    ],
+    [
+     480,
+     170
+    ],
+    [
+     462,
+     210
+    ],
+    [
+     440,
+     255
+    ],
+    [
+     415,
+     300
+    ],
+    [
+     395,
+     340
+    ],
+    [
+     378,
+     370
+    ],
+    [
+     312,
+     370
+    ],
+    [
+     325,
+     330
+    ],
+    [
+     345,
+     280
+    ],
+    [
+     362,
+     230
+    ],
+    [
+     378,
+     190
+    ],
+    [
+     392,
+     160
+    ]
+   ],
+   [
+    [
+     312,
+     370
+    ],
+    [
+     378,
+     370
+    ],
+    [
+     362,
+     420
+    ],
+    [
+     345,
+     480
+    ],
+    [
+     282,
+     480
+    ],
+    [
+     298,
+     420
+    ]
+   ]
+  ]
  },
  "12Pi/12-4-2.jpg": {
   "view": "side",
-  "pxPerMmNote": "12Pi -2 shot: tool out of frame on both sides and the view differs from the -1 shot (SIFT registration fails) -> no scale; metrics in px",
+  "pxPerMmNote": "12Pi -2 shot: tool out of frame, SIFT registration to the -1 shot fails. px/mm = px/mm of the -1 shot of the same side (72.83) x 1.66, the pooled zoom ratio of the -1/-2 shots from the worn-land pixel width on sides 1-3 (1.65, 1.69, 1.65; side 4 land too small). The 10Pi -1/-2 pairs share one zoom, the 12Pi pairs do not. Uncertainty ~ +-25 %; VB of the -2 shot is NOT independent of the -1 shot (scale borrowed from the land width).",
   "poly3": [
    [
     [
@@ -2060,6 +2587,87 @@
   ],
   "notes": "12Pi close-up: rough bright band along the front peripheral cutting edge = worn flank land with coating loss and smeared/adhered material (adhesion not separable at this focus -> class 2); the broken top of the band at the corner (within ~0.7 mm of the tip, jagged silhouette) = class 3; specular streaks on the flute (right) and the smooth end-face wedge = tool; defocused far part of the band = 255",
   "silhouetteFull": false,
-  "ringPx": 3
+  "ringPx": 3,
+  "pxPerMm": 120.9,
+  "tool": [
+   [
+    [
+     325,
+     125
+    ],
+    [
+     492,
+     125
+    ],
+    [
+     475,
+     160
+    ],
+    [
+     455,
+     200
+    ],
+    [
+     440,
+     240
+    ],
+    [
+     420,
+     270
+    ],
+    [
+     400,
+     305
+    ],
+    [
+     380,
+     350
+    ],
+    [
+     362,
+     400
+    ],
+    [
+     335,
+     450
+    ],
+    [
+     318,
+     480
+    ],
+    [
+     258,
+     480
+    ],
+    [
+     275,
+     440
+    ],
+    [
+     295,
+     390
+    ],
+    [
+     315,
+     340
+    ],
+    [
+     325,
+     300
+    ],
+    [
+     330,
+     250
+    ],
+    [
+     322,
+     200
+    ],
+    [
+     318,
+     160
+    ]
+   ]
+  ]
  }
 }

@@ -19,7 +19,9 @@ TOOLS = {'10Pi_1': 10.0, '10Pi_2': 10.0, '12Pi': 12.0}
 DEFS = {
     'tipLine': 'side view: straight line fitted to the intact top silhouette (end of the tool); top view: circle fitted to the intact outer silhouette',
     'chipDepthMm': 'max distance of class-3 pixels from the tip line (side) or inward from the outer circle (top)',
-    'vbcMm': 'max distance from the tip line of any wear/chip/adhesion pixel (2,3,4) in the region connected to the tip (corner wear incl. chipping, ISO 8688-2 VBC-like)',
+    'vbcMm': 'corner wear VBC (ISO 8688-2): max distance from the tip line of chip/adhesion pixels (3,4) in regions touching the tip line (on these tools the corner wear is a fracture, so VBC = corner fracture depth); 0 when the corner is intact',
+    'wearLenMm': 'axial extent of the class-2 land below the tip line (the peripheral land runs down the helix; not a VB value)',
+    'topView': 'top (end) views: the outer rim is ignore (255) and no damage is labelled -> damage metrics null (not assessed)',
     'vbMaxMm': 'class-2 land width measured perpendicular to the land axis (principal axis of each connected land), max over the land; null when no class 2',
     'vbMeanMm': 'mean of that width profile (bins of 0.1 mm along the axis)',
     'areaMm2': 'pixel area per class / pxPerMm^2',
@@ -218,7 +220,7 @@ def run(root, spec, only=None, prev=None):
         s = ppm or 1.0; unit = 'mm' if ppm else 'px'
         chip = m == 3
         met['chipDepth' + ('Mm' if ppm else 'Px')] = round(float(depth[chip].max()) / s, 3) if chip.any() else 0.0
-        dm = np.isin(m, (2, 3, 4)) | ((m == 255) & dmg)
+        dm = np.isin(m, (3, 4))
         n, lbl = cv2.connectedComponents(dm.astype(np.uint8), connectivity=8)
         vbc = 0.0
         for i in range(1, n):
@@ -229,6 +231,11 @@ def run(root, spec, only=None, prev=None):
         met['vbMax' + ('Mm' if ppm else 'Px')], met['vbMean' + ('Mm' if ppm else 'Px')] = vbmax, vbmean
         met['area' + ('Mm2' if ppm else 'Px')] = {str(c): round(float((m == c).sum()) / s / s, 4) for c in (2, 3, 4)}
         met['hasWear'] = bool((m == 2).any()); met['hasChip'] = bool(chip.any()); met['hasAdhesion'] = bool((m == 4).any())
+        met['wearLen' + ('Mm' if ppm else 'Px')] = round(float(depth[m == 2].max()) / s, 3) if (m == 2).any() else 0.0
+        if view == 'top':
+            for k in list(met):
+                if k.startswith(('chipDepth', 'vbc', 'vbMax', 'vbMean', 'wearLen')): met[k] = None
+            met['hasChip'] = None; met['hasWear'] = None
         met['unit'] = unit; met['notes'] = sp.get('notes', '')
         info['gt'] = {k: v for k, v in met.items() if k not in ('id', 'image', 'tool', 'D', 'view', 'side', 'notes')}
         cv2.imwrite(os.path.join(P, 'images', sid + '.png'), im)
