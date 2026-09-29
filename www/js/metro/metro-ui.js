@@ -65,6 +65,7 @@
   <div class="mt-side">
     <div class="mt-lights" id="mtLights"></div>
     <table class="mt-tab" id="mtTable"></table>
+    <div class="mt-card" id="mtPost" hidden></div>
     <div class="mt-card"><div class="mt-h">VB(z) profile <small>z = 팁에서 축방향 거리</small></div><canvas id="mtChart"></canvas></div>
     <div class="mt-card" id="mtCal"></div>
     <div class="mt-card" id="mtBudget"></div>
@@ -162,7 +163,7 @@
       return e;
     });
     if (!first) publish();
-    renderTable(); renderLights(); drawChart(); renderCal(); renderBudget(); renderHist(); renderAssist(); draw();
+    renderTable(); renderPost(); renderLights(); drawChart(); renderCal(); renderBudget(); renderHist(); renderAssist(); draw();
     window.dispatchEvent(new CustomEvent('tool3d:metro', {detail: summary()}));
   }
   function publish() {
@@ -178,6 +179,20 @@
   }
 
   // ---------- tables ----------
+  // AI (Seg) land post-processed the way the two commercial VB solutions report it (wear-post.js, wearResult.post):
+  // Keyence = reference line on the unworn cutting edge, perpendicular distances; Alicona = EdgeQuality defects + VB (ISO 8688)
+  function renderPost() {
+    const el = $('#mtPost'), P = S.base && S.base.post; if (!el) return;
+    if (!P || !P.some(Boolean)) { el.hidden = true; return; }
+    const f = v => v == null ? '—' : (+v).toFixed(3), um = v => v == null ? '—' : Math.round(v * 1000);
+    el.hidden = false;
+    el.innerHTML = `<div class="mt-h">후처리 · Keyence / Alicona 방식 <small>AI 마모 영역을 두 상용 솔루션의 판독 방식으로 재계산 (측정 참고값, 판정은 위 표)</small></div>
+      <table class="mt-tab"><tr><th>날</th><th title="미마모 절삭날에 맞춘 기준선에서 마모 경계까지 수직 거리">Keyence VBmax</th><th title="기준선 아래로 후퇴한 절삭날 (치핑)">날 후퇴 µm</th>
+      <th title="전체 날 기준 VBmax / VBmean (ISO 8688)">Alicona VBmax / mean</th><th title="결함 수 Nd · 결함 길이 비율 Pd">Nd · Pd</th><th title="최대 결함 깊이 Ddmax · 최대 결함 길이 Ldmax · 여유면 결함 길이 Ldcmax">Ddmax · Ldmax · Ldcmax µm</th></tr>
+      ${P.map((p, i) => p ? `<tr><td>F${i + 1}</td><td>${f(p.keyence.VBmax)} mm</td><td>${um(p.keyence.edgeRecessionMax)}</td><td>${f(p.alicona.VBmax)} / ${f(p.alicona.VBmean)} mm</td>
+        <td>${p.alicona.Nd} · ${(+p.alicona.Pd).toFixed(1)} %</td><td>${um(p.alicona.Ddmax)} · ${um(p.alicona.Ldmax)} · ${um(p.alicona.Ldcmax)}</td></tr>` : `<tr><td>F${i + 1}</td><td colspan="5">마모 영역 없음</td></tr>`).join('')}</table>
+      <div class="hint">사진 1장으로는 경사면(Ldr)과 높이(체적 Vp·Vv·Vd)를 알 수 없어 표시하지 않습니다. 허용 오차 ${um(P.find(Boolean).alicona.toleranceMm)} µm.</div>`;
+  }
   function renderTable() {
     const L = opts().limitMm, head = '<tr><th>Flute</th><th>VBmax</th><th>VBB (avg)</th><th>VBC corner</th><th>VBN notch</th><th title="이 날에서 한계 대비">%</th><th></th></tr>';
     $('#mtTable').innerHTML = head + S.ev.map((e, i) => e ? `<tr data-row="${i}" class="${i === S.sel ? 'sel' : ''}">
