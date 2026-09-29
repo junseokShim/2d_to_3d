@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import train, target_eval, data
 
 P = os.path.join(data.DS_ROOT, 'processed')
+KEYENCE = os.path.join(data.DS_ROOT, 'reference', 'keyence')      # Keyence VHX insert images (no tool diameter): whole frame, short side --short
 
 
 def land_width(m, ppm):
@@ -81,8 +82,12 @@ def main():
     ap.add_argument('ckpts', nargs='+')
     ap.add_argument('--match', default=r'^hum_')
     ap.add_argument('--net_d', type=int, default=256)
+    ap.add_argument('--root', default=os.path.join(data.DS_ROOT, 'processed'), help='dataset dir with images/ masks/ labelinfo/ (e.g. fold_eval.KEYENCE)')
+    ap.add_argument('--short', type=int, default=384, help='images without a tool diameter: short side in px')
     ap.add_argument('--encoder', default='tu-mobilenetv3_large_100')
     a = ap.parse_args()
+    global P
+    P = a.root
     os.makedirs(a.outdir, exist_ok=True)
     stems = sorted(os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(P, 'masks', '*.png')))
     stems = [s for s in stems if re.search(a.match, s)]
@@ -97,13 +102,14 @@ def main():
             lab = cv2.imread(os.path.join(P, 'masks', s + '.png'), cv2.IMREAD_UNCHANGED)
             info = json.load(open(os.path.join(P, 'labelinfo', s + '.json'), encoding='utf-8'))
             ppm = info['pxPerMm']
-            pred, crop, pnet = predict_full(m, img, info['D'] * ppm, a.net_d)
+            Dpx = info['D'] * ppm if info.get('D') else min(img.shape[:2]) * a.net_d / a.short
+            pred, crop, pnet = predict_full(m, img, Dpx, a.net_d)
             v = lab != 255
             r = dict(tool=iou(pred > 0, lab > 0, v), chip=iou(pred == 3, lab == 3, v), damage=iou(pred >= 2, lab >= 2, v) if ((lab >= 2) & v).any() or ((pred >= 2) & v).any() else float('nan'),
                      flank=iou(pred == 2, lab == 2, v))
             pm = pred.copy(); pm[~v] = 0
-            pr = measures(pm, info)
-            gt = info['gt']
+            pr = measures(pm, info) if info.get('tipLine') or info.get('circle') else {}
+            gt = info.get('gt', {})
             r.update({k + 'Pred': round(pr[k], 3) for k in pr})
             r.update(chipDepthGt=gt.get('chipDepthMm') or 0.0, vbcGt=gt.get('vbcMm') or 0.0, vbMaxGt=gt.get('vbMaxMm') or 0.0)
             rows[s] = {k: (round(x, 3) if isinstance(x, float) else x) for k, x in r.items()}
@@ -128,12 +134,12 @@ def main():
     for name, rows in res.items():
         groups = {}
         for s, r in rows.items():
-            g = re.sub(r'_(s\d_\d|top)$', '', s)
+            g = re.sub(r'_(s\d_\d|top|\d+)$', '', s)
             groups.setdefault(g, []).append((s, r))
         for g, rs in groups.items():
             side = [r for s, r in rs if not s.endswith('_top')]
             f = lambda k, L=rs: np.nanmean([r[k] for s, r in L]) if L else float('nan')
-            e = lambda kp, kg: np.mean([abs(r[kp] - r[kg]) for r in side]) if side else float('nan')
+            e = lambda kp, kg: np.mean([abs(r[kp] - r[kg]) for r in side]) if side and kp in side[0] else float('nan')
             print(f'{name:28s} {g:12s} n{len(rs):2d} IoU tool {f("tool"):.3f} chip {f("chip"):.3f} flank {f("flank"):.3f} damage {f("damage"):.3f} | '
                   f'side |err| chipDepth {e("chipDepthMmPred", "chipDepthGt"):.3f} VBC {e("vbcMmPred", "vbcGt"):.3f} VBmax {e("vbMaxMmPred", "vbMaxGt"):.3f} mm')
 
