@@ -274,17 +274,22 @@
     const chunks = [], offs = []; let len = 0;
     const put = b => { if (typeof b === 'string') b = enc(b); chunks.push(b); len += b.length; };
     const obj = (i, body) => { offs[i] = len; put(`${i} 0 obj\n`); (Array.isArray(body) ? body : [body]).forEach(put); put('\nendobj\n'); };
-    const content = page.ops.join('\n'), nImg = page.images.length, first = 7;
+    // one page (object) or several ([page, page, ...]; js/post adds its page after the metrology page)
+    const pages = Array.isArray(page) ? page : [page];
     put('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n');
     obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
-    obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-    const xo = page.images.map((m, i) => `/${m.name} ${first + i} 0 R`).join(' ');
-    obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.W} ${page.H}] /Contents 6 0 R /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << ${xo} >> >> >>`);
-    obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-    obj(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-    obj(6, [`<< /Length ${content.length} >>\nstream\n`, content, '\nendstream']);
-    page.images.forEach((m, i) => obj(first + i, [`<< /Type /XObject /Subtype /Image /Width ${m.pw} /Height ${m.ph} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${m.jpeg.length} >>\nstream\n`, m.jpeg, '\nendstream']));
-    const nObj = first + nImg, xref = len;
+    obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+    obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+    let next = 5; const kids = [];
+    for (const pg of pages) {
+      const pi = next, ci = next + 1, first = next + 2, content = pg.ops.join('\n'); next = first + pg.images.length; kids.push(pi + ' 0 R');
+      const xo = pg.images.map((m, i) => `/${m.name} ${first + i} 0 R`).join(' ');
+      obj(pi, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pg.W} ${pg.H}] /Contents ${ci} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << ${xo} >> >> >>`);
+      obj(ci, [`<< /Length ${content.length} >>\nstream\n`, content, '\nendstream']);
+      pg.images.forEach((m, i) => obj(first + i, [`<< /Type /XObject /Subtype /Image /Width ${m.pw} /Height ${m.ph} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${m.jpeg.length} >>\nstream\n`, m.jpeg, '\nendstream']));
+    }
+    obj(2, `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages.length} >>`);
+    const nObj = next, xref = len;
     put(`xref\n0 ${nObj}\n0000000000 65535 f \n` + offs.slice(1).map(o => String(o).padStart(10, '0') + ' 00000 n \n').join(''));
     put(`trailer\n<< /Size ${nObj} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
     const out = new Uint8Array(len); let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
