@@ -22,6 +22,7 @@ Test: `node test/micro/run.js`; E2E step "microscope" in `test/e2e/chrome-e2e.js
 1. The image is turned by 90° steps so the tool is on top (auto, from the network's tool/background probability).
 2. The segmentation U-Net (seg-wear.js) runs on the whole image near native resolution (long side capped at 1600 px).
 3. Cutting edge = robust straight-line fit to the tool/background boundary; chipped stretches (edge receded) are left out.
+   **VB reference (`vbRef`, default `reference`, Keyence style):** the edge is refitted on the unworn stretches only (land <= max(3 px, 15% of the widest land)) and VB is measured from that line, but only when the worn edge lies outside it by more than max(3 px, 2 sigma); otherwise the fitted edge is used (`edge`). Both methods are reported (`alt` rows, `ref.source`). On the Keyence VHX masks VB at the arrow is +0.7/+1.4/+4.2 % from Keyence with `reference` versus +0.7/+20.5/+33.1 % with `edge`; MUDESTREDA results are unchanged (the reference line never triggers there).
 4. Wear = p(flank wear) + p(chipping) > **0.985** (`WEAR_THR`), keeping only wear connected to the edge. VB is measured normal to the edge line.
    ISO 8688-2: VBB (mean) and VBBmax in zone B, VBC in corner zone C.
 5. U (k=2) combines scale (calibration), edge line fit, wear boundary (spread between thresholds 0.95 and 0.995) and one network pixel.
@@ -48,6 +49,7 @@ under-states the real error; treat U as the measurement's internal spread, not a
   On the test split 28/56 images were flagged; flagged mean error 13.4 px vs 10.3 px unflagged (a weak gate).
 
 ## Limits
+- The network is the phone model (MUDESTREDA fine-tune ft4). On Keyence VHX colour images of a coated insert it finds no wear (flag `no-wear`): measure those from a hand mask or the metrology panel. A microscope fine-tune was tried and not shipped (research/keyence-reference.md, 'Microscope fine-tune'); the app looks for `models/wear-seg-micro.onnx.js` and falls back to the phone model.
 - Trained on one dataset (MUDESTREDA, one microscope and lighting). Other microscopes, coatings or lighting may read differently: check with the metrology panel.
 - The edge must be roughly straight in the image; strong corner radii in view are fitted as one line.
 - The tool must be on one side of the edge with background on the other (no silhouette/through-light images).

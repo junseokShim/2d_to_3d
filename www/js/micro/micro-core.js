@@ -27,6 +27,7 @@
   // so at argmax it spills wear into the tool body (val T3: VBmax bias +25 px, sharp tools read x2). The threshold was picked
   // on the val split only (VBmax MAE 25 -> 6.7 px, VBB 12.4 -> 6.5); WEAR_LO / WEAR_HI bracket it for the boundary part of U
   const WEAR_THR = .985, WEAR_LO = .95, WEAR_HI = .995;
+  const VB_REF = 'reference';   // default VB method: 'reference' (Keyence-style line on the unworn edge) | 'edge' (fitted edge)
   const r4 = v => Math.round(v * 1e4) / 1e4;
   const med = a => { const b = Array.from(a).sort((p, q) => p - q); return b.length ? b[b.length >> 1] : 0; };
 
@@ -95,9 +96,17 @@
       let y = h - 1; while (y >= 2 && !(fg(x, y) > .5 && fg(x, y - 1) > .5 && fg(x, y - 2) > .5)) y--;
       if (y < 2 || y >= h - 1) continue;                     // no tool in this column, or the tool reaches the bottom
       const p0 = fg(x, y), p1 = fg(x, y + 1), t = p0 > p1 ? (p0 - .5) / (p0 - p1) : 0;
-      pts.push([(x + .5) * sx - .5, (y + .5 + t) * sy - .5]);
+      // third element: label oracle only (seg.ign = ignore pixels of a hand mask): the edge lies in a wide ignore band (unknown)
+      const ig = seg.ign && (() => { let n = 0; for (let k = y + 1; k >= 0 && seg.ign[k * w + x]; k--) n++; for (let k = y + 2; k < h && seg.ign[k * w + x]; k++) n++; return n >= 16; })();
+      pts.push(ig ? [(x + .5) * sx - .5, (y + .5 + t) * sy - .5, 1] : [(x + .5) * sx - .5, (y + .5 + t) * sy - .5]);
     }
     if (pts.length < Math.max(8, .3 * w)) return null;
+    const L = robustLine(pts); if (!L) return null;
+    return Object.assign(L, {cover: r4(pts.length / w), pts});
+  }
+  // line y = a + b x through points: Tukey-weighted fit, then points above the line by more than 2.5 sigma (edge receded =
+  // chipped / broken) dropped and refitted
+  function robustLine(pts) {
     const fit = (P, wt) => {
       let s = 0, sxx = 0, sx_ = 0, sy_ = 0, sxy = 0;
       P.forEach(([x, y], i) => { const q = wt ? wt[i] : 1; s += q; sx_ += q * x; sy_ += q * y; sxx += q * x * x; sxy += q * x * y; });
@@ -113,8 +122,46 @@
     let res = pts.map(([x, y]) => y - L.a - L.b * x); sig = 1.4826 * med(res.map(Math.abs)) || 1;
     const keep = pts.filter((_, i) => res[i] > -2.5 * sig); L = fit(keep) || L;
     res = keep.map(([x, y]) => y - L.a - L.b * x); sig = Math.sqrt(res.reduce((s, r) => s + r * r, 0) / Math.max(1, res.length - 2));
-    const recede = pts.length - keep.length;
-    return {a: L.a, b: L.b, sigmaPx: r4(sig), n: keep.length, receded: recede, cover: r4(pts.length / w)};
+    return {a: L.a, b: L.b, sigmaPx: r4(sig), n: keep.length, receded: pts.length - keep.length};
+  }
+
+  // ---------- reference line (Keyence VHX style): the original cutting edge fitted on its unworn part ----------
+  // The worn stretch of an edge is not where the edge was: it is rounded, chipped (receded into the tool) or smeared / built
+  // up (lies outside the original line; Keyence 152008: up to 24 um). A VHX operator fits a line on the unworn part of the
+  // edge and measures VB perpendicular to it. Here: edge points whose raw land (edge-line maths) is at most REF_UNWORN of the
+  // largest land, or a few network px, are the unworn part; with fewer than REF_MIN of the edge points unworn, the edge fit
+  // itself is the reference (source 'edge': the whole edge in view is worn, as in most MUDESTREDA close-ups); also when the
+  // unworn line and the edge fit lie within max(REF_GAP network px, 2 sigma) of each other over the worn stretch.
+  const REF_UNWORN = .15, REF_MIN = .1, REF_GAP = +(typeof process !== 'undefined' && process.env && process.env.REF_GAP) || 3;
+  function refEdge(line, F, raw, sx) {
+    const pts = line.pts || [], L = raw.length, uOf = ([x, y]) => x * F.t[0] + (y - line.a) * F.t[1] - F.u0;
+    let mx = 0; for (let u = 0; u < L; u++) mx = Math.max(mx, raw[u]);
+    const lim = Math.max(3 * sx, REF_UNWORN * mx), halfW = Math.max(2, Math.round(sx));
+    const un = pts.filter(p => { const u = Math.round(uOf(p)); let m = 0; for (let k = Math.max(0, u - halfW); k <= Math.min(L - 1, u + halfW); k++) m = Math.max(m, raw[k]); return u >= 0 && u < L && m <= lim && !p[2]; });
+    const base = {unwornLimPx: r4(lim), unwornPts: un.length, nPts: pts.length};
+    if (!(mx > 0) || un.length < Math.max(8, REF_MIN * pts.length)) return Object.assign({a: line.a, b: line.b, sigmaPx: line.sigmaPx, source: 'edge'}, base);
+    // consensus line: the unworn stretch can hold junk (overlay text, dust, the image border), so the line is the one most
+    // unworn points lie on (within tol, deterministic pairs of an even subsample), then a robust refit on those points
+    const tol = Math.max(2, 1.5 * sx), S = un.filter((_, i) => i % Math.max(1, Math.floor(un.length / 60)) === 0);
+    let best = null, bestN = -1;
+    for (let i = 0; i < S.length; i++) for (let j = i + 1; j < S.length; j++) {
+      const [x1, y1] = S[i], [x2, y2] = S[j]; if (Math.abs(x2 - x1) < 10 * sx) continue;
+      const b = (y2 - y1) / (x2 - x1), a = y1 - b * x1, c = Math.sqrt(1 + b * b);
+      let n = 0; for (const [x, y] of un) if (Math.abs(y - a - b * x) / c <= tol) n++;
+      if (n > bestN) { bestN = n; best = {a, b}; }
+    }
+    const inl = best ? un.filter(([x, y]) => Math.abs(y - best.a - best.b * x) / Math.sqrt(1 + best.b * best.b) <= 2 * tol) : un;
+    const R = inl.length >= 8 ? robustLine(inl) : null; if (!R) return Object.assign({a: line.a, b: line.b, sigmaPx: line.sigmaPx, source: 'edge'}, base);
+    // span of the fitted unworn stretch along the edge (share of the edge line in view): a short stretch extrapolates its angle
+    const us = inl.map(uOf).sort((p, q) => p - q), span = (us[Math.floor(.98 * (us.length - 1))] - us[Math.floor(.02 * (us.length - 1))]) / Math.max(1, L);
+    // the two lines over the worn stretch: when they agree (the worn edge still lies on the original line), the fit to the
+    // whole edge is the better-determined reference; they part when the worn edge is smeared out / rounded / broken
+    const worn = pts.filter(p => !un.includes(p) && !p[2]), n1 = Math.hypot(1, R.b);
+    const gap = worn.length ? med(worn.map(([x]) => Math.abs((line.a + line.b * x) - (R.a + R.b * x)) / n1)) : 0, gapLim = Math.max(REF_GAP * sx, 2 * line.sigmaPx);
+    const outPx = worn.length ? med(worn.map(([x, y]) => (y - R.a - R.b * x) / n1)) : 0;   // + = the worn edge lies outside the line
+    Object.assign(base, {inliers: inl.length, span: r4(span), gapPx: r4(gap), gapLimPx: r4(gapLim), wornOutPx: r4(outPx)});
+    if (!(outPx > gapLim)) return Object.assign({a: line.a, b: line.b, sigmaPx: line.sigmaPx, source: 'edge'}, base);
+    return Object.assign(R, base, {source: 'unworn'});
   }
 
   // ---------- edge frame: u along the edge line, v normal into the tool ----------
@@ -146,10 +193,12 @@
   }
 
   // VB per edge row (px, normal to the edge line) from a class lookup cls(u, v) (2/3 = wear, -1 outside):
-  // wear pixels in connected pieces that touch the edge (|v| <= vTol), the land's far boundary per row, running median
-  function landRows(cls, L, V, vTol, smooth) {
+  // wear pixels in connected pieces that touch the edge (|v| <= vTol), the land's far boundary per row, running median.
+  // fill (reference line): background inside the line (v > 0, material broken out of the original edge) joins the pieces,
+  // so a land behind a chipped stretch still touches the line; far is still the last wear pixel
+  function landRows(cls, L, V, vTol, smooth, fill) {
     const Wc = PADV + V, m = new Uint8Array(L * Wc), out = new Uint8Array(L);
-    for (let u = 0; u < L; u++) for (let c = 0; c < Wc; c++) { const k = cls(u, c - PADV); if (k === 2 || k === 3) m[u * Wc + c] = 1; else if (k < 0) out[u] = 1; }
+    for (let u = 0; u < L; u++) for (let c = 0; c < Wc; c++) { const k = cls(u, c - PADV); if (k === 2 || k === 3) m[u * Wc + c] = 1; else if (k < 0) out[u] = 1; else if (fill && k === 0 && c > PADV) m[u * Wc + c] = 2; }
     const lab = new Int32Array(L * Wc), touch = [0], st = [];
     for (let s = 0; s < m.length; s++) {
       if (!m[s] || lab[s]) continue;
@@ -162,7 +211,7 @@
     }
     const vb = new Float32Array(L), band = new Uint8Array(L * Wc);
     for (let u = 0; u < L; u++) {
-      let far = -1; for (let c = Wc - 1; c >= PADV; c--) if (lab[u * Wc + c] && touch[lab[u * Wc + c]]) { far = c; break; }
+      let far = -1; for (let c = Wc - 1; c >= PADV; c--) if (m[u * Wc + c] === 1 && touch[lab[u * Wc + c]]) { far = c; break; }
       if (far >= PADV) { vb[u] = far + 1 - PADV; for (let c = PADV; c <= far; c++) band[u * Wc + c] = 1; }
     }
     const sm = new Float32Array(L);
@@ -194,14 +243,22 @@
     const im = rotate(img, q), seg = q === 0 && seg0 ? seg0 : await segOf(im), W = im.width, H = im.height;
     const line = fitEdge(seg);
     if (!line) throw new Error('micro: 절삭날(공구/배경 경계)을 찾지 못했습니다');
-    const F = frame(line, W, H); if (!F) throw new Error('micro: 절삭날 선이 영상 밖입니다');
     const ppm = o.pxPerMm, sx = seg.scale[0], vTol = Math.max(3, Math.round(2 * sx + line.sigmaPx)), smooth = o.smoothPx != null ? o.smoothPx : Math.max(2, Math.round(1.5 * sx));
-    const lookup = thr => (u, v) => { const [x, y] = F.toImg(u, v); return classAtImg(seg, x, y, W, H, thr); };
-    const main = landRows(lookup(o.thr === 'argmax' ? null : o.thr == null ? WEAR_THR : o.thr), F.L, F.V, vTol, smooth),
-      lo = landRows(lookup(WEAR_LO), F.L, F.V, vTol, smooth), hi = landRows(lookup(WEAR_HI), F.L, F.V, vTol, smooth);
-    const mm = a => Float32Array.from(a, v => v / ppm);
-    const corner = o.corner || 'none', cornerMm = o.cornerMm == null ? .2 : o.cornerMm;
-    const st = isoStats(mm(main.vb), ppm, corner, cornerMm), stLo = isoStats(mm(lo.vb), ppm, corner, cornerMm), stHi = isoStats(mm(hi.vb), ppm, corner, cornerMm);
+    const corner = o.corner || 'none', cornerMm = o.cornerMm == null ? .2 : o.cornerMm, mm = a => Float32Array.from(a, v => v / ppm);
+    const thr0 = o.thr === 'argmax' ? null : o.thr == null ? WEAR_THR : o.thr;
+    // VB rows normal to a line (the fitted edge, or the reference line: fill = broken-out material counts)
+    const measure = (Ln, fill) => {
+      const F = frame(Ln, W, H); if (!F) return null;
+      const lookup = thr => (u, v) => { const [x, y] = F.toImg(u, v); return classAtImg(seg, x, y, W, H, thr); };
+      const main = landRows(lookup(thr0), F.L, F.V, vTol, smooth, fill), lo = landRows(lookup(WEAR_LO), F.L, F.V, vTol, smooth, fill), hi = landRows(lookup(WEAR_HI), F.L, F.V, vTol, smooth, fill);
+      return {F, main, st: isoStats(mm(main.vb), ppm, corner, cornerMm), stLo: isoStats(mm(lo.vb), ppm, corner, cornerMm), stHi: isoStats(mm(hi.vb), ppm, corner, cornerMm)};
+    };
+    const E = measure(line, false); if (!E) throw new Error('micro: 절삭날 선이 영상 밖입니다');
+    const ref = refEdge(line, E.F, E.main.raw, sx), Rm = ref.source === 'unworn' ? measure(ref, true) || E : E;
+    // actual edge outside the reference line (Keyence [2] 'edge offset'): 95th percentile over the edge points, mm
+    { const n = Math.hypot(1, ref.b), out = (line.pts || []).map(([x, y]) => (y - ref.a - ref.b * x) / n).filter(d => d > 0).sort((p, q) => p - q);
+      ref.outsideMm = r4(out.length ? out[Math.floor(.95 * (out.length - 1))] / ppm : 0); }
+    const method = o.vbRef || VB_REF, M = method === 'edge' ? E : Rm, F = M.F, main = M.main, st = M.st, stLo = M.stLo, stHi = M.stHi, refLine = method === 'edge' ? line : ref;
     // uncertainty (standard, mm): scale, edge line (fit residual / sqrt of the independent columns + a floor of one network
     // pixel's .5), wear boundary (threshold spread as a rectangular half width), boundary pixel (.5 network px)
     const uRel = o.uRel || 0, uLine = Math.hypot(line.sigmaPx, .5 * sx) / ppm, uPix = .5 * sx / ppm;
@@ -227,7 +284,12 @@
       for (let ch = 0; ch < 3; ch++) { const v = (d[i + ch] * (1 - fx) + d[i + 4 + ch] * fx) * (1 - fy) + (d[k + ch] * (1 - fx) + d[k + 4 + ch] * fx) * fy; rgb[3 * j + ch] = v; gg += [.299, .587, .114][ch] * v; }
       g[j] = gg;
     }
-    return {q, side, line, frame: {L: F.L, V: F.V, u0: F.u0, t: F.t, nv: F.nv}, toImg: (u, v) => { const [x, y] = F.toImg(u, v); return unrotate(q, img.width, img.height, x, y); },
+    const methods = {edge: E.st, reference: Object.assign({}, Rm.st, {source: ref.source, outsideMm: ref.outsideMm})};
+    // the other method's rows (reports / tests compare both at one position)
+    const A = method === 'edge' ? Rm : E, aLine = method === 'edge' ? ref : line;
+    const alt = {vbRef: method === 'edge' ? 'reference' : 'edge', refLine: {a: aLine.a, b: aLine.b}, frame: {L: A.F.L, V: A.F.V, u0: A.F.u0, t: A.F.t, nv: A.F.nv},
+      vbPx: A.main.vb, vbRawPx: A.main.raw, toImg: (u, v) => { const [x, y] = A.F.toImg(u, v); return unrotate(q, img.width, img.height, x, y); }};
+    return {q, side, line, ref: Object.assign({}, ref, {pts: undefined}), vbRef: method, refLine: {a: refLine.a, b: refLine.b}, methods, alt, frame: {L: F.L, V: F.V, u0: F.u0, t: F.t, nv: F.nv}, toImg: (u, v) => { const [x, y] = F.toImg(u, v); return unrotate(q, img.width, img.height, x, y); },
       netScale: r4(1 / sx), vbPx: main.vb, vbRawPx: main.raw, band: main.band, Wc, rgb, g, stats: st, q2, flags, ppm, seg};
   }
 
@@ -254,6 +316,6 @@
     return {strip, band, rowVbMm};
   }
 
-  return {MAGS, NET_LONG, WEAR_THR, WEAR_LO, WEAR_HI,PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats,
+  return {MAGS, NET_LONG, WEAR_THR, WEAR_LO, WEAR_HI, VB_REF, REF_UNWORN, REF_MIN, PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats, robustLine, refEdge,
     analyzeImage, fluteStrip, r4};
 });

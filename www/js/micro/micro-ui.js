@@ -8,12 +8,13 @@
   const $ = s => document.querySelector(s), el = (tag, attrs = {}, html = '') => Object.assign(document.createElement(tag), attrs, html ? {innerHTML: html} : {});
   const store = (() => { try { return window.localStorage; } catch (e) { return null; } })() || {getItem: () => null, setItem: () => {}};
   const PREF = 'tool3d.micro.prefs', MAXPX = 2400;
-  const S = Object.assign({mode: 'camera', mag: 50, corner: 'none', cornerMm: .2}, (() => { try { return JSON.parse(store.getItem(PREF) || '{}') || {}; } catch (e) { return {}; } })(), {imgs: [], last: null});
-  const savePrefs = () => { try { store.setItem(PREF, JSON.stringify({mode: S.mode, mag: S.mag, corner: S.corner, cornerMm: S.cornerMm})); } catch (e) { /* private mode */ } };
+  const S = Object.assign({mode: 'camera', mag: 50, corner: 'none', cornerMm: .2, vbRef: 'reference'}, (() => { try { return JSON.parse(store.getItem(PREF) || '{}') || {}; } catch (e) { return {}; } })(), {imgs: [], last: null});
+  const savePrefs = () => { try { store.setItem(PREF, JSON.stringify({mode: S.mode, mag: S.mag, corner: S.corner, cornerMm: S.cornerMm, vbRef: S.vbRef})); } catch (e) { /* private mode */ } };
   const cal = () => MC().calStore(store);
   const msg = t => { const m = $('#msg'); if (m) m.textContent = t || ''; };
   const f3 = v => v == null ? '—' : (+v).toFixed(3);
   const CORNER = {none: '영상에 없음', start: '왼쪽 끝', end: '오른쪽 끝'};
+  const VBREF = {reference: '미마모 날 기준선 (Keyence)', edge: '절삭날 직선'};
   const FLAG = {'vb-uncertain': 'VB 경계 불확실', 'edge-ragged': '절삭날 선 불규칙', 'edge-short': '절삭날이 영상 일부에만 보임', 'no-wear': '마모 밴드 없음', review: '작업자 검토 필요'};
 
   // ---------- step ①: input mode, magnification, calibration ----------
@@ -33,7 +34,8 @@
     <p class="hint">배율마다 교정이 기기에 저장됩니다. px/mm 는 공구경이 아니라 이 교정에서 옵니다.</p></div>
   <label class="row"><span>코너 위치</span><select id="miCorner">${Object.entries(CORNER).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
   <label class="row"><span>C 구역 (mm)</span><input id="miCornerMm" type="number" step="0.05" min="0" style="width:6em"></label>
-  <p class="hint">코너 위치는 공구가 위, 배경이 아래로 오게 본 방향 기준입니다.</p>
+  <label class="row"><span>VB 기준선</span><select id="miVbRef">${Object.entries(VBREF).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+  <p class="hint">코너 위치는 공구가 위, 배경이 아래로 오게 본 방향 기준입니다. VB 기준선: 미마모 절삭날에 맞춘 기준선(Keyence VHX 방식, 기본) 또는 전체 절삭날 직선.</p>
 </div>
 <div id="miCalDlg" class="mi-dlg" hidden><div class="mi-box">
   <h3 id="miCalTitle">배율 교정</h3>
@@ -52,6 +54,7 @@
     $('#miCalDel').onclick = () => { cal().remove(S.mag); renderCal(); };
     $('#miRef').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) openCalDlg(f); };
     $('#miCorner').value = S.corner; $('#miCorner').onchange = e => { S.corner = e.target.value; savePrefs(); };
+    $('#miVbRef').value = S.vbRef; $('#miVbRef').onchange = e => { S.vbRef = e.target.value; savePrefs(); };
     $('#miCornerMm').value = S.cornerMm; $('#miCornerMm').onchange = e => { S.cornerMm = Math.max(0, +e.target.value || 0); savePrefs(); };
     calDlg();
     setMode(S.mode, true);
@@ -153,7 +156,7 @@
     await new Promise(ok => requestAnimationFrame(() => setTimeout(ok, 0)));
     try {
       const all = flutes.flatMap(i => S.imgs[i]), long = Math.max(...all.map(s => Math.max(s.naturalWidth || s.width, s.naturalHeight || s.height)));
-      const sc = Math.min(1, MAXPX / long), ppm = c.pxPerMm * sc, runProbs = await T.wear.seg.runner(), core = MC();
+      const sc = Math.min(1, MAXPX / long), ppm = c.pxPerMm * sc, runProbs = await (T.wear.seg.microRunner || T.wear.seg.runner)(), core = MC();
       const per = [], strips = [], sides = [], images = [], posts = [];
       for (let i = 0; i < k; i++) {
         const list = S.imgs[i] || [];
@@ -161,15 +164,15 @@
         const res = [];
         for (let j = 0; j < list.length; j++) {
           const corner = S.corner === 'start' && j === 0 ? 'start' : S.corner === 'end' && j === list.length - 1 ? 'end' : 'none';
-          try { res.push(await core.analyzeImage(toImage(list[j], sc), {runProbs, seg: T.wear.seg, pxPerMm: ppm, uRel: c.uRel, corner, cornerMm: S.cornerMm})); }
+          try { res.push(await core.analyzeImage(toImage(list[j], sc), {runProbs, seg: T.wear.seg, pxPerMm: ppm, uRel: c.uRel, corner, cornerMm: S.cornerMm, vbRef: S.vbRef})); }
           catch (e) { images.push({flute: i + 1, image: j + 1, error: String(e.message || e)}); }
         }
         if (!res.length) { per.push({vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: [], failed: true}); strips.push(null); sides.push(null); continue; }
         res.forEach((r, j) => images.push({flute: i + 1, image: j + 1, name: list[j] && list[j].dataset ? list[j].dataset.name : null, q: r.q, edge: {sigmaPx: r.line.sigmaPx, cover: r.line.cover, receded: r.line.receded},
-          stats: r.stats, vbMax: r.q2.vbMax, vbb: r.q2.vbb, vbc: r.q2.vbc, flags: r.flags, netScale: r.netScale, result: r}));
+          stats: r.stats, vbRef: r.vbRef, methods: {reference: r.methods.reference, edge: r.methods.edge}, vbMax: r.q2.vbMax, vbb: r.q2.vbb, vbc: r.q2.vbc, flags: r.flags, netScale: r.netScale, result: r}));
         const worst = res.reduce((a, b) => b.stats.vbMax > a.stats.vbMax ? b : a), worn = res.reduce((s, r) => s + r.stats.wornMm, 0);
         const vbb = worn ? res.reduce((s, r) => s + r.stats.vbb * r.stats.wornMm, 0) / worn : 0, vbc = res.map(r => r.stats.vbc).filter(v => v != null);
-        per.push({vbMaxMm: worst.stats.vbMax, vbAvgMm: core.r4(vbb), vbbMm: core.r4(vbb), vbcMm: vbc.length ? Math.max(...vbc) : null, U: worst.q2.vbMax.U, areaMm2: 0, volumeMm3: 0, profile: [], images: res.length,
+        per.push({vbMaxMm: worst.stats.vbMax, vbAvgMm: core.r4(vbb), vbbMm: core.r4(vbb), vbcMm: vbc.length ? Math.max(...vbc) : null, U: worst.q2.vbMax.U, vbRef: worst.vbRef, refSource: worst.ref.source, vbMaxRefMm: worst.methods.reference.vbMax, vbMaxEdgeMm: worst.methods.edge.vbMax, edgeOutsideMm: worst.ref.outsideMm, areaMm2: 0, volumeMm3: 0, profile: [], images: res.length,
           flags: [...new Set(res.flatMap(r => r.flags))]});
         // Keyence / Alicona style post-processing of the worst image's land (js/wear/wear-post.js; edge = tool / background boundary)
         const PO = T.wear.post, sg = worst.seg;
@@ -177,8 +180,8 @@
         strips.push(core.fluteStrip(res, ppm, S.corner));
         sides.push({align: {pxPerMm: ppm}, reasons: per[i].flags});
       }
-      const engine = `AI (Seg) · 현미경 ${S.mag}x`;
-      const wr = {engine: 'micro', inputMode: 'microscope', magnification: S.mag, diameterMm: Dmm, flutes: k, helixDeg: 0, perFlute: per,
+      const engine = `AI (Seg${runProbs.micro ? ' micro' : ''}) · 현미경 ${S.mag}x`;
+      const wr = {engine: 'micro', model: runProbs.micro ? 'wear-seg-micro' : 'wear-seg', inputMode: 'microscope', magnification: S.mag, vbRef: S.vbRef, diameterMm: Dmm, flutes: k, helixDeg: 0, perFlute: per,
         post: per.map((_, i) => posts[i] ? {keyence: posts[i].keyence, alicona: posts[i].alicona, lengthMm: posts[i].lengthMm, edgeSide: posts[i].edgeSide} : null),
         totals: {vbMaxMm: Math.max(0, ...per.map(f => f.vbMaxMm)), areaMm2: 0, volumeMm3: 0}, calib: {pxPerMm: ppm, umPerPx: core.r4(1000 / ppm), uRel: c.uRel, method: c.method}};
       T.wearResult = wr; T.faceSeg = null;
@@ -195,9 +198,10 @@
   }
   function renderResults(k, per, images, c, ppm) {
     const rows = [['입력 방식', `현미경 ${S.mag}x`], ['교정', `${(1000 / ppm).toFixed(4)} µm/px · ${ppm.toFixed(1)} px/mm (${c.method === 'um/px' ? 'µm/px 입력' : '스테이지 마이크로미터'}, U<sub>rel</sub> ${(200 * c.uRel).toFixed(2)} %)`],
-      ['코너 (VBC 구역)', S.corner === 'none' ? '영상에 없음' : `${CORNER[S.corner]} · ${S.cornerMm} mm`]];
+      ['코너 (VBC 구역)', S.corner === 'none' ? '영상에 없음' : `${CORNER[S.corner]} · ${S.cornerMm} mm`], ['VB 기준선', VBREF[S.vbRef] || S.vbRef]];
     per.forEach((f, i) => rows.push([`F${i + 1} VBmax / VBB${f.vbcMm != null ? ' / VBC' : ''}`, f.missing ? '영상 없음' : f.failed ? '절삭날 미검출' :
       `${f3(f.vbMaxMm)} ± ${f3(f.U)} / ${f3(f.vbbMm)}${f.vbcMm != null ? ' / ' + f3(f.vbcMm) : ''} mm${f.flags.length ? ` <small>(${f.flags.map(x => FLAG[x] || x).join(', ')})</small>` : ''}`]));
+    per.forEach((f, i) => { if (f.vbMaxRefMm != null) rows.push([`F${i + 1} VBmax 기준선 / 절삭날`, `${f3(f.vbMaxRefMm)} / ${f3(f.vbMaxEdgeMm)} mm <small>(${f.refSource === 'unworn' ? `미마모 구간 기준선, 실제 날이 기준선 밖 ${f3(f.edgeOutsideMm)} mm` : '기준선 = 절삭날 직선'})</small>`]); });
     const err = images.filter(m => m.error); if (err.length) rows.push(['실패한 영상', err.map(m => `F${m.flute}-${m.image}: ${m.error}`).join('<br>')]);
     $('#res').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
     $('#strips').replaceChildren(...images.filter(m => m.result).map(m => overlay(m)));

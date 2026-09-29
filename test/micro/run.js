@@ -60,8 +60,27 @@ const blank = (W, H) => ({width: W, height: H, data: new Uint8ClampedArray(W * H
   const side = MC.toolSide(flip); check('tool side detection: upside-down image -> 2 quarter turns', side.q === 2, JSON.stringify(side));
   const s90 = MC.toolSide({prob: (() => { const p = new Float32Array(5 * W * W), n = W * W; for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) p[(x < 300 ? 1 : 0) * n + y * W + x] = 1; return p; })(), w: W, h: W, scale: [1, 1]});
   check('tool side detection: tool on the left -> 1 clockwise quarter turn', s90.q === 1, JSON.stringify(s90));
+  // reference line (Keyence VHX style): the worn stretch (x >= 300) is smeared 20 px outside the original edge line, its land
+  // reaches 40 px inside the original line; the unworn part (x < 300) carries no wear
+  const sgR = (() => {
+    const n = W * H, prob = new Float32Array(5 * n), c = Math.sqrt(1 + B * B);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const d = (A + B * x - y) / c, worn = x >= 300, k = worn ? (d < -20 ? 0 : d < 40 ? 2 : 1) : (d < 0 ? 0 : 1);
+      prob[k * n + y * W + x] = 1;
+    }
+    return {prob, w: W, h: H, scale: [1, 1]};
+  })();
+  const rR = await MC.analyzeImage(blank(W, H), {oracle: () => sgR, rotate: 0, pxPerMm: 100, smoothPx: 0});
+  check('reference line: fitted on the unworn part (default method)', rR.vbRef === 'reference' && rR.ref.source === 'unworn' && Math.abs(rR.ref.a - A) < 1 && Math.abs(rR.ref.b - B) < .003, JSON.stringify({a: rR.ref.a, b: rR.ref.b, src: rR.ref.source}));
+  near('reference line: VBmax = land from the original edge line (0.40 mm)', rR.stats.vbMax, .4, .015);
+  check('edge method reads more (the fitted edge is pulled out by the smeared stretch); both reported', rR.methods.edge.vbMax > .45 && Math.abs(rR.methods.reference.vbMax - rR.stats.vbMax) < 1e-9, `edge ${rR.methods.edge.vbMax}`);
+  near('actual edge outside the reference line (p95) = 0.20 mm', rR.ref.outsideMm, .2, .015);
+  const rE = await MC.analyzeImage(blank(W, H), {oracle: () => sgR, rotate: 0, pxPerMm: 100, smoothPx: 0, vbRef: 'edge'});
+  check('vbRef edge selectable: stats = edge method', rE.vbRef === 'edge' && Math.abs(rE.stats.vbMax - rR.methods.edge.vbMax) < 1e-9);
+  const rS = await MC.analyzeImage(blank(W, H), {oracle: () => sg, rotate: 0, pxPerMm: 100, smoothPx: 0});
+  check('worn edge on the original line (chipped, not smeared): reference = edge fit', rS.ref.source === 'edge' && rS.stats.vbMax === rS.methods.edge.vbMax, rS.ref.source);
   // no wear
-  const r0 = await MC.analyzeImage(blank(W, H), {oracle: () => synth(W, H, A, B, () => 0), rotate: 0, pxPerMm: 100});
+  const r0 =await MC.analyzeImage(blank(W, H), {oracle: () => synth(W, H, A, B, () => 0), rotate: 0, pxPerMm: 100});
   check('sharp edge: VB 0, flagged no-wear', r0.stats.vbMax === 0 && r0.flags.includes('no-wear'));
 
   console.log('\n# 3. metrology panel inputs (flute strip -> metro-core)');

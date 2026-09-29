@@ -66,7 +66,7 @@ Column definitions:
 
    151443 agrees (−2.4%) because its edge is straight.
 
-   To match Keyence, the app needs a reference-line option: fit the edge on the unworn part only, then measure VB from that line. This is an app change and out of scope here.
+   Done (fc5afff): micro-core `vbRef: 'reference'` (default) fits the unworn edge and measures from it; mask VB at the arrow is now +0.7/+1.4/+4.2 % from Keyence (edge method +0.7/+20.5/+33.1 %).
 3. **App network vs mask: fails on this domain.** The U-Net finds no wear on any of the 5 images, and tool IoU is only 26–56%.
    - It flags `edge-ragged,no-wear,review`.
    - It turns the X100 images by 180° (2×90) where the mask needs 0.
@@ -75,3 +75,19 @@ Column definitions:
 4. **Label quality notes.**
    - The 151743/152008 far boundary has two straight polygon steps (x≈1245 and x≈1360 work px), far from the arrow; this is cosmetic.
    - 152822 has no clean twin, so its overlay box ("[1]77.60µm") and arrow are ignore pixels on the wear boundary. For that reason keyence-run caps how far wear fills into ignore regions (6 px) and reads the K-line on offset rays.
+
+## Microscope fine-tune (leave-one-view-out, 2026-09-29): negative, not shipped
+
+Setup: `scripts/seg/train_micro.py` from the shipped ft4, 3000 it, batch 8, 384 px, mix MUDESTREDA 50 % / Keyence 50 %; one fold per held-out view (x100 = 151425+151443, x300 = 151743+152008, x300s = 152822), trained on the other two. IoU from the Python full-image eval; app VB = keyence-run.js with the fold export (`SEG_MODEL`), reference maths.
+
+| fold (held out) | held-out wear IoU (base) | held-out tool IoU (base) | app VB at arrow, held out (base) | mud_val wear IoU (base .588) |
+|---|---|---|---|---|
+| x300 | .136 (0) | .963 (.26) | 152008 [1]: 0 µm, -100 % (-100 %) | .552 |
+| x100 | .365 (0) | .501 (.31) | 151443 [1]: 0 µm, -100 % (-100 %) | .511 |
+| x300s | .410 (0) | .835 (.56) | 152822 [1]: 0 µm, -100 % (-100 %) | .457 |
+
+- Held-out wear IoU rises above 0, but no held-out view gives a VB at the Keyence arrow: the land found is patchy and does not reach the arrow rows.
+- On the training views the same models read within 0-10 % of Keyence (e.g. 152008 -0.0 %/+2.0 %, 151443 -8.4 %/-9.9 %): the gain is memorisation of the view, not transfer.
+- mud_val wear drops by .04-.13, so the phone domain would also lose.
+- Decision: ship the reference-line maths only; no `wear-seg-micro` model; keyence-run.js stays report-only (no network thresholds). Needed before retrying: more Keyence views (several tools and coatings), so that a held-out view is not the only example of its magnification.
+
