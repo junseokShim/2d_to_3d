@@ -86,6 +86,70 @@
     return {lab, sizes};
   }
 
+  // chamfer (3-4) distance to the nearest pixel outside m, /3 = px
+  function distIn(m, w, h) {
+    const d = new Float32Array(w * h), B = 1e9;
+    for (let i = 0; i < w * h; i++) d[i] = m[i] ? B : 0;
+    const at = (x, y) => x < 0 || y < 0 || x >= w || y >= h ? 0 : d[y * w + x];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (d[i]) d[i] = Math.min(d[i], at(x - 1, y) + 3, at(x, y - 1) + 3, at(x - 1, y - 1) + 4, at(x + 1, y - 1) + 4); }
+    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) { const i = y * w + x; if (d[i]) d[i] = Math.min(d[i], at(x + 1, y) + 3, at(x, y + 1) + 3, at(x + 1, y + 1) + 4, at(x - 1, y + 1) + 4); }
+    for (let i = 0; i < w * h; i++) d[i] /= 3;
+    return d;
+  }
+
+  // Flank land width VB per network row, normal to the cutting edge. The worn land runs along the helical edge, so the
+  // row span of the band (first .. last pixel, wear-core's classic measure) takes in the land's length on a slanted edge;
+  // here VB = the band's thickness (2 x inner distance at its ridge, per row), un-foreshortened on the cylinder: with m the
+  // band normal in the photo (towards the nearest outside pixel) and f = 1 / sqrt(1 - (u/R)^2) the circumferential
+  // compression, a projected thickness t is T = t / |(m_x / f, m_y)|.  Largest piece of flank wear + chipping in the zone (one photo = the flute it faces).
+  function landWidth(wc, Wn, Hn, win, P, edgeU) {
+    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn);
+    const m = new Uint8Array(Wn * Hn);
+    for (let Y = Y0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if ((c === 2 || c === 3) && Math.abs(X + .5 - Wn / 2) < edgeU * Rn) m[Y * Wn + X] = 1; }
+    const {lab, sizes} = components(m, Wn, Hn);
+    let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
+    if (!best) return {vbMm, px: 0};
+    for (let j = 0; j < m.length; j++) m[j] = lab[j] === best ? 1 : 0;
+    const d = distIn(m, Wn, Hn);
+    for (let Y = Y0; Y < Hn; Y++) {
+      let jb = -1; for (let X = 0; X < Wn; X++) { const j = Y * Wn + X; if (m[j] && (jb < 0 || d[j] > d[jb])) jb = j; }
+      if (jb < 0) continue;
+      // band normal at the ridge = direction to the nearest pixel outside the band
+      const X = jb % Wn, r = Math.ceil(d[jb]) + 1; let bx = 0, by = 1, bd = 1e9;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const x = X + dx, y = Y + dy, q = dx * dx + dy * dy;
+        if (q < bd && (x < 0 || y < 0 || x >= Wn || y >= Hn || !m[y * Wn + x])) { bd = q; bx = dx; by = dy; }
+      }
+      const u = Math.min(.96, Math.abs(X + .5 - Wn / 2) / Rn), f = 1 / Math.sqrt(1 - u * u), n = Math.hypot(bx, by) || 1;
+      vbMm[Y] = Math.max(1, 2 * d[jb] - .5) / Math.sqrt((bx / n / f) ** 2 + (by / n) ** 2) / ppm;
+    }
+    return {vbMm, px: sizes[best]};
+  }
+
+  // chipping / broken corner (class 3) that reaches the tip region -> wear-core's tip damage (VBC): axial depth from the
+  // tip line, arc width, area; mask on the strip for the overlay
+  function tipChips(wc, cls, Wn, Hn, win, P, strip, y1) {
+    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, Rmm = Rn / ppm;
+    const reach = Y0 + Math.round(.3 * win.netD), minPx = (.15 * ppm) ** 2;
+    const m = new Uint8Array(Wn * Hn); for (let j = 0; j < m.length; j++) m[j] = wc[j] === 3 ? 1 : 0;
+    const {lab, sizes} = components(m, Wn, Hn), keep = new Uint8Array(sizes.length);
+    const r0 = new Int32Array(sizes.length).fill(1e9), r1 = new Int32Array(sizes.length).fill(-1), span = sizes.map(() => new Map());
+    for (let j = 0; j < m.length; j++) { const c = lab[j]; if (!c) continue; const Y = j / Wn | 0, X = j % Wn, e = span[c].get(Y); r0[c] = Math.min(r0[c], Y); r1[c] = Math.max(r1[c], Y); span[c].set(Y, e ? [Math.min(e[0], X), Math.max(e[1], X)] : [X, X]); }
+    const arc = X => Rmm * Math.asin(Math.max(-1, Math.min(1, (X - Wn / 2) / Rn)));
+    const best = {depthMm: 0, widthMm: 0, areaMm2: 0, px: 0};
+    for (let c = 1; c < sizes.length; c++) {
+      if (sizes[c] < minPx || r0[c] > reach || r1[c] < Y0) continue;
+      keep[c] = 1;
+      const depthMm = r4((r1[c] + 1 - Math.max(r0[c], Y0)) / ppm), widths = [...span[c].values()].map(([a, b]) => arc(b + 1) - arc(a)).sort((p, q) => p - q);
+      best.areaMm2 = r4(best.areaMm2 + sizes[c] / ppm / ppm); best.px += sizes[c];
+      if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm: r4(widths[widths.length >> 1])});
+    }
+    if (!best.px) return null;
+    const {w, h, top} = strip, mask = new Uint8Array(w * h);
+    for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) if (cls[y * w + x] === 3) mask[y * w + x] = 1;
+    return Object.assign(best, {mask, y1, source: 'seg'});
+  }
+
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
   function createSegmenter(runProbs, core, opts = {}) {
     const faces = [];
@@ -111,6 +175,13 @@
       const {lab, sizes} = components(m, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
+      const land = landWidth(wc, Wn, Hn, win, P, EDGE_U);
+      const rowVbMm = new Float32Array(y1 - top);
+      for (let y = top; y < y1; y++) {
+        const Ya = Math.max(0, Math.floor(fromStrip(cx, y - .5)[1])), Yb = Math.min(Hn - 1, Math.ceil(fromStrip(cx, y + .5)[1]));
+        let v = 0; for (let Y = Ya; Y <= Yb; Y++) v = Math.max(v, land.vbMm[Y]); rowVbMm[y - top] = v;
+      }
+      const tip = tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
@@ -119,7 +190,7 @@
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), bandPieces: sizes.length - 1};
-      return {band, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls,
+      return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn}};
     }
     const segmenter = (P, i) => segmentSide(P, i);

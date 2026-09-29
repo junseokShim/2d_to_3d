@@ -430,6 +430,8 @@
     const arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R)));
     const rows = [];
     for (let y = top; y < seg.y1; y++) {
+      // seg.rowVbMm (AI (Seg)): the segmenter measured the land width normal to the edge itself (band thickness); as arc width here
+      if (seg.rowVbMm) { rows.push((seg.rowVbMm[y - top] || 0) / cb); continue; }
       let a = -1, b = -1; for (let x = 0; x < w; x++) if (seg.band[y * w + x]) { if (a < 0) a = x; b = x; }
       rows.push(a < 0 ? 0 : arc(b + .5 - cx) - arc(a - .5 - cx));
     }
