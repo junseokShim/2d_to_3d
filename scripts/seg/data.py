@@ -58,7 +58,8 @@ def real_sample(rng, ip, mp_, size, strength=1.0, ignore_tool=False):
 
 
 def make(task):
-    """task = ('synth', seed, pool, meta, size[, win]) | ('real', seed, image, mask, size[, ignore_tool])"""
+    """task = ('synth' | 'micro', seed, pool, meta, size[, win]) | ('real', seed, image, mask, size[, ignore_tool])
+    'micro': a USB-microscope pool render composited on a coloured backlight (augment.compose_micro)"""
     kind, seed = task[0], task[1]
     rng = np.random.default_rng(seed)
     try:
@@ -69,6 +70,8 @@ def make(task):
         i = meta['id']
         rgba = cv2.imread(os.path.join(pool, f'{i:06d}_rgba.png'), cv2.IMREAD_UNCHANGED)
         lab = cv2.imread(os.path.join(pool, f'{i:06d}_lab.png'), cv2.IMREAD_UNCHANGED)
+        if kind == 'micro':
+            return augment.compose_micro(rng, rgba, lab, size, meta, win=win)
         return augment.compose(rng, rgba, lab, size, meta, win=win)
     except Exception as e:   # a bad file must not kill training
         print('sample error', task[:2], e, flush=True)
