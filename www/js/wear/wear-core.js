@@ -482,7 +482,7 @@
     const y1 = Math.min(h, top + Math.round(Math.max(1, TIP_ZONE_D * D) * ppm)), raw = new Uint8Array(w * h);
     const nb = band ? dilateMask(band, w, h, Math.max(1, Math.round(.15 * ppm))) : null;   // flank band + its rim: measured by the band
     const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
-    const rough = ppm >= ROUGH_PPM ? roughMap(strip, y1) : null;
+    const rough = ppm >= ROUGH_PPM ? roughMap(strip, Math.min(h, y1 + Math.round(TIP_BELOW_MM * ppm) + 1)) : null;
     for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
       // a fracture face can be backdrop-coloured (a pale facet catching the light) and the backdrop flood of backdropAlign
       // takes it where it reaches the tip line; inside the silhouette (below the tip line, |u| < R) a rough pixel is still tool
@@ -514,7 +514,7 @@
       // a fracture face ends: the body right below it (same columns, next TIP_BELOW_MM) is dark. A specular highlight on the
       // cylinder or a flute margin runs on down the tool at about the same brightness (synthetic false fires: below / blob
       // brightness >= 0.60; the human's broken teeth: 0.28-0.36; chosen on .work/valset43-57)
-      if (continuesBelow(strip, tm, pts, span, r1)) continue;
+      if (continuesBelow(strip, tm, pts, span, r1, null, rough)) continue;
       for (const p of pts) out[p] = 1;
       best.areaMm2 = r4(best.areaMm2 + pts.length / ppm / ppm); best.px += pts.length;
       if (depthMm > best.depthMm) Object.assign(best, {depthMm, widthMm});
@@ -558,7 +558,7 @@
   // std over a ROUGH_MM window (human's USB-microscope photos, 0.1 mm: chips 30-33, specular streaks 10-19, body ~1 grey
   // levels, p50) above ROUGH_STD and a local mean above ROUGH_MEAN marks a fracture candidate (tip region only; the 0.3 mm
   // opening of tipDamage removes the thin high-std rims along edges).
-  const ROUGH_MM = .1, ROUGH_STD = 24, ROUGH_MEAN = 40, ROUGH_PPM = 30;   // below 30 px/mm a 0.1 mm window is < 3 px: edges, not texture
+  const ROUGH_MM = .1, ROUGH_STD = 24, ROUGH_MEAN = 40, ROUGH_PPM = 30, ROUGH_BLOB = .4;   // ROUGH_BLOB: share of rough pixels that makes a blob a fracture face   // below 30 px/mm a 0.1 mm window is < 3 px: edges, not texture
   function roughMap(strip, y1) {
     const {w, g, rgb, ppm} = strip, r = Math.max(2, Math.round(ROUGH_MM * ppm)), W1 = w + 1, I = new Float64Array(W1 * (y1 + 1)), I2 = new Float64Array(W1 * (y1 + 1)), N = new Float64Array(W1 * (y1 + 1));
     for (let y = 0; y < y1; y++) { let a = 0, b = 0, c = 0; for (let x = 0; x < w; x++) { const i = y * w + x, v = rgb ? (rgb[3 * i] + rgb[3 * i + 1] + rgb[3 * i + 2]) / 3 : g[i], ok = !Number.isNaN(g[i]); if (ok) { a += v; b += v * v; c++; } const k = (y + 1) * W1 + x + 1; I[k] = I[k - W1] + a; I2[k] = I2[k - W1] + b; N[k] = N[k - W1] + c; } }
@@ -573,17 +573,18 @@
   const TIP_BELOW_MM = 1.5, TIP_BELOW_X = .5;
   // r0 (optional, a blob away from the tip line): the highlight may also run on above it (a specular band on the helical
   // flank is cut into pieces by the zone end and by darker patches; a land piece is bounded by the edge's own geometry)
-  function continuesBelow(strip, tm, pts, span, r1, r0) {
+  // rough (optional, roughMap rows): a rough blob (fracture face) followed by smooth bright metal (a specular flank) ends there
+  function continuesBelow(strip, tm, pts, span, r1, r0, rough) {
     const {w, h, g, rgb, ppm} = strip, lum = i => rgb ? (rgb[3 * i] + rgb[3 * i + 1] + rgb[3 * i + 2]) / 3 : g[i];
     // the window follows the blob's slant (row-centre line fit: a highlight on a helical margin runs diagonally)
     const med = a => a.sort((p, q) => p - q)[a.length >> 1], sp = [...span.values()], hw = (med(sp.map(s => s[1] - s[0])) + 1) / 2;
     let my = 0, mx = 0, sxy = 0, syy = 0; for (const [y, [l, r]] of span) { my += y; mx += (l + r) / 2; } my /= span.size; mx /= span.size;
     for (const [y, [l, r]] of span) { sxy += (y - my) * ((l + r) / 2 - mx); syy += (y - my) ** 2; }
     const sl = Math.max(-2, Math.min(2, syy ? sxy / syy : 0)), xc = y => mx + sl * (y - my);
-    let lb = 0; for (const p of pts) lb += lum(p); lb /= pts.length;
-    const along = (ya, yb) => { let s = 0, n = 0;
-    for (let y = Math.max(0, ya); y < Math.min(h, yb); y++) for (let x = Math.max(0, Math.round(xc(y) - hw)); x <= Math.min(w - 1, Math.round(xc(y) + hw)); x++) { const i = y * w + x; if (tm[i] && !Number.isNaN(g[i])) { s += lum(i); n++; } }
-    return n >= .25 * 2 * hw * TIP_BELOW_MM * ppm && s / n > TIP_BELOW_X * lb; };
+    let lb = 0, rb = 0; for (const p of pts) { lb += lum(p); if (rough && rough[p]) rb++; } lb /= pts.length; rb /= pts.length;
+    const along = (ya, yb) => { let s = 0, n = 0, rn = 0;
+    for (let y = Math.max(0, ya); y < Math.min(h, yb); y++) for (let x = Math.max(0, Math.round(xc(y) - hw)); x <= Math.min(w - 1, Math.round(xc(y) + hw)); x++) { const i = y * w + x; if (tm[i] && !Number.isNaN(g[i])) { s += lum(i); n++; if (rough && rough[i]) rn++; } }
+    return n >= .25 * 2 * hw * TIP_BELOW_MM * ppm && s / n > TIP_BELOW_X * lb && !(rough && rb > ROUGH_BLOB && rn / n < .5 * rb); };
     const L = Math.round(TIP_BELOW_MM * ppm);
     return along(r1 + 1, r1 + 1 + L) || (r0 != null && r0 - L >= strip.top && along(r0 - L, r0));
   }
