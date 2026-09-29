@@ -125,8 +125,8 @@
   // no band -> cutting-edge line pre-placed from the helix geometry (metro-core edgeGuess), zero-width band to drag open;
   // band on a failed shot -> auto band kept, but the result stays 'awaiting-operator' until the operator edits/confirms it
   function fluteFor(e, i) {
-    const o = opts(), F = M.flute(e.strip, e.band, S.D, o), q = S.quality[i], lowQ = !!q && q.verdict === 'fail';
-    if (!F.has.some(Boolean)) return M.assistFlute(e.strip, S.D, o, lowQ ? 'no-band, low-quality' : 'no-band');
+    const o = opts(), F = M.flute(e.strip, e.band, S.D, o, e.rowVbMm), q = S.quality[i], lowQ = !!q && q.verdict === 'fail';
+    if (!F.has.some(Boolean)) return Object.assign(M.assistFlute(e.strip, S.D, o, lowQ ? 'no-band, low-quality' : 'no-band'), {rowVbMm: F.rowVbMm});   // engine rows kept until the operator edits
     if (lowQ) F.assist = {reason: 'low-quality', guess: false, score: 0};
     // tip / corner damage (wear-core: chipping, broken end tooth) is already in VBC/VBmax but needs the operator's eye
     const sd = S.sides[i]; if (!F.assist && sd && sd.reasons && sd.reasons.includes('tip-damage')) F.assist = {reason: 'tip-damage', guess: false, score: 0, tipMm: sd.vbTipMm};
