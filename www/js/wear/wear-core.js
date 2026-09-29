@@ -484,7 +484,10 @@
     const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
     const rough = ppm >= ROUGH_PPM ? roughMap(strip, y1) : null;
     for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !tm[i] || (nb && nb[i])) continue;
+      // a fracture face can be backdrop-coloured (a pale facet catching the light) and the backdrop flood of backdropAlign
+      // takes it where it reaches the tip line; inside the silhouette (below the tip line, |u| < R) a rough pixel is still tool
+      // (the backdrop seen between the end teeth is smooth)
+      const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !(tm[i] || (rough && rough[i] && y >= top)) || (nb && nb[i])) continue;
       if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false) || (extra && extra[i]) || (rough && rough[i])) raw[i] = 1;
     }
     // opening ~0.3 mm against thin edge glints; the blobs classifyBlobs already sorted as chips skip it (a fracture face is
