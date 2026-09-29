@@ -12,6 +12,7 @@ Benchmark: `node test/wear/human-run.js` (27 human photos: 10Pi_1, 10Pi_2 = D10,
 | 3 | 10Pi chips under-read, pale fracture facets lost | The backdrop flood took pale fracture facets at the tip line | tipDamage keeps rough (fracture) pixels inside the silhouette |
 | 4 | False flank land 0.35-1.1 mm on 10Pi (no land labelled) | Specular streaks along the helix read as land | classifyBlobs: a blob whose highlight continues above/below along its slant is a streak; rough fracture face + smooth flank = chip |
 | 5 | 12Pi-2 shot: tip line at the frame bottom (12-1-2), side measured upside down (12-3-2) | A tool wider than the frame has its axis outside the photo, so the frame-edge test (tip x near the frame side) rejected the right rotation; nothing required tool below the tip line | Tip line needs >= 1 mm of photo below it (sampled across the tool width); the frame-edge test uses only the tip row on a cut-off tool |
+| 7 | e2e phone sample (4.6 px/mm): sides 3-4 flank band 0 -> post-processing (Keyence) drew no lines, e2e FAIL | Blob sorting (land / chip / streak) ran on the network path at every scale; at 0.6 mm resolution a land running into a chip all went to tip damage | Sorting only at >= MIN_PPM (15 px/mm); below, the flank band is the largest wear piece as on main |
 | 6 | 12Pi+cal 12-4-2: confident 0 next to sides with 2-3 mm damage | `vb-low` compared only flank land | `vb-low` also on the total (land or tip) vs the other sides of the same tool |
 
 ## Results (human-run.js)
