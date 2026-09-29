@@ -9,7 +9,7 @@
  *     into the tool, are left out: the reference is the original edge line)
  *  4. VB per position along the edge = the wear land (flank wear + chipping touching the edge) measured normal to the edge
  *     line; ISO 8688-2: VBB (mean) and VBBmax in zone B, VBC in the corner zone C (if the corner is in view)
- *  5. U (k=2) = scale (calibration) + edge line (fit residuals) + wear boundary (probability .3/.7 spread) + pixel
+ *  5. U (k=2) = scale (calibration) + edge line (fit residuals) + wear boundary (probability WEAR_LO/WEAR_HI spread) + pixel
  *  6. an edge-aligned strip per flute for the metrology panel (js/metro): rows along the edge, flank to the right of the
  *     edge column, flat (no cylinder), helix 0; several images of one flute are stacked along the edge with a gap
  */
@@ -23,6 +23,10 @@
   const NET_LONG = 1600;       // network input long side cap: the land reads best near native resolution (MUDESTREDA val T3: MAE VBmax 41 px at 500, 31 at 1100, 25 at 1550)
   const PADV = 24;             // strip columns kept on the background side of the edge line (px)
   const GAP = 8;               // strip rows between two images of one flute
+  // wear = p(flank wear) + p(chipping) above WEAR_THR. The network was trained on MUDESTREDA with the unworn tool body ignored,
+  // so at argmax it spills wear into the tool body (val T3: VBmax bias +25 px, sharp tools read x2). The threshold was picked
+  // on the val split only (VBmax MAE 25 -> 6.7 px, VBB 12.4 -> 6.5); WEAR_LO / WEAR_HI bracket it for the boundary part of U
+  const WEAR_THR = .985, WEAR_LO = .95, WEAR_HI = .995;
   const r4 = v => Math.round(v * 1e4) / 1e4;
   const med = a => { const b = Array.from(a).sort((p, q) => p - q); return b.length ? b[b.length >> 1] : 0; };
 
@@ -193,7 +197,8 @@
     const F = frame(line, W, H); if (!F) throw new Error('micro: 절삭날 선이 영상 밖입니다');
     const ppm = o.pxPerMm, sx = seg.scale[0], vTol = Math.max(3, Math.round(2 * sx + line.sigmaPx)), smooth = o.smoothPx != null ? o.smoothPx : Math.max(2, Math.round(1.5 * sx));
     const lookup = thr => (u, v) => { const [x, y] = F.toImg(u, v); return classAtImg(seg, x, y, W, H, thr); };
-    const main = landRows(lookup(o.thr == null ? null : o.thr), F.L, F.V, vTol, smooth), lo = landRows(lookup(.3), F.L, F.V, vTol, smooth), hi = landRows(lookup(.7), F.L, F.V, vTol, smooth);
+    const main = landRows(lookup(o.thr === 'argmax' ? null : o.thr == null ? WEAR_THR : o.thr), F.L, F.V, vTol, smooth),
+      lo = landRows(lookup(WEAR_LO), F.L, F.V, vTol, smooth), hi = landRows(lookup(WEAR_HI), F.L, F.V, vTol, smooth);
     const mm = a => Float32Array.from(a, v => v / ppm);
     const corner = o.corner || 'none', cornerMm = o.cornerMm == null ? .2 : o.cornerMm;
     const st = isoStats(mm(main.vb), ppm, corner, cornerMm), stLo = isoStats(mm(lo.vb), ppm, corner, cornerMm), stHi = isoStats(mm(hi.vb), ppm, corner, cornerMm);
@@ -211,6 +216,7 @@
     if (line.sigmaPx > Math.max(3, 2 * sx)) flags.push('edge-ragged');
     if (line.cover < .6) flags.push('edge-short');
     if (!(st.vbMax > 0)) flags.push('no-wear');
+    if (flags.some(f => f !== 'no-wear')) flags.push('review');   // confidence gate: the operator checks / drags the boundary in the metrology panel
     // edge-aligned strip for the metrology panel: rows = u, columns = v + PADV (flank to the right of column PADV)
     const Wc = main.Wc, rgb = new Uint8Array(F.L * Wc * 3), g = new Float32Array(F.L * Wc);
     for (let u = 0; u < F.L; u++) for (let c = 0; c < Wc; c++) {
@@ -248,6 +254,6 @@
     return {strip, band, rowVbMm};
   }
 
-  return {MAGS, NET_LONG, PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats,
+  return {MAGS, NET_LONG, WEAR_THR, WEAR_LO, WEAR_HI,PADV, GAP, calibUm, calibLine, calStore, CKEY, metroCalib, rotate, unrotate, toolSide, fitEdge, frame, classAtImg, landRows, isoStats,
     analyzeImage, fluteStrip, r4};
 });

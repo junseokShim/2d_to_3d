@@ -14,7 +14,7 @@
   const msg = t => { const m = $('#msg'); if (m) m.textContent = t || ''; };
   const f3 = v => v == null ? '—' : (+v).toFixed(3);
   const CORNER = {none: '영상에 없음', start: '왼쪽 끝', end: '오른쪽 끝'};
-  const FLAG = {'vb-uncertain': 'VB 경계 불확실', 'edge-ragged': '절삭날 선 불규칙', 'edge-short': '절삭날이 영상 일부에만 보임', 'no-wear': '마모 밴드 없음'};
+  const FLAG = {'vb-uncertain': 'VB 경계 불확실', 'edge-ragged': '절삭날 선 불규칙', 'edge-short': '절삭날이 영상 일부에만 보임', 'no-wear': '마모 밴드 없음', review: '작업자 검토 필요'};
 
   // ---------- step ①: input mode, magnification, calibration ----------
   function build() {

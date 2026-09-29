@@ -107,6 +107,10 @@ const blank = (W, H) => ({width: W, height: H, data: new Uint8ClampedArray(W * H
   // thresholds fixed on the validation tool (T3) before this split was run
   check('VBB (zone B mean) MAE <= 15 px', m(eB.map(Math.abs)) <= 15, `${m(eB.map(Math.abs)).toFixed(1)} px`);
   check('VBmax MAE <= 30 px', m(eMax.map(Math.abs)) <= 30, `${m(eMax.map(Math.abs)).toFixed(1)} px`);
+  // wear threshold (micro-core WEAR_THR) picked on val T3, where it left sharp tools 8 px over the label mean
+  check('sharp tools read small VB: mean VBmax within 15 px of the label mean', Math.abs(m(sharp.map(x => x.net)) - m(sharp.map(x => x.lab))) <= 15,
+    `net ${m(sharp.map(x => x.net)).toFixed(1)} lab ${m(sharp.map(x => x.lab)).toFixed(1)}`);
+  console.log(`  operator review flagged: ${ok.filter(x => x.flags.includes('review')).length}/${ok.length}; mean |net-lab| flagged ${m(ok.filter(x => x.flags.includes('review')).map(x => Math.abs(x.net - x.lab))).toFixed(1)} / unflagged ${m(ok.filter(x => !x.flags.includes('review')).map(x => Math.abs(x.net - x.lab))).toFixed(1)} px`);
   done();
 })().catch(e => { console.error(e); process.exit(1); });
 function done() { console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0); }
