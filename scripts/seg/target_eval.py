@@ -56,7 +56,7 @@ def window(img, tool, stem):
 def predict(model, crop, dev='cuda'):
     import train
     x = train.to_input(crop[None], dev)
-    with torch.autocast('cuda', dtype=torch.float16):
+    with torch.autocast('cuda', dtype=torch.bfloat16):
         p = model(x).float().softmax(1)[0]
     return p.argmax(0).cpu().numpy().astype(np.uint8), p.cpu().numpy()
 

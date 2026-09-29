@@ -25,16 +25,22 @@ def to_input(im, dev):
     return (x - MEAN.to(dev)) / STD.to(dev)
 
 
+IGNORE = 255      # label 255 = uncertain (defocused / unsure), excluded from loss and metrics
+
+
 def dice_loss(logits, y, eps=1.0):
     p = logits.float().softmax(1)
-    oh = F.one_hot(y, NC).permute(0, 3, 1, 2).float()
+    v = (y != IGNORE).unsqueeze(1).float()
+    oh = F.one_hot(torch.where(y == IGNORE, 0, y), NC).permute(0, 3, 1, 2).float() * v
+    p = p * v
     inter = (p * oh).sum((0, 2, 3))
     den = p.sum((0, 2, 3)) + oh.sum((0, 2, 3))
     return (1 - (2 * inter + eps) / (den + eps))[1:].mean()
 
 
 def confusion(pred, y):
-    return torch.bincount((y * NC + pred).flatten(), minlength=NC * NC).view(NC, NC)
+    k = y != IGNORE
+    return torch.bincount((y[k] * NC + pred[k]).flatten(), minlength=NC * NC).view(NC, NC)
 
 
 def ious(cm):
@@ -48,7 +54,7 @@ def evaluate(model, batches, dev):
     model.eval()
     cm = torch.zeros(NC, NC, dtype=torch.long, device=dev)
     for im, lb in batches:
-        with torch.autocast('cuda', dtype=torch.float16):
+        with torch.autocast('cuda', dtype=torch.bfloat16):
             p = model(to_input(im, dev)).argmax(1)
         cm += confusion(p, torch.from_numpy(lb).long().to(dev))
     model.train()
@@ -92,6 +98,9 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     dev = 'cuda'
     torch.backends.cudnn.benchmark = True
+    if os.name == 'nt':        # the CPU is shared with renders: keep the thread that launches GPU kernels responsive
+        import ctypes
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x8000)   # ABOVE_NORMAL
     log = open(os.path.join(a.out, 'log.txt'), 'a')
 
     def P(*s):
@@ -115,9 +124,8 @@ def main():
         n = min(a.nval, 3 * len(items))
         vals[src] = list(prod.batches([('real', 900 + k, ip, mp_, a.size) for k, (ip, mp_, _) in enumerate((items * 3)[:n])], 16))
     P(f'pool {len(metas)} val ids {len(val_ids)} real val ' + ' '.join(f'{k} {len(v)}' for k, v in real_va.items()))
-    opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4, fused=True)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.iters, pct_start=a.warm)
-    scaler = torch.amp.GradScaler()
     cw = torch.tensor([.5, 1, 3, 3, 3], device=dev)
     it, t0, best, run = 0, time.time(), -1, None
     rs = np.random.default_rng(int(time.time()))
@@ -142,13 +150,12 @@ def main():
             first = False
         for im, lb in prod.batches(tasks, a.bs):
             x, y = to_input(im, dev), torch.from_numpy(lb).long().to(dev)
-            with torch.autocast('cuda', dtype=torch.float16):
+            with torch.autocast('cuda', dtype=torch.bfloat16):     # bf16: no loss scaler; fp16 + GradScaler was ~7x slower here
                 out = model(x)
-            loss = F.cross_entropy(out.float(), y, weight=cw) + dice_loss(out, y)
+            loss = F.cross_entropy(out.float(), y, weight=cw, ignore_index=IGNORE) + dice_loss(out, y)
             opt.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.step(opt)
-            scaler.update()
+            loss.backward()
+            opt.step()
             sched.step()
             it += 1
             run = loss.item() if run is None else .98 * run + .02 * loss.item()
