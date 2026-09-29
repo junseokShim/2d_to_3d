@@ -113,14 +113,14 @@ def load_pool(pool):
 _MVAL = None
 
 
-def _manifest_val(root=DS_ROOT):
-    """ids the dataset manifest puts in 'val' (qit_w_: 7 held-out side views)"""
+def _manifest_split(root=DS_ROOT):
+    """{id: split} from the dataset manifest (qit_w_: 7 val; xd_: val CT003/CT005, test CT006/CT013)"""
     global _MVAL
     if _MVAL is None:
         try:
-            _MVAL = {x['id'] for x in json.load(open(os.path.join(root, 'manifest.json'), encoding='utf-8'))['items'] if x.get('split') == 'val'}
+            _MVAL = {x['id']: x.get('split', 'train') for x in json.load(open(os.path.join(root, 'manifest.json'), encoding='utf-8'))['items']}
         except Exception:
-            _MVAL = set()
+            _MVAL = {}
     return _MVAL
 
 
@@ -129,7 +129,9 @@ def split_of(name):
     target_*: the human's photos, eval only (never trained on)."""
     src = name.split('_', 1)[0]
     if name.startswith('qit_w_'):      # QIT-CEMC with wear labels (worker-hlabel2), kept apart from the tool-only qit_
-        return 'qitw', 'val' if name in _manifest_val() else 'train'
+        return 'qitw', _manifest_split().get(name, 'train')
+    if src == 'xd':                     # ExtraDrey (worker-data5): split by insert in the manifest (train / val / test)
+        return src, _manifest_split().get(name, 'test')
     if src == 'target':
         return src, 'target'
     if src == 'mud':
