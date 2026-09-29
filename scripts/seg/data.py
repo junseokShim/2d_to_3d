@@ -11,11 +11,13 @@ def _init():
     cv2.setNumThreads(1)
 
 
-def real_sample(rng, ip, mp_, size, strength=1.0):
+def real_sample(rng, ip, mp_, size, strength=1.0, ignore_tool=False):
     img = cv2.imread(ip, cv2.IMREAD_COLOR)[..., ::-1]
     lab = cv2.imread(mp_, cv2.IMREAD_UNCHANGED)
     if lab.ndim == 3:
         lab = lab[..., 0]
+    if ignore_tool:          # the source's tool surface does not look like an end mill in a photo: learn only its wear
+        lab = np.where(lab == 1, 255, lab).astype(np.uint8)
     h, w = lab.shape
     s = size / max(h, w) * math.exp(augment.U(rng, math.log(.8), math.log(2.5)))
     fg = lab != 255
@@ -56,12 +58,12 @@ def real_sample(rng, ip, mp_, size, strength=1.0):
 
 
 def make(task):
-    """task = ('synth', seed, pool, meta, size) | ('real', seed, image, mask, size)"""
+    """task = ('synth', seed, pool, meta, size) | ('real', seed, image, mask, size[, ignore_tool])"""
     kind, seed = task[0], task[1]
     rng = np.random.default_rng(seed)
     try:
         if kind == 'real':
-            return real_sample(rng, task[2], task[3], task[4])
+            return real_sample(rng, task[2], task[3], task[4], ignore_tool=len(task) > 5 and task[5])
         pool, meta, size = task[2], task[3], task[4]
         i = meta['id']
         rgba = cv2.imread(os.path.join(pool, f'{i:06d}_rgba.png'), cv2.IMREAD_UNCHANGED)
@@ -69,7 +71,7 @@ def make(task):
         return augment.compose(rng, rgba, lab, size, meta)
     except Exception as e:   # a bad file must not kill training
         print('sample error', task[:2], e, flush=True)
-        s = task[-1]
+        s = task[4]
         return np.zeros((s, s, 3), np.uint8), np.zeros((s, s), np.uint8)
 
 
