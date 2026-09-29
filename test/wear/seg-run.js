@@ -64,7 +64,7 @@ function iou(seg, lab, pred) {
   const pairs = [], cleanVb = [], app = {ok: 0, flagged: 0, silent: [], cleanOk: 0, cleanFlagged: 0, cleanSilent: []}, nomApp = {ok: 0, flagged: 0, silent: []}, corner = [];
   let nSides = 0, segSides = 0;
   // experiments (default off): SEG_NETMIN / SEG_NETMAX = network pixels per tool diameter; SEG_TTA=1 = mean of the photo and its mirror
-  const segOpts = {netMin: +process.env.SEG_NETMIN || undefined, netMax: +process.env.SEG_NETMAX || undefined};
+  const segOpts = {dumpEdge: !!process.env.SEG_DUMP, netMin: +process.env.SEG_NETMIN || undefined, netMax: +process.env.SEG_NETMAX || undefined};
   const runE = process.env.SEG_TTA !== '1' ? run : async (x, H, Wd) => {
     const P = H * Wd, xf = new Float32Array(x.length);
     for (let c = 0; c < 3; c++) for (let y = 0; y < H; y++) for (let X = 0; X < Wd; X++) xf[c * P + y * Wd + X] = x[c * P + y * Wd + Wd - 1 - X];
@@ -76,7 +76,7 @@ function iou(seg, lab, pred) {
     if (name === 'nw') continue;
     const k = c.e.flutes, labs = idx.filter(e => e.case === name && e.view !== 'top').map(e => readLabel(path.join(SET, e.label)));
     const args = {sides: c.sides, flutes: k, diameterMm: c.e.D};
-    const {result: R, debug} = await W.measureAsync(args, SEG.createSegmenter(runE, W, {flutes: k, ...segOpts}), 'seg');
+    const segR = SEG.createSegmenter(runE, W, {flutes: k, ...segOpts}), {result: R, debug} = await W.measureAsync(args, segR, 'seg');
     const {result: O, debug: dO} = await W.measureAsync(args, SEG.createSegmenter(null, W, {flutes: k, oracle: require('./seg-oracle.js')(labs)}), 'seg');
     const isSeg = (d, i) => d.sides && d.sides[i] && d.sides[i].method === 'seg';
     const row = [];
@@ -89,6 +89,7 @@ function iou(seg, lab, pred) {
       // what the app shows: a VBmax within 0.1 mm of the rendered land (clean: < 0.1 mm), or the side is sent to the operator
       if (name === 'clean') { if (g < .1) app.cleanOk++; else if (flag) app.cleanFlagged++; else app.cleanSilent.push(`${name}${i + 1} ${f3(g)}`); }
       else if (Math.abs(g - want) <= .1) app.ok++; else if (flag) app.flagged++; else app.silent.push(`${name}${i + 1} ${f3(g)} vs ${f3(want)}`);
+      if (process.env.SEG_DUMP) { const sd = debug.sides[i] || {}, sg = segR.faces && segR.faces[i]; console.log('DUMP ' + JSON.stringify({c: name, i, g, want, reasons: sd.needsOperator ? sd.reasons : [], vb: (sg && sg.vb) || null})); }
       if (!isSeg(debug, i) || !isSeg(dO, i)) { row.push(`${f3(g)}/-`); continue; }
       // network vs exact labels on the flank land (the colour tip stage folded into VBmax is the same code in both runs' reach but
       // the oracle skips it; comparing VBmax would score wear-core's tip stage, not the network)

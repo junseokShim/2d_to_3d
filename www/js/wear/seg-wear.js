@@ -22,7 +22,7 @@
   const NC = 5, CLASSES = ['background', 'tool', 'flank wear', 'chipping', 'adhesion'];
   const NET_MIN = 224, NET_MAX = 384;      // tool diameter in network pixels (training covered 60..460, mostly 150..400)
   const ABOVE = .3, BELOW = .3, SIDE = .8;  // window around the zone, in tool diameters
-  const EDGE_ON = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_ON) || .9, EDGE_ON_SHARE = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_SHARE) || .5;   // vb-edge-on flag (seg9, chosen on .work/valset88-102)
+  const EDGE_ON = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_ON) || .85, EDGE_ON_SHARE = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_SHARE) || .5;   // vb-edge-on flag (seg9; u .85 / share .5 chosen by seg10 on .work/valset88-117 with .work/edgesim.py)
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
@@ -255,6 +255,7 @@
       let edgeN = 0, topN = 0;
       for (let Y = Yw; Y < zEnd0; Y++) if (vbArg > 0 && land.vbMm[Y] >= .9 * vbArg) for (let Z = Math.max(Yw, Y - hS); Z <= Math.min(zEnd0 - 1, Y + hS); Z++) if (land.uRow[Z] > 0) { topN++; if (land.uRow[Z] > EDGE_ON) edgeN++; }
       const edgeShare = topN ? edgeN / topN : 0;
+      const edgeBy = {}; if (opts.dumpEdge) for (const t of [.8, .85, .88, .9, .92, .94]) { let a = 0, b = 0; for (let Y = Yw; Y < zEnd0; Y++) if (vbArg > 0 && land.vbMm[Y] >= .9 * vbArg) for (let Z = Math.max(Yw, Y - hS); Z <= Math.min(zEnd0 - 1, Y + hS); Z++) if (land.uRow[Z] > 0) { b++; if (land.uRow[Z] > t) a++; } edgeBy[t] = b ? r4(a / b) : 0; }
       if (edgeShare > EDGE_ON_SHARE) flags.push('vb-edge-on');
       let vbFlip = null;
       if (opts.tta !== false && !opts.oracle) {
@@ -280,10 +281,10 @@
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1, wearSoftMm2: r4(wearSoft), wearPeak: r4(wearPk),
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
-        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare)}, post};
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
-          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare)}}};
+          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}}};
     }
     const segmenter = (P, i) => segmentSide(P, i);
     segmenter.faces = faces;
