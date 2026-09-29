@@ -275,3 +275,140 @@ def compose(rng, rgba, lab, out=384, meta=None, strength=1.0, win=False):
         ok, buf = cv2.imencode('.jpg', im8[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, q])
         im8 = cv2.imdecode(buf, cv2.IMREAD_COLOR)[..., ::-1]
     return np.ascontiguousarray(im8), labo
+
+
+# ---------------------------------------------------------------- USB microscope / backlit domain (seg11)
+BACKLIGHTS = [((.78, .62, .98), 3.0), ((.9, .66, .95), 1.5), ((.62, .55, 1.0), 1.0),     # violet / purple / blue-violet
+              ((.3, .88, .3), 1.5), ((.45, .95, .5), .5),                                  # green screen
+              ((.92, .92, .92), 1.0), ((.95, .9, .8), .5), ((.55, .75, 1.0), .5)]          # white / warm / blue
+
+
+def _backlight(rng):
+    cols, w = zip(*BACKLIGHTS)
+    c = np.array(cols[rng.choice(len(cols), p=np.array(w) / sum(w))], np.float32)
+    return c * np.array([U(rng, .9, 1.1) for _ in range(3)], np.float32)
+
+
+def streak_layer(rng, h, w, tool_a, axis_deg, helix, dpx):
+    """long glossy streaks along the helical flutes (specular reflections of the light in the polished lands /
+    flute faces): intensity map [h, w] inside the tool. They are TOOL in the label."""
+    yy, xx = mgrid(h, w)
+    g = np.zeros((h, w), np.float32)
+    ys, xs = np.nonzero(tool_a > .5)
+    if not len(xs):
+        return g
+    for _ in range(int(rng.integers(1, 5))):
+        j = rng.integers(len(xs))
+        cx, cy = float(xs[j]), float(ys[j])
+        ang = math.radians(axis_deg + rng.choice([-1, 1]) * (helix + U(rng, -8, 8)))
+        dx, dy = math.sin(ang), math.cos(ang)                       # along the streak
+        d = np.abs((xx - cx) * dy - (yy - cy) * dx)                 # distance to the line
+        t = (xx - cx) * dx + (yy - cy) * dy
+        wid = U(rng, .01, .12) * dpx
+        L = U(rng, .5, 2.5) * dpx
+        prof = np.exp(-(d / wid) ** 2) * np.exp(-(np.maximum(np.abs(t) - L / 2, 0) / (.2 * L)) ** 2)
+        if rng.random() < .5:                                       # broken up by grinding texture
+            prof *= .6 + .8 * _lowfreq(rng, h, w, int(U(rng, 4, 15)), 1)[..., 0]
+        g += U(rng, .6, 3.0) * prof
+    return g * tool_a
+
+
+def compose_micro(rng, rgba, lab, out=384, meta=None, win=False):
+    """a render seen through a USB microscope on a coloured backlight (the human's samples): tool fills the frame, tip at
+    the top, the backlight colour tints the tool, glossy streaks down the flutes, glinting fracture facets, soft focus,
+    640x480 sensor resampled, JPEG"""
+    h0, w0 = lab.shape
+    rgb = rgba[..., :3]
+    a = rgba[..., 3]
+    ys, xs = np.nonzero(lab > 0)
+    view = meta['view'] if meta else 'side'
+    Dpx = meta['D'] * meta['ppm'] if meta else 300
+    if win and view == 'side':
+        target = U(rng, 224, 384)
+    else:
+        target = U(rng, .5, 1.15) * out if view == 'side' else U(rng, .35, .8) * out
+    s = target / Dpx
+    rot = U(rng, -6, 6) if view == 'side' else U(rng, -180, 180)
+    px, py = float(xs.mean()), float(ys.min() if view == 'side' else ys.mean())
+    ytip = (U(rng, .2, .4) * target if win else U(rng, .0, .2) * out)
+    if view == 'side':            # the shank runs out of the frame's bottom (the render ends at its last row)
+        s = max(s, (out + 8 - ytip) / max(1, h0 - py))
+    M = cv2.getRotationMatrix2D((px, py), rot, s)
+    M[0, 2] += out / 2 - px + U(rng, -.12, .12) * target
+    if view == 'side':
+        M[1, 2] += ytip - py
+    else:
+        M[1, 2] += out / 2 - py + U(rng, -.1, .1) * out
+    if rng.random() < .5:
+        M = np.array([[-1, 0, out], [0, 1, 0]], np.float64) @ np.vstack([M, [0, 0, 1]])
+    interp = cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR
+    rgb_t = LIN[cv2.warpAffine(rgb, M, (out, out), flags=interp, borderValue=0)][..., ::-1]
+    a_t = cv2.warpAffine(a, M, (out, out), flags=interp, borderValue=0).astype(np.float32) / 255
+    labo = cv2.warpAffine(lab, M, (out, out), flags=cv2.INTER_NEAREST, borderValue=0)
+    dpx = Dpx * s
+    # ---- backlight: bright, even, slightly mottled; a grey stage band at the bottom sometimes ----
+    bl = _backlight(rng)
+    lvl = U(rng, .45, 1.0)
+    yy, xx = mgrid(out, out)
+    bg = np.ones((out, out, 3), np.float32) * bl * lvl
+    a2 = U(rng, 0, 2 * math.pi)
+    gr = (np.cos(a2) * xx + np.sin(a2) * yy) / out
+    bg *= (1 + U(rng, -.35, .35) * (gr - gr.mean()))[..., None]
+    bg *= (.85 + .3 * _lowfreq(rng, out, out, int(U(rng, 30, 120)), 1))
+    if view == 'side' and rng.random() < .4:
+        e = int(U(rng, .85, 1.0) * out)
+        bg[e:] = bg[e:] * U(rng, .2, .6) + U(rng, .05, .2)
+    bg = cv2.GaussianBlur(bg, (0, 0), U(rng, 2, 10))
+    # ---- tool: exposure set for the backlight (dark body), tinted by the light it reflects ----
+    tint = 1 + U(rng, .3, 1.0) * (bl / bl.max() - 1)
+    rgb_t = rgb_t * tint * U(rng, .35, 1.1)
+    if view == 'side' and rng.random() < .85:
+        rgb_t += (streak_layer(rng, out, out, a_t, rot, meta.get('helix', 30) if meta else 30, dpx)[..., None]
+                  * (.5 * bl / bl.max() + .5 * U(rng, .6, 1)))
+    chip = labo == 3
+    if chip.any() and rng.random() < .7:                            # fracture facets glint: bright, sparkly, near white
+        sp = cv2.GaussianBlur(rng.random((out, out)).astype(np.float32), (0, 0), U(rng, .6, 2))
+        sp = np.clip((sp - sp.mean()) / (sp.std() + 1e-6), -2, 3)
+        br = U(rng, .5, 1.6) * (1 + .35 * sp)
+        facet = np.clip(br, 0, 3)[..., None] * (.6 + .4 * bl / bl.max())
+        rgb_t = np.where(chip[..., None], .3 * rgb_t + .7 * facet, rgb_t)
+    img = rgb_t * a_t[..., None] + bg * (1 - a_t[..., None])
+    # rim light: the backlight wraps round the silhouette (a bright halo 1-4 px inside the tool edge)
+    if rng.random() < .5:
+        rim = np.clip(a_t - cv2.erode(a_t, np.ones((3, 3), np.uint8), iterations=int(rng.integers(1, 4))), 0, 1)
+        img += U(rng, .2, .8) * rim[..., None] * bl
+    # ---- optics + sensor: soft focus (shallow depth of field), 640x480 resampled, noise, gamma, JPEG ----
+    if rng.random() < .8:
+        img = cv2.GaussianBlur(img, (0, 0), U(rng, .5, 2.2))
+    if rng.random() < .3:                                           # depth of field: the lower part sharper or softer
+        b2 = cv2.GaussianBlur(img, (0, 0), U(rng, 1.5, 4))
+        m = np.clip((yy / out - U(rng, .2, .8)) * U(rng, -4, 4) + .5, 0, 1)[..., None]
+        img = img * (1 - m) + b2 * m
+    img = img * math.exp(U(rng, math.log(.6), math.log(1.5)))
+    f = U(rng, .35, 1.0)
+    if f < .95:
+        sm = cv2.resize(img, (max(8, int(out * f)), max(8, int(out * f))), interpolation=cv2.INTER_AREA)
+        img = cv2.resize(sm, (out, out), interpolation=cv2.INTER_LINEAR)
+    img = np.clip(img, 0, 1)
+    noise = cv2.randn(np.empty(img.shape, np.float32), 0, 1) * np.sqrt(U(rng, .0005, .004) * img + U(rng, .001, .008) ** 2)
+    img = np.clip(img + cv2.GaussianBlur(noise, (0, 0), .8) * 1.5, 0, 1)
+    img = img ** (1 / U(rng, 1.9, 2.5))
+    im8 = (img * 255 + .5).astype(np.uint8)
+    if rng.random() < .4:
+        bl8 = cv2.GaussianBlur(im8, (0, 0), U(rng, 1, 2.5))
+        im8 = cv2.addWeighted(im8, 1 + U(rng, .2, .8), bl8, -U(rng, .2, .8), 0)
+    if rng.random() < .1:
+        im8 = overlay_marks(rng, im8)
+    if rng.random() < .85:
+        ok, buf = cv2.imencode('.jpg', im8[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, int(U(rng, 50, 95))])
+        im8 = cv2.imdecode(buf, cv2.IMREAD_COLOR)[..., ::-1]
+    return np.ascontiguousarray(im8), labo
+
+
+def backlit_real(rng, im8):
+    """recolour a real sample's background-lit look (used on real sources to decorrelate tool vs backdrop colour):
+    hue rotation + saturation change of the whole frame"""
+    hsv = cv2.cvtColor(im8, cv2.COLOR_RGB2HSV).astype(np.float32)
+    hsv[..., 0] = np.mod(hsv[..., 0] + U(rng, 0, 180), 180)
+    hsv[..., 1] = np.clip(hsv[..., 1] * U(rng, .6, 1.6), 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)

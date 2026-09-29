@@ -58,7 +58,8 @@ def real_sample(rng, ip, mp_, size, strength=1.0, ignore_tool=False):
 
 
 def make(task):
-    """task = ('synth', seed, pool, meta, size[, win]) | ('real', seed, image, mask, size[, ignore_tool])"""
+    """task = ('synth' | 'micro', seed, pool, meta, size[, win]) | ('real', seed, image, mask, size[, ignore_tool])
+    'micro': a USB-microscope pool render composited on a coloured backlight (augment.compose_micro)"""
     kind, seed = task[0], task[1]
     rng = np.random.default_rng(seed)
     try:
@@ -69,6 +70,8 @@ def make(task):
         i = meta['id']
         rgba = cv2.imread(os.path.join(pool, f'{i:06d}_rgba.png'), cv2.IMREAD_UNCHANGED)
         lab = cv2.imread(os.path.join(pool, f'{i:06d}_lab.png'), cv2.IMREAD_UNCHANGED)
+        if kind == 'micro':
+            return augment.compose_micro(rng, rgba, lab, size, meta, win=win)
         return augment.compose(rng, rgba, lab, size, meta, win=win)
     except Exception as e:   # a bad file must not kill training
         print('sample error', task[:2], e, flush=True)
@@ -107,10 +110,28 @@ def load_pool(pool):
     return metas
 
 
+_MVAL = None
+
+
+def _manifest_split(root=DS_ROOT):
+    """{id: split} from the dataset manifest (qit_w_: 7 val; xd_: val CT003/CT005, test CT006/CT013)"""
+    global _MVAL
+    if _MVAL is None:
+        try:
+            _MVAL = {x['id']: x.get('split', 'train') for x in json.load(open(os.path.join(root, 'manifest.json'), encoding='utf-8'))['items']}
+        except Exception:
+            _MVAL = {}
+    return _MVAL
+
+
 def split_of(name):
     """processed/ file stem -> (source, split). syn_*: every 10th render is val; mud_*: tool T3 held out (val);
     target_*: the human's photos, eval only (never trained on)."""
     src = name.split('_', 1)[0]
+    if name.startswith('qit_w_'):      # QIT-CEMC with wear labels (worker-hlabel2), kept apart from the tool-only qit_
+        return 'qitw', _manifest_split().get(name, 'train')
+    if src == 'xd':                     # ExtraDrey (worker-data5): split by insert in the manifest (train / val / test)
+        return src, _manifest_split().get(name, 'test')
     if src == 'target':
         return src, 'target'
     if src == 'mud':
@@ -122,9 +143,9 @@ def split_of(name):
     return src, 'train'
 
 
-def load_real(split, root=DS_ROOT, sources=None):
+def load_real(split, root=DS_ROOT, sources=None, exclude=None):
     """labelled images of the shared dataset (processed/{images,masks}/<source>_*.png) for a split:
-    {source: [(image, mask, stem)]}"""
+    {source: [(image, mask, stem)]}; exclude: regex on the stem (leave-one-tool-out folds)"""
     out = {}
     d = os.path.join(root, 'processed')
     if not os.path.isdir(os.path.join(d, 'images')):
@@ -135,7 +156,7 @@ def load_real(split, root=DS_ROOT, sources=None):
         if ext.lower() not in ('.png', '.jpg') or not os.path.exists(mp_):
             continue
         src, sp = split_of(stem)
-        if sp != split or (sources and src not in sources):
+        if sp != split or (sources and src not in sources) or (exclude and re.search(exclude, stem)):
             continue
         out.setdefault(src, []).append((os.path.join(d, 'images', f), mp_, stem))
     return out
