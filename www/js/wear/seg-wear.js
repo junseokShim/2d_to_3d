@@ -346,6 +346,21 @@
     sessionP.catch(() => { sessionP = null; });
     return sessionP;
   }
+  // microscope variant (models/wear-seg-micro.onnx.js, scripts/seg/train_micro.py): loaded only in microscope mode;
+  // without the file the phone model is used (micro: false)
+  let microP = null;
+  function loadMicro() {
+    if (microP) return microP;
+    microP = (async () => {
+      const T = self.Tool3D, ort = await ortInit();
+      if (!T.segMicroModelB64) await loadScript(base() + 'models/wear-seg-micro.onnx.js');
+      const session = await ort.InferenceSession.create(b64(T.segMicroModelB64), {executionProviders: ['wasm'], graphOptimizationLevel: 'all'});
+      T.segMicroModelB64 = null;
+      return {ort, session};
+    })();
+    microP.catch(() => { microP = null; });
+    return microP;
+  }
   const ortRunner = ({ort, session}) => async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
 
   // same inputs as Tool3D.wear.run; resolves to the wearResult (engine 'seg'); sides the network cannot read use the classic path
@@ -368,6 +383,7 @@
   }
   const segment = async img => segmentImage(ortRunner(await load()), img);
   const runner = async () => ortRunner(await load());   // browser runProbs for segmentImageProbs (js/micro)
+  const microRunner = async () => { try { return Object.assign(ortRunner(await loadMicro()), {micro: true}); } catch (e) { console.warn('seg: microscope model not loaded, phone model used', e); return Object.assign(await runner(), {micro: false}); } };
 
-  return {createSegmenter, segmentImage, segmentImageProbs, runner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
+  return {createSegmenter, segmentImage, segmentImageProbs, runner, microRunner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
 });

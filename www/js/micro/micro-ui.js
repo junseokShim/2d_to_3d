@@ -156,7 +156,7 @@
     await new Promise(ok => requestAnimationFrame(() => setTimeout(ok, 0)));
     try {
       const all = flutes.flatMap(i => S.imgs[i]), long = Math.max(...all.map(s => Math.max(s.naturalWidth || s.width, s.naturalHeight || s.height)));
-      const sc = Math.min(1, MAXPX / long), ppm = c.pxPerMm * sc, runProbs = await T.wear.seg.runner(), core = MC();
+      const sc = Math.min(1, MAXPX / long), ppm = c.pxPerMm * sc, runProbs = await (T.wear.seg.microRunner || T.wear.seg.runner)(), core = MC();
       const per = [], strips = [], sides = [], images = [], posts = [];
       for (let i = 0; i < k; i++) {
         const list = S.imgs[i] || [];
@@ -180,8 +180,8 @@
         strips.push(core.fluteStrip(res, ppm, S.corner));
         sides.push({align: {pxPerMm: ppm}, reasons: per[i].flags});
       }
-      const engine = `AI (Seg) · 현미경 ${S.mag}x`;
-      const wr = {engine: 'micro', inputMode: 'microscope', magnification: S.mag, diameterMm: Dmm, flutes: k, helixDeg: 0, perFlute: per,
+      const engine = `AI (Seg${runProbs.micro ? ' micro' : ''}) · 현미경 ${S.mag}x`;
+      const wr = {engine: 'micro', model: runProbs.micro ? 'wear-seg-micro' : 'wear-seg', inputMode: 'microscope', magnification: S.mag, vbRef: S.vbRef, diameterMm: Dmm, flutes: k, helixDeg: 0, perFlute: per,
         post: per.map((_, i) => posts[i] ? {keyence: posts[i].keyence, alicona: posts[i].alicona, lengthMm: posts[i].lengthMm, edgeSide: posts[i].edgeSide} : null),
         totals: {vbMaxMm: Math.max(0, ...per.map(f => f.vbMaxMm)), areaMm2: 0, volumeMm3: 0}, calib: {pxPerMm: ppm, umPerPx: core.r4(1000 / ppm), uRel: c.uRel, method: c.method}};
       T.wearResult = wr; T.faceSeg = null;
