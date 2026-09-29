@@ -22,6 +22,27 @@ const TOL = {chipMm: .5, chipRel: .3, vbMm: .3, ppmRel: .08, scaleRel: .25};
 let pass = 0, fail = 0;
 const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`); ok ? pass++ : fail++; };
 
+// QIT-CEMC close-ups (qit_w_*, split val): report only. One side view each, the cutting edge close up (expert VBmax, px/mm
+// estimated 95 +-20 %, tool diameter not given: 10 mm assumed). Through the camera engine with that calibration: measured /
+// flagged / not measured, VB vs the expert VBmax. Never a crash, never a confident 0 on a worn edge (printed, not checked).
+const TW = 'C:/agent_research_team/datasets/toolwear';
+async function qitVal(run, classic) {
+  const man = path.join(TW, 'manifest.json'); if (!fs.existsSync(man) || arg('--tool')) return;
+  const items = (JSON.parse(fs.readFileSync(man, 'utf8')).items || []).filter(e => /^qit_w_/.test(e.id) && e.split === 'val');
+  if (!items.length) return;
+  console.log(`\n# QIT close-ups (qit_w val, ${items.length}; report only, ${classic ? 'classic' : 'seg'}, calibrated px/mm)`);
+  let silent = 0;
+  for (const e of items) {
+    try {
+      const args = {sides: [readPng(path.join(TW, e.image))], flutes: 1, diameterMm: 10, pxPerMm: e.pxPerMm};
+      const {debug} = classic ? W.measure(args) : await W.measureAsync(args, SEG.createSegmenter(run, W, {flutes: 1}), 'seg'), s = debug.sides[0];
+      if (s && !s.needsOperator && s.vbMaxMm < .5 * e.vbMaxMm) silent++;
+      console.log(`  ${e.id.padEnd(18)} expert VBmax ${f3(e.vbMaxMm)}  ` + (s ? `VB ${f3(s.vbMaxMm)} flank ${f3(s.vbFlankMaxMm)} tip ${f3(s.vbTipMm)} ${s.needsOperator ? 'OPERATOR' : 'confident'} [${s.reasons}]` : 'NOT MEASURED (flagged: silhouette not found)'));
+    } catch (err) { console.log(`  ${e.id.padEnd(18)} ERROR ${err.message}`); silent++; }
+  }
+  console.log(`  confident under-reads / errors: ${silent}/${items.length} (report only)`);
+}
+
 (async () => {
   if (!fs.existsSync(DATA)) { console.log(`no PNG cache at ${DATA}: run python scripts/data/human_png.py`); process.exit(0); }
   const gt = !process.argv.includes('--no-gt') && fs.existsSync(GT_FILE) ? JSON.parse(fs.readFileSync(GT_FILE, 'utf8')) : null;
@@ -32,7 +53,7 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
   const passes = TOOLS.map(t => [t, false]).concat(gt ? [[TOOLS[2], true]] : []);
   for (const [[tool0, D, p], cal] of passes) {
     const tool = tool0 + (cal ? '+cal' : '');
-    if (only && only !== tool0) continue;
+    if (only && only !== tool0 || process.argv.includes('--qit-only')) continue;
     for (const k of shots) {
       const names = [1, 2, 3, 4].map(s => `${tool0}/${p}-${s}-${k}`), sides = names.map(n => readPng(path.join(DATA, n + '.png')));
       const cp = cal ? names.map(n => G[n] && G[n].pxPerMm).filter(Boolean).sort((a, b) => a - b) : [];
@@ -47,6 +68,7 @@ const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  $
       });
     }
   }
+  await qitVal(run, classic);
   if (!gt) { console.log('\n(no labels: report only)'); return; }
   console.log('\n# against the labels (per tool; sides without a labelled scale are checked for flags only)');
   for (const tool of ['10Pi_1', '10Pi_2', '12Pi', '12Pi+cal']) {
