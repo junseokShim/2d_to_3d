@@ -43,7 +43,8 @@ render.make_lights = micro_lights
 render.COATS = DARK
 
 out, start, count = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-size = int(sys.argv[4]) if len(sys.argv) > 4 else 512
+size = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != 'land' else 512
+LAND = 'land' in sys.argv[4:]      # seg14: ~47 % worn-land renders, no corner breakage on them (use seeds i >= 5e6)
 os.makedirs(out, exist_ok=True)
 t0 = time.time()
 with open(os.path.join(out, f'meta_{start}.jsonl'), 'a') as mf:
@@ -53,9 +54,22 @@ with open(os.path.join(out, f'meta_{start}.jsonl'), 'a') as mf:
         rng = np.random.default_rng(1000003 * i + 17)
         tool = render.Tool(rng, D=float(rng.choice([6, 8, 10, 10, 12, 12, 16])) * U(rng, .97, 1.03))
         r = rng.random()
-        mode = 'none' if r < .15 else 'flank' if r < .4 else 'chip' if r < .7 else 'mixed'
-        render.plan_wear(tool, rng, mode)
+        if LAND:   # seg14: worn peripheral land (class 2 band 0.3-1.5 mm along the edge, matte grey, no fracture)
+            mode = 'none' if r < .08 else 'land' if r < .55 else 'flank' if r < .7 else 'chip' if r < .88 else 'mixed'
+        else:
+            mode = 'none' if r < .15 else 'flank' if r < .4 else 'chip' if r < .7 else 'mixed'
+        render.plan_wear(tool, rng, 'flank' if mode == 'land' else mode)
         R = tool.R
+        if mode == 'land':
+            W = tool.wear
+            W['ap'] = tool.D * U(rng, .4, 1.8)
+            v = U(rng, .3, 1.5)
+            for j in range(tool.k):
+                if W['vb'][j] > 0 or rng.random() < .7:
+                    W['vb'][j] = min(v * U(rng, .75, 1.2), .5 * tool.P * R)
+                    W['cornerBoost'][j] = U(rng, 1, 1.4)
+            g = U(rng, .4, .8)
+            tool.landLook = dict(col=(g * U(rng, .95, 1.05), g, g * U(rng, .95, 1.08)), rough=U(rng, .55, .9), spec=U(rng, .1, .5))
         if mode in ('chip', 'mixed') and rng.random() < .75 or mode == 'flank' and rng.random() < .2:
             # corner breakage like the human's D10 / D12: 0.3-2.5 mm deep chunks off 1-2 tip corners
             for _ in range(int(rng.integers(1, 3))):
