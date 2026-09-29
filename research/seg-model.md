@@ -182,3 +182,43 @@ Fresh sets `.work/valset88-102` (tuning), `103-117` (check, then tuning of the f
   ft6/ft7 segment the land better (IoU) but the VBmax read from it is not more reliable.
 - Remaining silent-wrong on 118-132 (ft4): t41/t42 sides read 0.1-0.2 mm over the rendered zone-B VBmax, t2chip read 0.
   As seg9 found, most of these the exact-label (oracle) pipeline also misses: VB maths, not the network.
+
+## seg11 / seg13 (2026-09-29): real-domain retrain with human labels, model kept at ft4
+
+Chain (all from ft4 it8000, `scripts/seg/train.py`, 3000-5000 it, bs 8, `--win .5 --bw 2`): m1 = + USB-microscope
+renders (`gen_pool_micro.py`, mix key `micro`), m2 = m1 + ExtraDrey close-ups `xd_` + QIT wear `qit_w_` (tool pixels of
+mud/qitw/xd ignored), no human labels. Folds v2 `g_<T>` = m2 + human labels `hum_` with tool T held out (`--exclude`);
+fA = m2 + all human tools. Queues `.work/queue3.sh` (m2), `queue4.sh` (folds, fA), eval `.work/eval_v2.sh` -> `.work/ev2_*.txt`.
+Eval: `fold_eval.py` whole frame, tool diameter 256 px. ft4 numbers from `.work/fold_ft4`.
+
+Held-out human tool (each fold never saw that tool; fA row on the human tools is NOT held-out, shown for reference):
+
+| tool | model | tool IoU | chip | damage | flank | chipDepth err | VBC err | VBmax err (mm) |
+|---|---|---|---|---|---|---|---|---|
+| 10Pi_1 | ft4 | .979 | .624 | .437 | | .779 | **.037** | .658 |
+| | g_10Pi_1 | .980 | **.704** | .629 | 0 | **.157** | .090 | .182 |
+| | fA (seen) | .981 | .845 | .652 | 0 | .136 | .090 | .213 |
+| 10Pi_2 | ft4 | .978 | .674 | .351 | | .258 | .414 | .506 |
+| | g_10Pi_2 | .980 | **.698** | .528 | 0 | **.101** | **.049** | .258 |
+| 12Pi | ft4 | .609 | .149 | .220 | .033 | | 1.19 | **.891** |
+| | g_12Pi | .928 | .177 | .546 | .011 | 2.75 | 2.63 | 1.050 |
+| | fA (seen) | .884 | .182 | .553 | .168 | 2.18 | 3.32 | .592 |
+
+Other sets (flank IoU unless noted): QIT wear val ft4 .105, m2 .149, g1/g2/g3 .144/.148/.123, fA .160.
+Keyence (3) ft4 .253, m2 .232, g1/g2/g3 .183/.210/.204, fA .219 (tool IoU ft4 .553 -> fA .639).
+ExtraDrey test FF / FFL: ft4 .222/.234, m2 .287/.106, g1 .292/.133, g2 .313/.149, g3 .235/.092, fA .305/.147.
+Target (phone) tool IoU s1-s4, top: ft4 .92 .91 .73 .72 .84; g1 .88 .91 .73 .76 .85; g2 .93 .91 .73 .72 .83;
+g3 .93 .91 .72 .76 .87; fA .88 .92 .73 .73 .77.
+
+**Decision: not shipped, `www/models/wear-seg.onnx.js` stays ft4.** Ship rule (set before the eval): folds beat ft4 on
+held-out chip and VBC for both 10Pi tools, 12Pi VBmax not worse, target tool IoU and seg-run held-out not down. Failed on:
+10Pi_1 VBC .090 vs .037, 12Pi held-out VBmax 1.050 vs .891, fA target side1 .92 -> .88 and top .84 -> .77, and ExtraDrey
+FFL flank .234 -> .147.
+
+What the numbers say:
+- Human labels are what helps on 10Pi: chip IoU up, chip depth error .78/.26 -> .16/.10 mm, 10Pi_2 VBC .41 -> .05 mm.
+  m2 (no human labels) is not better than ft4 on 10Pi chip depth (.82/.80).
+- 12Pi: the tool is found far better (.61 -> .93) but its worn flank land is painted as chip (the only chip examples come
+  from 10Pi, and 12Pi's land at x2-3 zoom looks like a 10Pi chip), so VBC/VBmax get worse. Needs more human tools with
+  labelled flank land (not chips) before a retrain can pass; 12Pi's px/mm is itself only +-15-25 %.
+- Adding xd/qitw raises flank IoU on QIT wear and ExtraDrey FF but lowers it on FFL and Keyence.
