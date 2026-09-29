@@ -93,7 +93,9 @@
       [2, 3, 4].map(c => `${name[c]} ${f3(f.areasMm2[c])}`).join(' · ') + ' mm²');
     add('3D 매핑 면적 합 (중복 블렌딩)', `F ${f3(t.flank.areaMm2)} · C ${f3(t.chip.areaMm2)} · A ${f3(t.adhesion.areaMm2)} = ${f3(t.totalAreaMm2)} mm²`);
     add('3D 매핑 체적', `플랭크 ${f4(t.flank.volumeMm3)} + 치핑 ${f4(res.chipVolumeModelMm3)} mm³ (치핑 최대 깊이 ${f3(t.chip.maxDepthMm)} mm, 추정)`);
-    add('3D 매핑 날별 VBmax', res.perTooth.map(p => f3(p.vbMaxMm)).join(', ') + ' mm');
+    // flank land (class 2) VBmax per tooth, and the chipping / fracture depth (class 3) next to it: a chipped tooth without a
+    // land is not 'VB 0.000' (the tip damage is reported); no class at all on a tooth reads '-'
+    add('3D 매핑 날별 VBmax / 치핑 깊이', res.perTooth.map(p => `${p.vbMaxMm > 0 ? f3(p.vbMaxMm) : p.areaMm2[2] > 0 ? '0.000' : '-'} / ${p.chipDepthMm > 0 || p.areaMm2[3] > 0 ? f3(p.chipDepthMm) : '-'}`).join(', ') + ' mm');
   }
 
   let lastRun = null;
