@@ -85,7 +85,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
   <div class="cambar"><button id="camClose">취소</button><button id="shutter" aria-label="촬영"></button><span id="camtxt"></span></div>
 </div>
 
-<script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script>
+<script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script><script src="js/wear/seg-wear.js"></script>
 <script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
 <script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
 <script>
@@ -374,11 +374,20 @@ const AI_TIMEOUT_MS = 180000;
 // 마모 측정: AI(PatchCore) 우선, 모델 로드 실패/시간 초과/모든 면 AI 실패(신뢰도 낮음)면 기존(classic) 경로
 async function measureWear(shots, opts) {
   const W = window.Tool3D?.wear; if (!W) return 'none';
+  const timeout = () => new Promise((_, bad) => setTimeout(() => bad(new Error('AI timeout')), AI_TIMEOUT_MS));
+  const label = (name, errs) => { const bad = errs.map((e, i) => e ? i + 1 : 0).filter(Boolean); return name + (bad.length ? ` · classic on side ${bad.join(', ')}` : ''); };
+  // 1) AI (Seg): trained segmentation network (flank wear / chipping / adhesion); sides it cannot read use the classic path
+  if (W.seg && W.run) try {
+    await Promise.race([W.seg.run(shots, opts), timeout()]);
+    const errs = Tool3D.wearDebug?.aiErrors || [];   // per side: null = segmented by the network, else why it fell back
+    if (errs.some(e => !e)) return label('AI (Seg)', errs);
+    console.warn('wear seg: every side fell back', errs);
+  } catch (e) { console.warn('wear seg unavailable, PatchCore next:', e); }
+  // 2) AI (PatchCore): anomaly vs the unworn body of the same photo
   if (W.ai && W.run) try {
-    const t = new Promise((_, bad) => setTimeout(() => bad(new Error('AI timeout')), AI_TIMEOUT_MS));
-    await Promise.race([W.ai.run(shots, opts), t]);
-    const errs = Tool3D.wearDebug?.aiErrors || [], nAi = errs.filter(e => !e).length;
-    if (nAi > 0) return 'AI (PatchCore)' + (nAi < errs.length ? ` · classic on side ${errs.map((e, i) => e ? i + 1 : 0).filter(Boolean).join(', ')}` : '');
+    await Promise.race([W.ai.run(shots, opts), timeout()]);
+    const errs = Tool3D.wearDebug?.aiErrors || [];
+    if (errs.some(e => !e)) return label('AI (PatchCore)', errs);
     console.warn('wear AI: every side fell back', errs);
   } catch (e) { console.warn('wear AI unavailable, classic used:', e); }
   try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
