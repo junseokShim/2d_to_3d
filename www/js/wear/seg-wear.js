@@ -162,7 +162,8 @@
     }
     if (!best.px) return null;
     const {w, h, top} = strip, mask = new Uint8Array(w * h);
-    for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) if (cls[y * w + x] === 3) mask[y * w + x] = 1;
+    // only the kept blobs (the network's class-3 specks down the flank are not tip damage)
+    for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { if (cls[y * w + x] !== 3) continue; const X = Math.round((x - strip.cx) * win.k + Wn / 2 - .5), Y = Math.round((P.al.vTip - strip.top + y - win.v0) * win.k - .5); if (X >= 0 && Y >= 0 && X < Wn && Y < Hn && keep[lab[Y * Wn + X]]) mask[y * w + x] = 1; }
     return Object.assign(best, {mask, y1, source: 'seg'});
   }
 
@@ -231,13 +232,20 @@
       }
       const aboveTip = an ? at / an : 0, flags = aboveTip > MAX_ABOVE ? ['tip-misplaced'] : [];
       if (toolFrac < TOOL_OK) flags.push('seg-coverage');
-      // flank band = flank wear + chipping inside the zone; one photo measures the flute it faces = the largest piece
-      const m = new Uint8Array(w * h);
-      for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const c = cls[y * w + x]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R) m[y * w + x] = 1; }
-      const {lab, sizes} = components(m, w, h);
+      // candidates = flank wear + chipping inside the zone, on the tool (the backdrop seen between the end teeth is not);
+      // wear-core sorts the blobs (classifyBlobs, with the network's vote: a blob mostly labelled chipping at the tip line is
+      // a chip): specular streaks are dropped, chips go to the tip damage (VBC), the flank band = the largest land piece
+      // (one photo measures the flute it faces)
+      const tm = core && core.toolMask ? core.toolMask(strip) : null, m = new Uint8Array(w * h);
+      for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const j = y * w + x, c = cls[j]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R && (!tm || tm[j])) m[j] = 1; }
+      const CB = core && core.classifyBlobs ? core.classifyBlobs(strip, m, tm, y1, pts => { let c3 = 0; for (const p of pts) if (cls[p] === 3) c3++; return c3 > .5 * pts.length; }) : {land: m, chip: null, blobs: []};
+      const {lab, sizes} = components(CB.land, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
-      const land = landWidth(wc, Wn, Hn, win, P, EDGE_U, opts.vb);
+      // the network-grid land width (landWidth) sees only the band: every other flank / chip pixel is set to tool
+      const toStrip = (X, Y) => [Math.round((X + .5 - Wn / 2) / win.k + cx - .5), Math.round((Y + .5) / win.k + win.v0 - P.al.vTip + top - .5)];
+      const gate = (cl, mirror) => { const a = new Uint8Array(n); for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const j = Y * Wn + X, c = cl[j]; if (c !== 2 && c !== 3) { a[j] = c; continue; } const [sx, sy] = toStrip(mirror ? Wn - 1 - X : X, Y); a[j] = sx >= 0 && sy >= 0 && sx < w && sy < h && band[sy * w + sx] ? c : 1; } return a; };
+      const land = landWidth(gate(wc), Wn, Hn, win, P, EDGE_U, opts.vb);
       const rowVbMm = new Float32Array(y1 - top);
       for (let y = top; y < y1; y++) {
         const Ya = Math.max(0, Math.floor(fromStrip(cx, y - .5)[1])), Yb = Math.min(Hn - 1, Math.ceil(fromStrip(cx, y + .5)[1]));
@@ -247,7 +255,7 @@
       // argmax), and from the horizontally mirrored photo (test-time flip). A soft or two-way land edge moves VBmax
       const zEnd0 = Math.min(Hn, Math.ceil((P.al.vTip + P.zoneRows - win.v0) * win.k)), Yw = Math.round(ABOVE * win.netD);
       const vbMaxOf = lw => { let v = 0; for (let Y = Yw; Y < zEnd0; Y++) v = Math.max(v, lw.vbMm[Y]); return v; };
-      const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
+      const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(gate(a), Wn, Hn, win, P, EDGE_U, opts.vb)); };
       const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
       // share of the rows at the land's widest (>= 90 % of VBmax, +-VB_SMOOTH_MM) whose ridge lies at |u| > EDGE_ON R: there a
       // 1-3 px sliver is multiplied by the foreshortening (x 2.3-3.5), so VBmax is set by the geometry, not by the land
@@ -261,11 +269,13 @@
       if (opts.tta !== false && !opts.oracle) {
         const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
         for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const i0 = Y * Wn + (Wn - 1 - X); let b = 0; for (let c = 1; c < NC; c++) if (pf[c * n + i0] > pf[b * n + i0]) b = c; wf[Y * Wn + X] = b; }
-        vbFlip = vbMaxOf(landWidth(wf, Wn, Hn, win, P, EDGE_U, opts.vb));
+        vbFlip = vbMaxOf(landWidth(gate(wf, true), Wn, Hn, win, P, EDGE_U, opts.vb));
       }
       const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
       if (vbSpreadMm > UNC_ABS || vbSpreadMm > UNC_REL * Math.max(vbArg, .1) || (vbFlip !== null && Math.abs(vbFlip - vbArg) > UNC_FLIP)) flags.push('vb-uncertain');
-      const tip = mergeTip(tipChips(wc, cls, Wn, Hn, win, P, strip, y1), opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
+      // tip damage: the chip blobs (+ saturated fracture faces) measured by wear-core's tipDamage, merged with its colour stage
+      const netTip = CB.chip && core.tipDamage ? core.tipDamage(strip, null, 0, band, CB.chip) : tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
+      const tip = mergeTip(netTip && netTip.depthMm > 0 ? Object.assign(netTip, {source: 'seg'}) : null, opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
@@ -283,7 +293,7 @@
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
         vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
-        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
+        blobs: CB.blobs, seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
           vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}}};
     }
     const segmenter = (P, i) => segmentSide(P, i);

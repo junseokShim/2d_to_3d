@@ -479,9 +479,10 @@
     const y1 = Math.min(h, top + Math.round(Math.max(1, TIP_ZONE_D * D) * ppm)), raw = new Uint8Array(w * h);
     const nb = band ? dilateMask(band, w, h, Math.max(1, Math.round(.15 * ppm))) : null;   // flank band + its rim: measured by the band
     const sat = i => rgb ? rgb[3 * i] > GLINT && rgb[3 * i + 1] > GLINT && rgb[3 * i + 2] > GLINT : g[i] > GLINT + 10;
+    const rough = ppm >= ROUGH_PPM ? roughMap(strip, y1) : null;
     for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
       const i = y * w + x; if (Math.abs(x + .5 - cx) >= .96 * R || !tm[i] || (nb && nb[i])) continue;
-      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false) || (extra && extra[i])) raw[i] = 1;
+      if (sat(i) || (cm ? cm.dist(i) / thr > 1 : false) || (extra && extra[i]) || (rough && rough[i])) raw[i] = 1;
     }
     // opening ~0.3 mm against thin edge glints; the blobs classifyBlobs already sorted as chips skip it (a fracture face is
     // speckled at high magnification and would not survive a 0.3 mm opening)
@@ -489,7 +490,7 @@
     if (extra) for (let i = 0; i < w * y1; i++) if (extra[i] && tm[i]) op[i] = 1;
     // resolution limit: ~0.6 mm on the 4.6 px/mm phone photos this was tuned on = 2.8 px; at microscope scales 0.15 mm
     const resMm = Math.max(.15, 2.8 / ppm);
-    const lab = new Int32Array(w * h), out = new Uint8Array(w * h), touch = top + Math.max(1, Math.round(.3 * ppm));
+    const lab = new Int32Array(w * h), out = new Uint8Array(w * h), touch = top + Math.max(1, Math.round(Math.max(TOUCH_MM, TOUCH_D * D) * ppm));
     let best = {depthMm: 0, widthMm: 0, areaMm2: 0, px: 0}, n = 0;
     for (let s = 0; s < w * y1; s++) if (op[s] && !lab[s]) {
       const st = [s], pts = []; lab[s] = ++n;
@@ -520,15 +521,17 @@
   // the helical flank, bright and smooth, running on down the tool). Per 4-connected blob of a candidate mask (S = strip or
   // any tool-aligned frame {w, h, g, rgb?, ppm, cx, R, top}; rows = axis from the tip line):
   //   streak: not a chip, and the tool right below it (along its slant) stays as bright (continuesBelow)
-  //   chip:   it reaches the tip line (<= TOUCH_MM), is >= 2 resolution limits deep (not the rim of the end face) and compact
+  //   chip:   it starts at the tip line (within max(TOUCH_MM, TOUCH_D x D): the fracture face of a broken tooth lies below
+  //           the tip line, the tooth above it is gone), is >= 2 resolution limits deep (not the rim of the end face) and compact
   //           (depth <= CHIP_ASPECT x width): material lost at the corner
   //   land:   the rest (a land along the edge is long and narrow)
   // blobs below MIN_BLOB_MM^2 are noise.
-  const TOUCH_MM = .3, CHIP_ASPECT = 5, MIN_BLOB_MM = .15;
-  function classifyBlobs(S, mask, tm, y1) {
+  const TOUCH_MM = .3, TOUCH_D = .12, CHIP_ASPECT = 5, MIN_BLOB_MM = .15;
+  // isChip(pts) (optional): a second opinion (the network's chipping class) for blobs at the tip line
+  function classifyBlobs(S, mask, tm, y1, isChip) {
     const {w, h, ppm, cx, R, top} = S, H = Math.min(h, y1 || h), n = w * H;
     const land = new Uint8Array(w * h), chip = new Uint8Array(w * h), streak = new Uint8Array(w * h), lab = new Int32Array(n), blobs = [];
-    const Rmm = R / ppm, arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R))), touch = top + Math.max(1, Math.round(TOUCH_MM * ppm));
+    const Rmm = R / ppm, arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R))), touch = top + Math.max(1, Math.round(Math.max(TOUCH_MM, TOUCH_D * 2 * R / ppm) * ppm));
     const resMm = Math.max(.15, 2.8 / ppm);   // resolution limit (see tipDamage): a chip is at least 2 x as deep
     let id = 0;
     for (let s0 = 0; s0 < n; s0++) if (mask[s0] && !lab[s0] && (!tm || tm[s0])) {
@@ -538,11 +541,28 @@
       let r0 = 1e9, r1 = -1; const span = new Map();
       for (const p of pts) { const y = p / w | 0, x = p % w, e = span.get(y); r0 = Math.min(r0, y); r1 = Math.max(r1, y); span.set(y, e ? [Math.min(e[0], x), Math.max(e[1], x)] : [x, x]); }
       const depthMm = (r1 + 1 - Math.max(r0, top)) / ppm, widthMm = quant([...span.values()].map(([a, b]) => arc(b + 1 - cx) - arc(a - cx)), .5);
-      const touches = r0 <= touch, kind = touches && depthMm >= 2 * resMm && depthMm <= CHIP_ASPECT * Math.max(widthMm, 1 / ppm) ? 'chip' : continuesBelow(S, tm, pts, span, r1) ? 'streak' : 'land';
+      const touches = r0 <= touch, kind = touches && depthMm >= 2 * resMm && (depthMm <= CHIP_ASPECT * Math.max(widthMm, 1 / ppm) || (isChip && isChip(pts))) ? 'chip' : continuesBelow(S, tm, pts, span, r1) ? 'streak' : 'land';
       const out = kind === 'chip' ? chip : kind === 'land' ? land : streak; for (const p of pts) out[p] = 1;
       blobs.push({kind, r0, r1, depthMm: r4(depthMm), widthMm: r4(widthMm), areaMm2: r4(pts.length / ppm / ppm)});
     }
     return {land, chip, streak, blobs};
+  }
+  // Fracture faces are rough: at microscope / macro scales (>= MIN_PPM) a chipped corner or broken tooth sparkles (bright and
+  // dark specks), while a specular streak on the ground flank is smooth and the unworn body is dark and flat. At >= ROUGH_PPM local luminance
+  // std over a ROUGH_MM window (human's USB-microscope photos, 0.1 mm: chips 30-33, specular streaks 10-19, body ~1 grey
+  // levels, p50) above ROUGH_STD and a local mean above ROUGH_MEAN marks a fracture candidate (tip region only; the 0.3 mm
+  // opening of tipDamage removes the thin high-std rims along edges).
+  const ROUGH_MM = .1, ROUGH_STD = 24, ROUGH_MEAN = 40, ROUGH_PPM = 30;   // below 30 px/mm a 0.1 mm window is < 3 px: edges, not texture
+  function roughMap(strip, y1) {
+    const {w, g, rgb, ppm} = strip, r = Math.max(2, Math.round(ROUGH_MM * ppm)), W1 = w + 1, I = new Float64Array(W1 * (y1 + 1)), I2 = new Float64Array(W1 * (y1 + 1)), N = new Float64Array(W1 * (y1 + 1));
+    for (let y = 0; y < y1; y++) { let a = 0, b = 0, c = 0; for (let x = 0; x < w; x++) { const i = y * w + x, v = rgb ? (rgb[3 * i] + rgb[3 * i + 1] + rgb[3 * i + 2]) / 3 : g[i], ok = !Number.isNaN(g[i]); if (ok) { a += v; b += v * v; c++; } const k = (y + 1) * W1 + x + 1; I[k] = I[k - W1] + a; I2[k] = I2[k - W1] + b; N[k] = N[k - W1] + c; } }
+    const S = (A, x0, y0, x2, y2) => A[y2 * W1 + x2] - A[y0 * W1 + x2] - A[y2 * W1 + x0] + A[y0 * W1 + x0], m = new Uint8Array(w * y1);
+    for (let y = 0; y < y1; y++) for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x2 = Math.min(w, x + r + 1), y0 = Math.max(0, y - r), y2 = Math.min(y1, y + r + 1), n = S(N, x0, y0, x2, y2); if (n < 4) continue;
+      const mu = S(I, x0, y0, x2, y2) / n, sd = Math.sqrt(Math.max(0, S(I2, x0, y0, x2, y2) / n - mu * mu));
+      if (sd > ROUGH_STD && mu > ROUGH_MEAN) m[y * w + x] = 1;
+    }
+    return m;
   }
   const TIP_BELOW_MM = 1.5, TIP_BELOW_X = .5;
   function continuesBelow(strip, tm, pts, span, r1) {
