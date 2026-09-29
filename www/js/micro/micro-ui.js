@@ -154,7 +154,7 @@
     try {
       const all = flutes.flatMap(i => S.imgs[i]), long = Math.max(...all.map(s => Math.max(s.naturalWidth || s.width, s.naturalHeight || s.height)));
       const sc = Math.min(1, MAXPX / long), ppm = c.pxPerMm * sc, runProbs = await T.wear.seg.runner(), core = MC();
-      const per = [], strips = [], sides = [], images = [];
+      const per = [], strips = [], sides = [], images = [], posts = [];
       for (let i = 0; i < k; i++) {
         const list = S.imgs[i] || [];
         if (!list.length) { per.push({vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: [], missing: true}); strips.push(null); sides.push(null); continue; }
@@ -171,11 +171,15 @@
         const vbb = worn ? res.reduce((s, r) => s + r.stats.vbb * r.stats.wornMm, 0) / worn : 0, vbc = res.map(r => r.stats.vbc).filter(v => v != null);
         per.push({vbMaxMm: worst.stats.vbMax, vbAvgMm: core.r4(vbb), vbbMm: core.r4(vbb), vbcMm: vbc.length ? Math.max(...vbc) : null, U: worst.q2.vbMax.U, areaMm2: 0, volumeMm3: 0, profile: [], images: res.length,
           flags: [...new Set(res.flatMap(r => r.flags))]});
+        // Keyence / Alicona style post-processing of the worst image's land (js/wear/wear-post.js; edge = tool / background boundary)
+        const PO = T.wear.post, sg = worst.seg;
+        try { posts[i] = PO && sg && sg.mask ? PO.analyze({mask: sg.mask, w: sg.w, h: sg.h, pxPerMm: ppm / sg.scale[0], toMm: (X, Y) => [X * sg.scale[0] / ppm, Y * sg.scale[1] / ppm], edge: 'background'}) : null; } catch (e) { posts[i] = null; }
         strips.push(core.fluteStrip(res, ppm, S.corner));
         sides.push({align: {pxPerMm: ppm}, reasons: per[i].flags});
       }
       const engine = `AI (Seg) · 현미경 ${S.mag}x`;
       const wr = {engine: 'micro', inputMode: 'microscope', magnification: S.mag, diameterMm: Dmm, flutes: k, helixDeg: 0, perFlute: per,
+        post: per.map((_, i) => posts[i] ? {keyence: posts[i].keyence, alicona: posts[i].alicona, lengthMm: posts[i].lengthMm, edgeSide: posts[i].edgeSide} : null),
         totals: {vbMaxMm: Math.max(0, ...per.map(f => f.vbMaxMm)), areaMm2: 0, volumeMm3: 0}, calib: {pxPerMm: ppm, umPerPx: core.r4(1000 / ppm), uRel: c.uRel, method: c.method}};
       T.wearResult = wr; T.faceSeg = null;
       T.wearDebug = {engine: 'micro', inputMode: 'microscope', magnification: S.mag, calib: core.metroCalib(Object.assign({}, c, {pxPerMm: ppm}), S.mag),

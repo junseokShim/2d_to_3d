@@ -30,6 +30,10 @@
   // more than UNC_FLIP mm (chosen on .work/valset4-17, checked on 18-30; never on test/wear/seg)
   const UNC_ABS = .2, UNC_REL = .75, UNC_FLIP = .1;
   const MIN_TOOL = .5;                      // share of the silhouette the network must see as tool, else the side falls back
+  // below TOOL_OK of the silhouette seen as tool the window does not match the photo well (framing, blur, backdrop like the
+  // tool): the side is measured but goes to the operator ('seg-coverage'). Fresh valsets 43-57: every value .6-.9 caught the
+  // same silent-wrong sides; 58-72: 12 of 18 silent-wrong caught, 1 of 14 confident right sides flagged
+  const TOOL_OK = .7;
   const r4 = v => Math.round(v * 1e4) / 1e4, ceil32 = v => Math.max(32, Math.ceil(v / 32) * 32);
 
   // bilinear RGB sample of an ImageData at (x, y), clamped to the border; into out[o], out[o+P], out[o+2P] (0..1)
@@ -185,6 +189,9 @@
       source: dn && dc ? 'seg+color' : dc ? 'color' : 'seg', netDepthMm: dn, colorDepthMm: dc};
   }
 
+  // wear-post.js (Keyence / Alicona style post-processing): Node require, browser Tool3D.wear.post
+  const postApi = () => { try { return typeof module === 'object' && module.exports ? require('./wear-post.js') : (self.Tool3D && self.Tool3D.wear && self.Tool3D.wear.post) || null; } catch (e) { return null; } };
+
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
   function createSegmenter(runProbs, core, opts = {}) {
     const faces = [];
@@ -204,6 +211,11 @@
       const {cls: wc, conf} = argmax(prob, n);
       let cs = 0, cn = 0; for (let j = 0; j < n; j++) if (wc[j]) { cs += conf[j]; cn++; }
       const confidence = cn ? cs / cn : 0;
+      // soft wear evidence: flank + chip probability summed over the zone on the tool face (mm^2), and its strongest pixel
+      let wearSoft = 0, wearPk = 0;
+      { const Ya = Math.round(ABOVE * win.netD), Yb = Math.min(Hn, Math.ceil((P.al.vTip + P.zoneRows - win.v0) * win.k)), Rw = win.netD / 2;
+        for (let Y = Ya; Y < Yb; Y++) for (let X = 0; X < Wn; X++) { if (Math.abs(X + .5 - Wn / 2) >= EDGE_U * Rw) continue; const j = Y * Wn + X, q = prob[2 * n + j] + prob[3 * n + j]; wearSoft += q; if (q > wearPk) wearPk = q; }
+        wearSoft /= (win.k * P.al.pxPerMm) ** 2; }
       if (toolFrac < MIN_TOOL) throw new Error(`seg: the network sees only ${Math.round(100 * toolFrac)} % of the tool in the zone`);
       // the window starts ABOVE * D over the tip line: that strip must be background. Tool there = the alignment put the
       // tip too low (the worn corner is outside the zone) -> the side goes to the operator instead of a confident 0
@@ -215,6 +227,7 @@
         an++; if (wc[Y * Wn + X]) at++;
       }
       const aboveTip = an ? at / an : 0, flags = aboveTip > MAX_ABOVE ? ['tip-misplaced'] : [];
+      if (toolFrac < TOOL_OK) flags.push('seg-coverage');
       // flank band = flank wear + chipping inside the zone; one photo measures the flute it faces = the largest piece
       const m = new Uint8Array(w * h);
       for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const c = cls[y * w + x]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R) m[y * w + x] = 1; }
@@ -247,11 +260,17 @@
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
       for (const c of [2, 3, 4]) areas[c] = r4(areas[c] / ppmNet / ppmNet);
       const al = P.al, Rmm = R / strip.ppm, k = opts.flutes || 0;
+      // Keyence / Alicona style reports of the land (wear-post.js), on the tool surface (cylinder unwrapped)
+      let post = null; const PO = postApi();
+      if (PO) try {
+        const Rn = win.netD / 2;
+        post = PO.analyze({mask: wc, w: Wn, h: Hn, pxPerMm: ppmNet, rows: [Yw, zEnd0], toMm: (X, Y) => [Rn / ppmNet * Math.asin(Math.max(-1, Math.min(1, (X - Wn / 2) / Rn))), Y / ppmNet]});
+      } catch (e) { post = null; }
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
-        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1,
+        areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1, wearSoftMm2: r4(wearSoft), wearPeak: r4(wearPk),
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
-        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}};
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
           vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}}};
@@ -340,6 +359,8 @@
     try { topFace = top && debug.top ? await seg.segmentTop(top, debug.top, opts.diameterMm) : null; } catch (e) { debug.segTopError = String(e && e.message || e); }
     T.faceSeg = seg.faces.filter(Boolean).concat(topFace ? [topFace] : []);
     result.faces = T.faceSeg.map(f => ({face: f.face, angleDeg: f.angleDeg, areasMm2: f.areasMm2, confidence: f.confidence}));
+    // per side: Keyence / Alicona style post-processing of the land (null where the network found no land)
+    result.post = seg.faces.map(f => f && f.post ? {keyence: f.post.keyence, alicona: f.post.alicona, lengthMm: f.post.lengthMm, edgeSide: f.post.edgeSide} : null);
     debug.segMs = Date.now() - t0; debug.faceSeg = T.faceSeg;
     T.wearResult = result; T.wearDebug = debug;
     window.dispatchEvent(new CustomEvent('tool3d:wear', {detail: result}));

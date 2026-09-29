@@ -112,6 +112,8 @@ function iou(seg, lab, pred) {
   const dmg = faces.filter(Boolean).map(f => f.areasMm2[2] + f.areasMm2[3]);
   check('damage found on the worn sides (>= 2 sides with flank+chip area >= 0.05 mm2)', dmg.filter(a => a >= .05).length >= 2, dmg.map(f3).join(' '));
   S.forEach((s, i) => s && console.log(`      side${i + 1}: VBmax ${f3(s.vbMaxMm)} (flank ${f3(s.vbFlankMaxMm)}, tip ${f3(s.vbTipMm)} ${s.vbSource}; network chip ${faces[i] && faces[i].tip ? f3(faces[i].tip.netDepthMm) : '0.000'}, colour ${faces[i] && faces[i].tip ? f3(faces[i].tip.colorDepthMm) : '0.000'})  operator: ${s.needsOperator ? s.reasons.join(',') : 'no'}`));
+  // record: Keyence / Alicona style post-processing of each side's land (wear-post.js; test/wear/post-run.js checks the maths)
+  faces.forEach((f, i) => f && f.post && console.log(`      side${i + 1} post: keyence VBmax ${f3(f.post.keyence.VBmax)} recession ${f3(f.post.keyence.edgeRecessionMax)} | alicona VBmax ${f3(f.post.alicona.VBmax)} VBmean ${f3(f.post.alicona.VBmean)} Nd ${f.post.alicona.Nd} Pd ${f.post.alicona.Pd} % Ddmax ${f3(f.post.alicona.Ddmax)} Ldmax ${f3(f.post.alicona.Ldmax)} (edge ${f.post.edgeSide}, L ${f3(f.post.lengthMm)} mm)`));
   // the human's complaint was 'VB not detected': the chipped end teeth (wear-core tipDamage: s2 2.56, s3 1.33, s4 2.68 mm)
   // must reach the reported VBmax as VBC, or the side goes to the operator; never a confident small VB there
   for (const i of [1, 2, 3]) { const s = S[i]; check(`side ${i + 1}: tip damage >= 1 mm in VBmax (VBC) or flagged for the operator`, !!s && (s.vbTipMm >= 1 || s.needsOperator), s ? `VBmax ${f3(s.vbMaxMm)}, tip ${f3(s.vbTipMm)}, ${s.needsOperator ? s.reasons.join(',') : 'confident'}` : 'not aligned'); }
