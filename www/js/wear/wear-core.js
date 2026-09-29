@@ -508,6 +508,7 @@
   // Evidence verdict per side. A zero is only confident when the photo resolves the wear (>= MIN_PPM px/mm) and neither the
   // flank band nor the tip shows anything; otherwise the side goes to the operator (never a confident 0, never an
   // unconfirmed big number): 'low-resolution', 'tip-damage' (chipping / broken end tooth: VB3/CH, not a flank band).
+  const LOW_X = .5, LOW_MED = .15;   // flank VB < 0.5 x the median of the other sides while that median is > 0.15 mm -> 'vb-low' (a land the photo does not resolve reads 0)
   const OUTLIER_X = 1.6;   // flank VB > 1.6 x the median of the other sides (and > +0.1 mm) -> 'vb-outlier'
   const MIN_PPM = 15;   // 1 px = 0.067 mm: a 0.1 mm land is 1.5 px (the quality check warns below 20, fails below 8)
   // flags: the segmenter's own reasons (e.g. 'tip-misplaced', 'ai-fallback')
@@ -557,6 +558,15 @@
       ref.sort((a, b) => a - b);
       const med = ref[ref.length >> 1];
       if (s.vbFlankMaxMm > OUTLIER_X * med && s.vbFlankMaxMm > med + .1) Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-outlier'), confidence: 'low'});
+    });
+    S2.forEach((s, i) => {
+      if (!s || !conf0[i] || s.needsOperator) return;
+      let ref = S2.filter((t, j) => t && j !== i && conf0[j]).map(t => t.vbFlankMaxMm);
+      if (ref.length < 1) ref = S2.filter((t, j) => t && j !== i).map(t => t.vbFlankMaxMm);
+      if (!ref.length) return;
+      ref.sort((a, b) => a - b);
+      const med = ref.length % 2 ? ref[ref.length >> 1] : (ref[ref.length / 2 - 1] + ref[ref.length / 2]) / 2;
+      if (med > LOW_MED && s.vbFlankMaxMm < LOW_X * med) Object.assign(s, {needsOperator: true, reasons: s.reasons.concat('vb-low'), confidence: 'low'});
     });
     const empty = {vbMaxMm: 0, vbAvgMm: 0, areaMm2: 0, volumeMm3: 0, profile: []};
     const perFlute = S2.map(s => s ? {vbMaxMm: s.vbMaxMm, vbAvgMm: s.vbAvgMm, areaMm2: s.areaMm2, volumeMm3: s.volumeMm3, profile: s.profile} : Object.assign({}, empty));

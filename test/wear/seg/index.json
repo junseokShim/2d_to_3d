@@ -15,7 +15,19 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2667,
+   0.2892,
+   0.3549,
+   0.3528
+  ],
+  "vbCornerMm": [
+   0.2498,
+   0.5316,
+   0.3279,
+   0.5618
+  ]
  },
  {
   "file": "t4_side2.png",
@@ -33,7 +45,19 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2667,
+   0.2892,
+   0.3549,
+   0.3528
+  ],
+  "vbCornerMm": [
+   0.2498,
+   0.5316,
+   0.3279,
+   0.5618
+  ]
  },
  {
   "file": "t4_side3.png",
@@ -51,7 +75,19 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2667,
+   0.2892,
+   0.3549,
+   0.3528
+  ],
+  "vbCornerMm": [
+   0.2498,
+   0.5316,
+   0.3279,
+   0.5618
+  ]
  },
  {
   "file": "t4_side4.png",
@@ -69,7 +105,19 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2667,
+   0.2892,
+   0.3549,
+   0.3528
+  ],
+  "vbCornerMm": [
+   0.2498,
+   0.5316,
+   0.3279,
+   0.5618
+  ]
  },
  {
   "file": "t4_top.png",
@@ -87,7 +135,19 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2667,
+   0.2892,
+   0.3549,
+   0.3528
+  ],
+  "vbCornerMm": [
+   0.2498,
+   0.5316,
+   0.3279,
+   0.5618
+  ]
  },
  {
   "file": "t3low_side1.png",
@@ -104,7 +164,17 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": true
+  "low": true,
+  "vbZoneBMm": [
+   0.311,
+   0.388,
+   0.4413
+  ],
+  "vbCornerMm": [
+   0.3199,
+   0.3947,
+   0.4319
+  ]
  },
  {
   "file": "t3low_side2.png",
@@ -121,7 +191,17 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": true
+  "low": true,
+  "vbZoneBMm": [
+   0.311,
+   0.388,
+   0.4413
+  ],
+  "vbCornerMm": [
+   0.3199,
+   0.3947,
+   0.4319
+  ]
  },
  {
   "file": "t3low_side3.png",
@@ -138,7 +218,17 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": true
+  "low": true,
+  "vbZoneBMm": [
+   0.311,
+   0.388,
+   0.4413
+  ],
+  "vbCornerMm": [
+   0.3199,
+   0.3947,
+   0.4319
+  ]
  },
  {
   "file": "t2chip_side1.png",
@@ -154,7 +244,15 @@
   ],
   "chips": 2,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2131,
+   0.3204
+  ],
+  "vbCornerMm": [
+   0.3858,
+   0.3105
+  ]
  },
  {
   "file": "t2chip_side2.png",
@@ -170,7 +268,15 @@
   ],
   "chips": 2,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2131,
+   0.3204
+  ],
+  "vbCornerMm": [
+   0.3858,
+   0.3105
+  ]
  },
  {
   "file": "t2chip_top.png",
@@ -186,7 +292,15 @@
   ],
   "chips": 2,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.2131,
+   0.3204
+  ],
+  "vbCornerMm": [
+   0.3858,
+   0.3105
+  ]
  },
  {
   "file": "clean_side1.png",
@@ -202,7 +316,15 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.0,
+   0.0
+  ],
+  "vbCornerMm": [
+   0.0,
+   0.0
+  ]
  },
  {
   "file": "clean_side2.png",
@@ -218,6 +340,14 @@
   ],
   "chips": 0,
   "blobs": 0,
-  "low": false
+  "low": false,
+  "vbZoneBMm": [
+   0.0,
+   0.0
+  ],
+  "vbCornerMm": [
+   0.0,
+   0.0
+  ]
  }
 ]

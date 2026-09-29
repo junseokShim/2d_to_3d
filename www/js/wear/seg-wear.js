@@ -25,6 +25,10 @@
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
+  // VB uncertainty -> 'vb-uncertain': the VBmax read at probability thresholds .3 / .7 and on the mirrored photo spread by
+  // more than UNC_ABS mm, or by more than UNC_REL x the reading (floor 0.1 mm), or the mirrored photo alone moves it by
+  // more than UNC_FLIP mm (chosen on .work/valset4-17, checked on 18-30; never on test/wear/seg)
+  const UNC_ABS = .2, UNC_REL = .75, UNC_FLIP = .1;
   const MIN_TOOL = .5;                      // share of the silhouette the network must see as tool, else the side falls back
   const r4 = v => Math.round(v * 1e4) / 1e4, ceil32 = v => Math.max(32, Math.ceil(v / 32) * 32);
 
@@ -155,6 +159,32 @@
     return Object.assign(best, {mask, y1, source: 'seg'});
   }
 
+  // wear-core's colour tip-damage stage (tipDamage: fresh bright fracture faces at the tip) on the same strip. The network's
+  // chipping class misses broken end teeth on real photos (the human's D10 read VBmax ~0.2 / chip 0 while tipDamage found
+  // 1.3-2.7 mm), so its evidence is folded in: never a confident small VB on a visibly chipped tip.
+  // A blob the network calls background for the most part is not tool material (the colour stage's tool mask leaked into
+  // the backdrop): dropped.
+  function classicTip(core, P, cls) {
+    if (!core || !core.classicSegment) return null;
+    let t; try { t = core.classicSegment(P).tip; } catch (e) { return null; }
+    if (!t || !(t.depthMm > 0)) return null;
+    let n = 0, bg = 0; for (let j = 0; j < t.mask.length; j++) if (t.mask[j]) { n++; if (!cls[j]) bg++; }
+    return bg > .5 * n ? null : Object.assign({}, t, {source: 'color'});
+  }
+  // tip damage (VBC) = the deeper of the network's chips and the colour stage; the side goes to the operator anyway
+  // ('tip-damage'), and 'tip-disagree' says the two stages do not agree (one >= TIP_DIS mm, the other < half of it)
+  const TIP_DIS = .5;
+  function mergeTip(net, col, flags) {
+    const dn = net ? net.depthMm : 0, dc = col ? col.depthMm : 0;
+    if (Math.max(dn, dc) >= TIP_DIS && Math.min(dn, dc) < .5 * Math.max(dn, dc)) flags.push('tip-disagree');
+    if (!col) return net && Object.assign(net, {netDepthMm: dn, colorDepthMm: 0});
+    const b = dc > dn ? col : net, mask = b.mask.slice();
+    const o = net && net.mask !== b.mask ? net.mask : col.mask !== b.mask ? col.mask : null;
+    if (o) for (let j = 0; j < mask.length; j++) if (o[j]) mask[j] = 1;
+    return {depthMm: b.depthMm, widthMm: b.widthMm, areaMm2: r4(Math.max(dn ? net.areaMm2 : 0, col.areaMm2)), px: b.px, mask, y1: b.y1,
+      source: dn && dc ? 'seg+color' : dc ? 'color' : 'seg', netDepthMm: dn, colorDepthMm: dc};
+  }
+
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
   function createSegmenter(runProbs, core, opts = {}) {
     const faces = [];
@@ -204,13 +234,14 @@
       const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
       const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
       let vbFlip = null;
-      if (opts.tta && !opts.oracle) {
+      if (opts.tta !== false && !opts.oracle) {
         const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
         for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const i0 = Y * Wn + (Wn - 1 - X); let b = 0; for (let c = 1; c < NC; c++) if (pf[c * n + i0] > pf[b * n + i0]) b = c; wf[Y * Wn + X] = b; }
         vbFlip = vbMaxOf(landWidth(wf, Wn, Hn, win, P, EDGE_U, opts.vb));
       }
       const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
-      const tip = tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
+      if (vbSpreadMm > UNC_ABS || vbSpreadMm > UNC_REL * Math.max(vbArg, .1) || (vbFlip !== null && Math.abs(vbFlip - vbArg) > UNC_FLIP)) flags.push('vb-uncertain');
+      const tip = mergeTip(tipChips(wc, cls, Wn, Hn, win, P, strip, y1), opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
@@ -219,6 +250,7 @@
       faces[i] = {face: 'side' + (i + 1), angleDeg: k ? i * 360 / k : null, w: Wn, h: Hn, mask: wc, pxPerMm: r4(ppmNet), netD: win.netD,
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1,
+        tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
         vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
         seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
