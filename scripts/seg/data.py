@@ -19,7 +19,11 @@ def real_sample(rng, ip, mp_, size, strength=1.0):
     h, w = lab.shape
     s = size / max(h, w) * math.exp(augment.U(rng, math.log(.8), math.log(2.5)))
     fg = lab != 255
-    sel = (lab > 1) & fg if ((lab > 1) & fg).any() else (lab > 0) & fg if ((lab > 0) & fg).any() else None
+    rare = (lab == 3) | (lab == 4)
+    if rare.any() and rng.random() < .5:                    # chipping/adhesion are rare: centre half of such crops on them
+        sel = rare
+    else:
+        sel = (lab > 1) & fg if ((lab > 1) & fg).any() else (lab > 0) & fg if ((lab > 0) & fg).any() else None
     if sel is None:
         xs, ys = np.array([w // 2]), np.array([h // 2])
     else:

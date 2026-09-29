@@ -95,6 +95,7 @@ def main():
     ap.add_argument('--mix', default='pool:1', help='sampling weights per source, e.g. pool:.5,syn:.25,mud:.25')
     ap.add_argument('--eval_every', type=int, default=2000)
     ap.add_argument('--nval', type=int, default=400)
+    ap.add_argument('--cw', default='.5,1,3,6,6', help='cross-entropy class weights bg,tool,flank,chip,adhesion (chip/adhesion are rare)')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     dev = 'cuda'
@@ -127,7 +128,7 @@ def main():
     P(f'pool {len(metas)} val ids {len(val_ids)} real val ' + ' '.join(f'{k} {len(v)}' for k, v in real_va.items()))
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=1e-4, fused=True)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=a.lr, total_steps=a.iters, pct_start=a.warm)
-    cw = torch.tensor([.5, 1, 3, 3, 3], device=dev)
+    cw = torch.tensor([float(v) for v in a.cw.split(',')], device=dev)
     it, t0, best, run = 0, time.time(), -1, None
     rs = np.random.default_rng(int(time.time()))
     first = True
@@ -165,10 +166,10 @@ def main():
                   ' '.join(f'{k} {len(v)}' for k, v in real_tr.items()))
         score, ws = 0, 0
         for src, vb in vals.items():
-            iou, _ = evaluate(model, vb, dev)
+            iou, cm = evaluate(model, vb, dev)
             P(f'EVAL it {it} {src:5s} IoU bg {iou[0]:.3f} tool {iou[1]:.3f} flank {iou[2]:.3f} chip {iou[3]:.3f} adh {iou[4]:.3f}')
             w = mix.get(src, .25)
-            has = [c for c in (2, 3, 4) if src == 'pool' or c == 2]      # real sets label flank wear only (chip/adh sparse)
+            has = [c for c in (2, 3, 4) if cm[c].sum() > 0]      # score only the wear classes this val set labels
             score += w * np.mean([iou[c] for c in has]); ws += w
         score /= max(ws, 1e-9)
         tr_res = target_eval.evaluate(model, a.out, f'_{it:06d}', dev)
