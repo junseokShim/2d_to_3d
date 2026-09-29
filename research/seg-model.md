@@ -14,7 +14,10 @@ tip to the end of the wear zone + 0.3 D, 1.6 D wide, scaled so D = 128-256 px), 
 - classes: 0 background, 1 tool, 2 flank wear, 3 chipping / breakage, 4 adhesion / built-up edge;
 - VB per row = the flank band's thickness normal to the cutting edge, corrected for the cylinder's foreshortening, running
   median over ±0.3 mm along the axis; VBmax per flute;
-- chipping that reaches the tip → tip damage (VBC), counted in VBmax;
+- chipping that reaches the tip → tip damage (VBC), counted in VBmax. The network's chipping class misses broken end
+  teeth on real photos (the human's D10: chip area 0 on every side, VBmax ~0.2 mm), so wear-core's colour tip stage
+  (`tipDamage`: bright fresh fracture faces in the tip zone) runs on the same strip and the deeper of the two is the VBC;
+  a colour blob the network calls background is dropped. Any tip damage sends the side to the operator;
 - areas per class (mm², projected).
 
 ## Architecture
@@ -91,6 +94,9 @@ A side is sent to the operator (never a confident number) when:
 
 - `low-resolution`: < 15 px/mm;
 - `tip-damage`: chipping / broken tooth found at the tip;
+- `tip-disagree` (seg-wear): the network's chips and the colour tip stage disagree (one ≥ 0.5 mm deep, the other < half
+  of it). On the human's photos (sides 2-4: colour 2.56 / 1.33 / 2.68 mm, network 0) this fires; on synthetic renders
+  the colour stage also fires on ~6 of 75 sides (specular streaks on the flute margins, VBC ~1.5-3 mm, all flagged);
 - `tip-misplaced` (seg-wear): the strip above the detected tip line is > 50 % tool, meaning the alignment put the tip too low
   and the worn corner is outside the window (valset1 t4 read 0 on every side because of this);
 - `ai-fallback` (wear-core): the network could not read the side (it saw < 50 % of the tool) and the classic colour engine
