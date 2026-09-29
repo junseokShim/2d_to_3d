@@ -5,7 +5,7 @@ Splits are by source and tool (never by frame of one tool across splits), target
   matwi  : Set 3 -> val, Set 17 -> test (RVS304, 2-tooth), others train
   qit    : cutting edge 4 -> val, edges 1-3 train (one tool only; tool-only labels)
   aqifi  : train (2 images)
-  xd     : ExtraDrey, split by insert (all edges of one CT0XX together): tool no. % 6 == 3 -> val, % 6 == 0 -> test
+  xd     : ExtraDrey, split by insert (all edges of one CT0XX together): CT003+CT005 -> val, CT006+CT013 -> test (~72/14/14 %), new inserts train
   target : eval (the human's real photos; never train on them)
   python build_manifest.py <root>
 """
@@ -43,7 +43,7 @@ def split_of(pre, sid, info):
         s = re.match(r'matwi_S(\d+)_', sid).group(1)
         return {'3': 'val', '17': 'test'}.get(s, 'train')
     if pre == 'qit': return 'val' if info.get('edge') == 4 else 'train'
-    if pre == 'xd': return {3: 'val', 0: 'test'}.get(int(re.match(r'xd_CT(\d+)_', sid).group(1)) % 6, 'train')
+    if pre == 'xd': return {3: 'val', 5: 'val', 6: 'test', 13: 'test'}.get(int(re.match(r'xd_CT(\d+)_', sid).group(1)), 'train')
     if pre == 'target': return 'eval'
     return 'train'
 
