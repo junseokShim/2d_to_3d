@@ -58,7 +58,10 @@ function iou(seg, lab, pred) {
   // The reference is the VB the engine reads from the exact label masks (seg-oracle.js): it isolates the network's error
   // from the alignment and the VB maths. Only sides both runs segmented are compared (a side the alignment cannot place
   // falls back to the classic engine in both; that is wear-core's business, counted separately).
-  const pairs = [], cleanVb = [], app = {ok: 0, flagged: 0, silent: [], cleanOk: 0, cleanFlagged: 0, cleanSilent: []};
+  // Reference = the land the render actually draws (index.json vbZoneBMm: ISO 8688-2 VBmax in zone B, corner excluded;
+  // make_testset.py rendered_vb, same seeds, not fitted). The nominal per-flute vb (vbMaxMm) is 1.25-1.4x smaller than
+  // the rendered land (ragged noise, corner boost); its comparison is printed for the record only.
+  const pairs = [], cleanVb = [], app = {ok: 0, flagged: 0, silent: [], cleanOk: 0, cleanFlagged: 0, cleanSilent: []}, nomApp = {ok: 0, flagged: 0, silent: []}, corner = [];
   let nSides = 0, segSides = 0;
   for (const [name, c] of Object.entries(cases)) {
     if (name === 'nw') continue;
@@ -70,7 +73,10 @@ function iou(seg, lab, pred) {
     const row = [];
     for (let i = 0; i < k; i++) {
       nSides++; if (isSeg(debug, i)) segSides++;
-      const g = R.perFlute[i].vbMaxMm, o = O.perFlute[i].vbMaxMm, want = c.e.vbMaxMm[i], flag = debug.sides[i] && debug.sides[i].needsOperator;
+      const g = R.perFlute[i].vbMaxMm, o = O.perFlute[i].vbMaxMm, want = (c.e.vbZoneBMm || c.e.vbMaxMm)[i], flag = debug.sides[i] && debug.sides[i].needsOperator;
+      if (name !== 'clean') { const nw = c.e.vbMaxMm[i]; if (Math.abs(g - nw) <= .1) nomApp.ok++; else if (flag) nomApp.flagged++; else nomApp.silent.push(`${name}${i + 1}`); }
+      const vt = debug.sides[i] && debug.sides[i].vbTipMm;
+      if (vt > 0 && c.e.vbCornerMm) corner.push(`${name}${i + 1} VBC ${f3(vt)} vs rendered corner ${f3(c.e.vbCornerMm[i])}`);
       // what the app shows: a VBmax within 0.1 mm of the rendered land (clean: < 0.1 mm), or the side is sent to the operator
       if (name === 'clean') { if (g < .1) app.cleanOk++; else if (flag) app.cleanFlagged++; else app.cleanSilent.push(`${name}${i + 1} ${f3(g)}`); }
       else if (Math.abs(g - want) <= .1) app.ok++; else if (flag) app.flagged++; else app.silent.push(`${name}${i + 1} ${f3(g)} vs ${f3(want)}`);
@@ -78,14 +84,16 @@ function iou(seg, lab, pred) {
       row.push(`${f3(g)}/${f3(o)}`);
       if (name === 'clean') cleanVb.push(g); else pairs.push({g, o});
     }
-    console.log(`      ${name.padEnd(7)} VBmax network/exact-label per side: ${row.join('  ')}   (render vb ${c.e.vbMaxMm.map(f3).join(' ')})`);
+    console.log(`      ${name.padEnd(7)} VBmax network/exact-label per side: ${row.join('  ')}   (rendered zone-B ${(c.e.vbZoneBMm || []).map(f3).join(' ')}, nominal ${c.e.vbMaxMm.map(f3).join(' ')})`);
   }
   const within = pairs.filter(p => Math.abs(p.g - p.o) <= Math.max(.1, .35 * p.o)).length;
   const mae = pairs.reduce((s, p) => s + Math.abs(p.g - p.o), 0) / Math.max(1, pairs.length);
   check('the network reads >= 80 % of the aligned sides', segSides >= .8 * nSides, `${segSides}/${nSides}`);
   check('worn sides: VBmax within 0.1 mm (+-35 %) of the exact-label VBmax on >= 60 %', within >= .6 * pairs.length, `${within}/${pairs.length}, mean |err| ${f3(mae)} mm`);
   check('clean tool: VBmax < 0.1 mm on every side', cleanVb.every(v => v < .1), cleanVb.map(f3).join(' '));
-  check('app: every worn side within 0.1 mm of the rendered VB or flagged for the operator', !app.silent.length,
+  console.log(`      (record) against the nominal vb instead: ${nomApp.ok} within, ${nomApp.flagged} flagged, ${nomApp.silent.length} silent-wrong ${nomApp.silent.join(' ')}`);
+  if (corner.length) console.log(`      corner / tip (VBC) where the engine reports it: ${corner.join(', ')}`);
+  check('app: every worn side within 0.1 mm of the rendered zone-B VBmax or flagged for the operator', !app.silent.length,
     `${app.ok} within, ${app.flagged} flagged, ${app.silent.length} silent-wrong ${app.silent.join(', ')}`);
   check('app: every clean side < 0.1 mm or flagged for the operator', !app.cleanSilent.length,
     `${app.cleanOk} < 0.1, ${app.cleanFlagged} flagged, ${app.cleanSilent.length} silent-wrong ${app.cleanSilent.join(', ')}`);

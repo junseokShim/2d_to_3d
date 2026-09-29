@@ -25,6 +25,10 @@
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
+  // VB uncertainty -> 'vb-uncertain': the VBmax read at probability thresholds .3 / .7 and on the mirrored photo spread by
+  // more than UNC_ABS mm, or by more than UNC_REL x the reading (floor 0.1 mm), or the mirrored photo alone moves it by
+  // more than UNC_FLIP mm (chosen on .work/valset4-17, checked on 18-30; never on test/wear/seg)
+  const UNC_ABS = .2, UNC_REL = .75, UNC_FLIP = .1;
   const MIN_TOOL = .5;                      // share of the silhouette the network must see as tool, else the side falls back
   const r4 = v => Math.round(v * 1e4) / 1e4, ceil32 = v => Math.max(32, Math.ceil(v / 32) * 32);
 
@@ -204,12 +208,13 @@
       const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
       const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
       let vbFlip = null;
-      if (opts.tta && !opts.oracle) {
+      if (opts.tta !== false && !opts.oracle) {
         const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
         for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const i0 = Y * Wn + (Wn - 1 - X); let b = 0; for (let c = 1; c < NC; c++) if (pf[c * n + i0] > pf[b * n + i0]) b = c; wf[Y * Wn + X] = b; }
         vbFlip = vbMaxOf(landWidth(wf, Wn, Hn, win, P, EDGE_U, opts.vb));
       }
       const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
+      if (vbSpreadMm > UNC_ABS || vbSpreadMm > UNC_REL * Math.max(vbArg, .1) || (vbFlip !== null && Math.abs(vbFlip - vbArg) > UNC_FLIP)) flags.push('vb-uncertain');
       const tip = tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
