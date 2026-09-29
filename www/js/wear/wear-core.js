@@ -500,7 +500,7 @@
     strip.tip = vbTipMm ? {depthMm: vbTipMm, widthMm: seg.tip.widthMm} : null;   // metro-core folds it into VBC / VBmax
     return Object.assign(m, {vbFlankMaxMm, vbTipMm, vbSource: vbTipMm > vbFlankMaxMm ? 'corner/tip (VBC)' : vbFlankMaxMm > 0 ? 'flank (VB)' : 'none',
       align: {tiltDeg: r4(al.tiltDeg), pxPerMm: r4(al.pxPerMm), tipPx: al.tipPx.map(r4), axisPx: al.toImg(al.uC, al.vTip + 10).map(r4), rotateDeg: P.rotateDeg},
-      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band,
+      helixDegEstimated: hEst && r4(hEst), helixDegUsed: helixDeg, threshold: r4(seg.thr), method: seg.method, strip, band: seg.band, rowVbMm: seg.rowVbMm || null,
       tip: seg.tip ? {depthMm: seg.tip.depthMm, widthMm: seg.tip.widthMm, areaMm2: seg.tip.areaMm2} : null, tipMask: seg.tip ? seg.tip.mask : null
     }, evidence(al.pxPerMm, vbFlankMaxMm, seg.tip, seg.flags));
   }
@@ -579,7 +579,7 @@
         .concat(S2.map((s, i) => s ? null : `side ${i + 1}: tool silhouette not found (no wear measured on this side)`).filter(Boolean))
         .concat(S2.map((s, i) => s && s.tip && s.tip.depthMm > 0 ? `side ${i + 1}: tip damage (chipping / broken end tooth) ${s.tip.depthMm.toFixed(2)} mm deep x ${s.tip.widthMm.toFixed(2)} mm wide - counted in VBmax as corner/tip wear (VBC); confirm in the measurement panel` : null).filter(Boolean))
         .concat(helixInfo.source === 'default' || helixInfo.confidence === 'low' ? [`helix angle ${helixInfo.source === 'default' ? 'not measurable in the photos, 30 deg assumed' : `estimate ${helixUsed.toFixed(1)} deg is uncertain`}; enter the catalogue value`] : []),
-      strips: S2.map(s => s && {strip: s.strip, band: s.band, tipMask: s.tipMask}),
+      strips: S2.map(s => s && {strip: s.strip, band: s.band, tipMask: s.tipMask, rowVbMm: s.rowVbMm}),
       ai: segs.map(g => g && g.ai || null), aiErrors: segs.map(g => g && g.aiError || null),
       model: 'VB normal to helical edge = arc width * cos(helix); area = sum arc width * dz; volume = sum 0.5*VB^2*tan(clearance)*dz/cos(helix)'
     };

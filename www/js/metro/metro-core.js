@@ -39,7 +39,10 @@
   // Row r (0..n-1) is strip row top + r, i.e. axial position z = (r + .5) / ppm from the tip.
   // a0/b0 = first/last band column of the row. A row without wear gets a0 = e + .5, b0 = e - .5 (zero width) on the edge
   // line e, so dragging a node opens a band there too. Edits are node offsets (px), linearly interpolated between nodes.
-  function flute(strip, band, D, o) {
+  // rowVbMm (optional, AI (Seg) engine): per-row land thickness normal to the edge that wear-core measureBand() reports
+  // as VB instead of the band's arc width; evaluate() uses it while the flute is unedited so the panel shows the engine's
+  // numbers exactly. The band gives the (editable) boundary lines; an edit adds its width change to the engine rows.
+  function flute(strip, band, D, o, rowVbMm) {
     o = opt(o, D);
     const {w, h, top, ppm, cx} = strip, n = Math.max(1, Math.min(h, top + Math.round(o.zoneMm * ppm)) - top);
     const a0 = new Float32Array(n), b0 = new Float32Array(n), has = new Uint8Array(n);
@@ -63,7 +66,7 @@
     for (let r = 0; r < n; r++) if (!has[r]) { const e = edgeAt(r); a0[r] = e + .5; b0[r] = e - .5; }
     const N = Math.max(3, Math.min(33, Math.round(n / (.25 * ppm)) + 1)), nodeRows = new Float32Array(N);
     for (let i = 0; i < N; i++) nodeRows[i] = i * (n - 1) / (N - 1);
-    return {strip, D, n, a0, b0, has, edge, nodeRows, nodes: {a: new Float32Array(N), b: new Float32Array(N)}, edited: false};
+    return {strip, D, n, a0, b0, has, edge, nodeRows, nodes: {a: new Float32Array(N), b: new Float32Array(N)}, edited: false, rowVbMm: rowVbMm || null};
   }
   // ---------- operator-assisted fallback (auto band failed / low confidence) ----------
   // Cutting-edge line from geometry: on the rectified strip a helical edge at arc position s(z) = s0 + sgn*z*tan(helix)
@@ -134,9 +137,12 @@
     const {strip: {cx, R, ppm}, n} = F, f = o.scale || 1, h = (o.helixDeg == null ? 30 : o.helixDeg) * DEG, cb = Math.cos(h), tc = Math.tan(o.clearanceDeg * DEG);
     const Rmm = R / ppm, arc = u => Rmm * Math.asin(Math.max(-1, Math.min(1, u / R)));
     const raw = new Float64Array(n), A = new Float32Array(n), B = new Float32Array(n);
+    const arcW = (a, b) => b - a > -1 + 1e-6 ? Math.max(0, arc(b + .5 - cx) - arc(a - .5 - cx)) : 0;
     for (let r = 0; r < n; r++) {
       const [a, b] = bounds(F, r); A[r] = a; B[r] = b;
-      raw[r] = b - a > -1 + 1e-6 ? Math.max(0, arc(b + .5 - cx) - arc(a - .5 - cx)) : 0;
+      // engine rows (AI (Seg)): land thickness as arc width, exactly as measureBand; an operator edit adds the change of
+      // the corrected band width (0 while unedited), so dragging the front out/in grows/shrinks VB from the engine value
+      raw[r] = F.rowVbMm ? Math.max(0, (F.rowVbMm[r] || 0) / cb + (F.edited ? arcW(a, b) - arcW(F.a0[r], F.b0[r]) : 0)) : arcW(a, b);
     }
     const ws = Array.from(raw, (_, i) => { const q = Array.from(raw.slice(Math.max(0, i - 1), i + 2)).sort((p, s) => p - s); return q[q.length >> 1]; });
     const dz = f / ppm, vb = ws.map(s => s * cb * f);

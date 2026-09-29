@@ -37,6 +37,18 @@ check('edge side detected', G.edge === 'a' || G.edge === 'b', G.edge);
   const Gt = M.flute(Object.assign({}, strip, {tip: {depthMm: 1.5, widthMm: 1}}), band, Dm), rt = M.evaluate(Gt, o);
   check('tip damage 1.5 mm -> VBmax = VBC = 1.5, flank 0.2, source corner/tip', rt.vbMaxMm === 1.5 && rt.q.vbc.v === 1.5 && Math.abs(rt.q.vbFlankMax.v - .2) < .002 && rt.vbSource === 'corner/tip (VBC)', JSON.stringify({vb: rt.vbMaxMm, vbc: rt.q.vbc.v, fl: rt.q.vbFlankMax.v, src: rt.vbSource}));
 }
+{ // AI (Seg) engine: wear-core reports VB from seg.rowVbMm (land thickness normal to the edge), not the band's arc width.
+  // Unedited, metro must show exactly those numbers (3-row median, VBmax/VBavg over worn rows); an edit adds the band change
+  const rv = new Float32Array(G.n); for (let r = 0; r < G.n; r++) rv[r] = r < 40 ? 0 : .35 + .1 * Math.sin(r / 7);
+  const med = rv.map((_, i) => Array.from(rv.slice(Math.max(0, i - 1), i + 2)).sort((p, q) => p - q)[Math.min(i + 2, rv.length) - Math.max(0, i - 1) >> 1]);
+  const worn = Array.from(med).filter(v => v > 0), wMax = M.r4(Math.max(...worn)), wAvg = M.r4(worn.reduce((p, q) => p + q, 0) / worn.length);
+  const Gs = M.flute(strip, band, Dm, undefined, rv), o30 = {helixDeg: 30}, rs = M.evaluate(Gs, o30);
+  check('seg rowVbMm unedited: VBmax/VBavg == engine rows', Math.abs(rs.vbMaxMm - wMax) < 1e-4 && Math.abs(rs.vbAvgMm - wAvg) < 1e-4, JSON.stringify({got: [rs.vbMaxMm, rs.vbAvgMm], want: [wMax, wAvg]}));
+  const fr = Gs.edge === 'a' ? 'b' : 'a', sg = fr === 'b' ? 1 : -1;
+  for (let i = 0; i < Gs.nodeRows.length; i++) M.setNode(Gs, fr, i, 5 * sg);   // front 5 px (0.1 mm) outward
+  const re = M.evaluate(Gs, o30), want = wMax + .1 * Math.cos(30 * Math.PI / 180);
+  check('seg rowVbMm edited: engine rows + band change', re.edited && Math.abs(re.vbMaxMm - want) < .005, JSON.stringify({edited: re.vbMaxMm, want}));
+}
 // 3. drag-to-correct: move the wear-front (non-edge) boundary out by 5 px at every node -> VB + 0.1 mm
 const front = G.edge === 'a' ? 'b' : 'a', sgn = front === 'b' ? 1 : -1;
 for (let i = 0; i < G.nodeRows.length; i++) M.setNode(G, front, i, 5 * sgn);

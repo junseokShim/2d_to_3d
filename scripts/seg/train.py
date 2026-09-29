@@ -39,6 +39,18 @@ def dice_loss(logits, y, eps=1.0):
     return (1 - (2 * inter + eps) / (den + eps))[1:].mean()
 
 
+def boundary_ce(logits, y, cw, bw):
+    """class-weighted cross-entropy, pixels within 2 px of a wear-class (>= 2) boundary weighted (1 + bw): the land's
+    edges decide VB, and they are a thin share of its pixels"""
+    ce = F.cross_entropy(logits, y, reduction='none', ignore_index=IGNORE)
+    yv = torch.where(y == IGNORE, 0, y)
+    w = cw[yv] * (y != IGNORE)
+    wear = (yv >= 2).float().unsqueeze(1)
+    edge = (F.max_pool2d(wear, 5, 1, 2) - (-F.max_pool2d(-wear, 5, 1, 2))).squeeze(1)
+    w = w * (1 + bw * edge)
+    return (ce * w).sum() / w.sum().clamp(min=1e-6)
+
+
 def confusion(pred, y):
     k = y != IGNORE
     return torch.bincount((y[k] * NC + pred[k]).flatten(), minlength=NC * NC).view(NC, NC)
@@ -98,6 +110,9 @@ def main():
     ap.add_argument('--ignore_tool', default='mud', help='sources whose tool pixels are not trained on (close-ups of flat inserts: '
                     'their granular grey rake face looks like the grey mat behind the photos, the network learned it as tool)')
     ap.add_argument('--cw', default='.5,1,3,6,6', help='cross-entropy class weights bg,tool,flank,chip,adhesion (chip/adhesion are rare)')
+    ap.add_argument('--win', type=float, default=0, help='share of pool samples framed like the app side window (augment.compose win)')
+    ap.add_argument('--bw', type=float, default=0, help='extra cross-entropy weight on pixels within 2 px of a wear-class boundary (thin lands)')
+    ap.add_argument('--save_every', action='store_true', help='keep a checkpoint per eval (it<N>.pt)')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     dev = 'cuda'
@@ -146,7 +161,7 @@ def main():
         for _ in range(n):
             k = srcs[rs.choice(len(srcs), p=pw)]
             if k == 'pool':
-                tasks.append(('synth', int(rs.integers(2 ** 62)), a.pool, tr[rs.integers(len(tr))], a.size))
+                tasks.append(('synth', int(rs.integers(2 ** 62)), a.pool, tr[rs.integers(len(tr))], a.size, bool(rs.random() < a.win)))
             else:
                 ip, mp_, _ = real_tr[k][rs.integers(len(real_tr[k]))]
                 tasks.append(('real', int(rs.integers(2 ** 62)), ip, mp_, a.size, k in no_tool))
@@ -157,7 +172,10 @@ def main():
             x, y = to_input(im, dev), torch.from_numpy(lb).long().to(dev)
             with torch.autocast('cuda', dtype=torch.bfloat16):     # bf16: no loss scaler; fp16 + GradScaler was ~7x slower here
                 out = model(x)
-            loss = F.cross_entropy(out.float(), y, weight=cw, ignore_index=IGNORE) + dice_loss(out, y)
+            if a.bw > 0:
+                loss = boundary_ce(out.float(), y, cw, a.bw) + dice_loss(out, y)
+            else:
+                loss = F.cross_entropy(out.float(), y, weight=cw, ignore_index=IGNORE) + dice_loss(out, y)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -182,6 +200,8 @@ def main():
         P(f'TARGET it {it} ' + target_eval.fmt(tr_res))
         P(f'SCORE it {it} {score:.4f}')
         torch.save(model.state_dict(), os.path.join(a.out, 'last.pt'))
+        if a.save_every:
+            torch.save(model.state_dict(), os.path.join(a.out, f'it{it}.pt'))
         if score > best:
             best = score
             torch.save(model.state_dict(), os.path.join(a.out, 'best.pt'))

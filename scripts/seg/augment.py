@@ -140,7 +140,9 @@ def overlay_marks(rng, im8):
     return (al * im + (1 - al) * im8).astype(np.uint8)
 
 
-def compose(rng, rgba, lab, out=384, meta=None, strength=1.0):
+def compose(rng, rgba, lab, out=384, meta=None, strength=1.0, win=False):
+    """win: the engine's side window (seg-wear.js sideWindow): tip up (+-4 deg), tool diameter 224..384 px, tip line
+    ~0.3 D below the top edge, so the network sees at train time the framing it gets in the app"""
     h0, w0 = lab.shape
     rgb = rgba[..., :3]                                    # BGR uint8, gamma encoded; linearised after the warp
     a = rgba[..., 3]
@@ -148,9 +150,14 @@ def compose(rng, rgba, lab, out=384, meta=None, strength=1.0):
     ys, xs = np.nonzero(lab > 0)
     Dpx = meta['D'] * meta['ppm'] if meta else 200
     target = math.exp(U(rng, math.log(60), math.log(460))) if rng.random() < .45 else U(rng, 150, 400)
-    s = target / Dpx
     view = meta['view'] if meta else 'side'
-    if view == 'side':
+    win = win and view == 'side'
+    if win:
+        target = U(rng, 224, 384)
+    s = target / Dpx
+    if win:
+        rot = U(rng, -4, 4)
+    elif view == 'side':
         rot = U(rng, -18, 18) if rng.random() < .8 else U(rng, -180, 180)
     else:
         rot = U(rng, -180, 180)
@@ -162,9 +169,15 @@ def compose(rng, rgba, lab, out=384, meta=None, strength=1.0):
     else:
         j = rng.integers(len(xs))
         px, py = xs[j], ys[j]
+    if win:                                                # anchor: the tip (top of the tool, axis centre)
+        px, py = float(xs.mean()), float(ys.min())
     M = cv2.getRotationMatrix2D((float(px), float(py)), rot, s)
-    M[0, 2] += out / 2 - px + U(rng, -.35, .35) * out
-    M[1, 2] += out / 2 - py + U(rng, -.35, .35) * out
+    if win:
+        M[0, 2] += out / 2 - px + U(rng, -.1, .1) * target
+        M[1, 2] += U(rng, .2, .4) * target - py
+    else:
+        M[0, 2] += out / 2 - px + U(rng, -.35, .35) * out
+        M[1, 2] += out / 2 - py + U(rng, -.35, .35) * out
     if rng.random() < .5:
         M = np.array([[-1, 0, out], [0, 1, 0]], np.float64) @ np.vstack([M, [0, 0, 1]])
     interp = cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR
