@@ -58,7 +58,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 #shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
 #shutter.ok{background:#e9a800}#shutter.sharp{background:#1db954}
 </style>
-<link rel="stylesheet" href="css/metro.css"><link rel="stylesheet" href="css/micro.css"><link rel="stylesheet" href="css/post.css">
+<link rel="stylesheet" href="css/metro.css"><link rel="stylesheet" href="css/post.css">
 <script src="native/android-save.js"></script>
 </head>
 <body>
@@ -68,7 +68,6 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <label class="row"><span>날 수(flute)</span><select id="flutes"></select></label>
     <label class="row"><span>공구경 φ</span><select id="dia"></select></label>
     <p class="hint">날 수 2~6, 공구경 4~12 mm</p>
-    <div id="inmode"></div>
   </section>
 
   <section>
@@ -114,7 +113,6 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 <script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
 <script src="js/capture/camera-core.js"></script><script src="js/capture/camera.js"></script>
 <script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
-<script src="js/micro/micro-core.js"></script><script src="js/micro/micro-ui.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -140,7 +138,6 @@ function thumb(src) {
 
 function renderSlots() {
   st.k = +$('#flutes').value; st.D = +$('#dia').value;
-  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.renderSlots($('#slots'));   // 현미경 입력 (js/micro)
   const box = $('#slots'); box.innerHTML = '';
   for (let i = 0; i <= st.k; i++) {
     const d = document.createElement('div'); d.className = 'slot';
@@ -159,9 +156,9 @@ const qCache = new WeakMap();           // shot -> {D, r}
 const Q_LBL = {pass: '✓ 품질 양호', warn: '! 품질 주의', fail: '! 품질 낮음 · 측정은 진행 (결과 확인)'};
 function shotQuality(i) {
   const s = st.shots[i], Q = window.Tool3D?.enhance?.quality, W = window.Tool3D?.wear; if (!s || !Q || !W?.toImage) return null;
-  const c = qCache.get(s); if (c && c.D === st.D && c.ppm === st.ppm) return c.r;
-  let r = null; try { r = Q.assess(W.toImage(s), {diameterMm: st.D, pxPerMm: st.ppm}); } catch (e) { console.warn('quality:', e); }
-  qCache.set(s, {D: st.D, ppm: st.ppm, r}); return r;
+  const c = qCache.get(s); if (c && c.D === st.D) return c.r;
+  let r = null; try { r = Q.assess(W.toImage(s), {diameterMm: st.D}); } catch (e) { console.warn('quality:', e); }
+  qCache.set(s, {D: st.D, r}); return r;
 }
 function qualityBadge(i) {
   const box = document.createElement('div'); box.className = 'qbox'; box.dataset.q = i;
@@ -413,9 +410,8 @@ async function measureWear(shots, opts) {
   } catch (e) { console.warn('wear AI unavailable, classic used:', e); }
   try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
 }
-$('#run').onclick = () => window.Tool3D?.microUI?.active() ? Tool3D.microUI.run() : cameraRun();   // 현미경 입력: 날 근접 영상은 js/micro, 공구 전체 측면은 runCameraPath
-// 현미경 입력의 공구 전체 측면 영상 → 카메라 측면 파이프라인 (px/mm = 배율 교정)
-window.runCameraPath = async (shots, pxPerMm) => { shots.forEach((s, i) => { st.shots[i] = s; st.hints[i] = null; }); st.ppm = pxPerMm > 0 ? pxPerMm : null; try { await cameraRun(); } finally { st.ppm = null; } };
+// 입력은 하나: 스마트폰·현미경 사진 모두 카메라 경로 (px/mm 는 공구 실루엣/공구경에서)
+$('#run').onclick = () => cameraRun();
 async function cameraRun() {
   msg(); const {k, D} = st, btn = $('#run');
   if (btn.disabled) return;
@@ -431,7 +427,7 @@ async function cameraRun() {
     det = {q, Lmm, bad, strips: q.map((v, i) => v ? rectify(st.shots[i], v, D, Lmm) : null)};
     if (window.Tool3D) Tool3D.wearResult = Tool3D.wearDebug = undefined;    // 이전 실행 결과가 남지 않도록
     const hUser = +$('#helix').value;                                          // 작업자 입력 헬릭스각 (비우면 사진 추정)
-    engine = await measureWear(st.shots, Object.assign({flutes: k, diameterMm: D}, hUser > 0 ? {helixDeg: hUser} : {}, st.ppm ? {pxPerMm: st.ppm} : {}));   // -> Tool3D.wearResult
+    engine = await measureWear(st.shots, Object.assign({flutes: k, diameterMm: D}, hUser > 0 ? {helixDeg: hUser} : {}));   // -> Tool3D.wearResult
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   try { analyze(); } catch (e) { console.warn('analyze:', e); msg('3D 텍스처 생성 실패: 마모 측정 결과만 표시합니다.'); }
