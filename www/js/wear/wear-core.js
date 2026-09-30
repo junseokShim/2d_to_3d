@@ -663,7 +663,7 @@
       // framing (as in 565a317) frames the network window so that ft4 reads the worn land on these close-ups (12Pi land 7/8
       // sides vs 2/8, QIT close-ups 4/10 vs 0/10; backdrop framing: the land is read as chipping or the window misses the
       // tool) -> use it and keep the lower-bound flag (tool-cut-off: the sides go to the operator, mm are not trusted)
-      if (al === ab && ab && (ab.cut.left || ab.cut.right) && !exp) { const ae = align(G, sobel(G), D, exp); if (ae) al = Object.assign(ae, {scaleFrom: 'lower-bound', cut: ab.cut, cutOff: true}); }
+      if (al === ab && ab && (ab.cut.left || ab.cut.right) && (!exp || o.edgeCut)) { const ae = align(G, sobel(G), D, exp); if (ae) al = Object.assign(ae, {scaleFrom: 'lower-bound', cut: ab.cut, cutOff: true}); }
       if (!al) return null;
       // a side view shows the tool below its tip line: a 'tip line' with less than MIN_BELOW_MM of photo below it (along the
       // axis, anywhere across the tool: a tool wider than the frame has its axis outside the photo) is the frame edge or a flute
@@ -748,9 +748,10 @@
     let P = sides.slice(0, k).map((img, i) => prepareSide(img, o, E[i]));
     // photos come from one camera setup: a side whose scale is >20 % off the median is re-aligned at the median scale
     // (cut-off sides give only a lower bound: they borrow the scale of the whole ones, and do not set it)
-    const cutOff = p => p && p.al.cut && (p.al.cut.left || p.al.cut.right);
+    // (edge-framed cut-off sides, al.cutOff, have an edge-pair scale: they share the median like whole sides, re-aligned edge-framed)
+    const cutOff = p => p && p.al.cut && (p.al.cut.left || p.al.cut.right) && !p.al.cutOff;
     const pp = P.filter(p => p && !cutOff(p)).map(p => p.al.pxPerMm).sort((a, b) => a - b), ppMed = pp[pp.length >> 1];
-    if (!pxPerMm && pp.length >= 2 || !pxPerMm && pp.length && P.some(cutOff)) P = P.map((p, i) => !p || cutOff(p) || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed}), E[i]) : p);
+    if (!pxPerMm && pp.length >= 2 || !pxPerMm && pp.length && P.some(cutOff)) P = P.map((p, i) => !p || cutOff(p) || Math.abs(p.al.pxPerMm / ppMed - 1) > .2 ? prepareSide(sides[i], Object.assign({}, o, {expectPxPerMm: ppMed, edgeCut: !!(p && p.al.cutOff)}), E[i]) : p);
     return {k, o, P};
   }
 
