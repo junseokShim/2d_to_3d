@@ -658,7 +658,12 @@
       // close-up on a plain backdrop (tool >= CLOSE_W of the frame width, where align()'s framing prior does not hold) ->
       // backdrop alignment; otherwise the edge-pair search, and the backdrop one only when that finds nothing
       const ab = o.align !== 'edges' ? backdropAlign(G, D, exp) : null;
-      const al = ab && (ab.sepPx >= CLOSE_W * G.w || ab.cut.left || ab.cut.right) ? ab : align(G, sobel(G), D, exp) || ab;
+      let al = ab && (ab.sepPx >= CLOSE_W * G.w || ab.cut.left || ab.cut.right) ? ab : align(G, sobel(G), D, exp) || ab;
+      // a tool wider than the frame, no calibration (camera path): neither alignment has a silhouette scale. The edge-pair
+      // framing (as in 565a317) frames the network window so that ft4 reads the worn land on these close-ups (12Pi land 7/8
+      // sides vs 2/8, QIT close-ups 4/10 vs 0/10; backdrop framing: the land is read as chipping or the window misses the
+      // tool) -> use it and keep the lower-bound flag (tool-cut-off: the sides go to the operator, mm are not trusted)
+      if (al === ab && ab && (ab.cut.left || ab.cut.right) && !exp) { const ae = align(G, sobel(G), D, exp); if (ae) al = Object.assign(ae, {scaleFrom: 'lower-bound', cut: ab.cut, cutOff: true}); }
       if (!al) return null;
       // a side view shows the tool below its tip line: a 'tip line' with less than MIN_BELOW_MM of photo below it (along the
       // axis, anywhere across the tool: a tool wider than the frame has its axis outside the photo) is the frame edge or a flute

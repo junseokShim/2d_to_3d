@@ -244,6 +244,9 @@
       // and leave no flank band -> there the flank band = the largest wear piece, as before the sorting
       const sortBlobs = core && core.classifyBlobs && !(P.al.pxPerMm < (core.MIN_PPM || 0));
       const CB = sortBlobs ? core.classifyBlobs(strip, m, tm, y1, pts => { let c3 = 0; for (const p of pts) if (cls[p] === 3) c3++; return c3 > .5 * pts.length; }) : {land: m, chip: null, blobs: []};
+      // a tool wider than the frame (al.cutOff, 12Pi / QIT close-ups): the streak test was tuned on whole-tool views (10Pi) and
+      // there removes the worn land itself -> only the chips leave the band (docs/debug-p6.md)
+      if (P.al.cutOff && CB.chip) { const L = new Uint8Array(w * h); for (let j = 0; j < w * h; j++) L[j] = m[j] && !CB.chip[j] ? 1 : 0; CB.land = L; }
       const {lab, sizes} = components(CB.land, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
