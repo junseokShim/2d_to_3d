@@ -197,14 +197,14 @@
   const postApi = () => { try { return typeof module === 'object' && module.exports ? require('./wear-post.js') : (self.Tool3D && self.Tool3D.wear && self.Tool3D.wear.post) || null; } catch (e) { return null; } };
 
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
-  // side views use opts.sideProbs || runProbs.side (models/wear-seg-side.onnx.js) when given, else runProbs; top view runProbs
+  // one model (models/wear-seg.onnx.js, ft4) for every view, side and top
   function createSegmenter(runProbs, core, opts = {}) {
-    const faces = [], sideProbs = opts.sideProbs || (runProbs && runProbs.side) || runProbs;
+    const faces = [];
     async function segmentSide(P, i) {
       if (!P.img) throw new Error('seg: photo missing (wear-core too old)');
       const win = sideWindow(P, opts), {Wn, Hn, fromStrip} = win, n = Wn * Hn;
       // opts.oracle(i, toPhoto, Wn, Hn) -> probs: exact labels instead of the network (tests of the VB maths)
-      const prob = opts.oracle ? opts.oracle(i, win.toPhoto, Wn, Hn) : await sideProbs(windowInput(P.img, Wn, Hn, win.toPhoto), Hn, Wn);
+      const prob = opts.oracle ? opts.oracle(i, win.toPhoto, Wn, Hn) : await runProbs(windowInput(P.img, Wn, Hn, win.toPhoto), Hn, Wn);
       const {strip} = P, {w, h, cx, R, top} = strip, y1 = Math.min(h, top + P.zoneRows);
       const cls = new Uint8Array(w * h);
       let sil = 0, seen = 0;
@@ -388,20 +388,6 @@
     microP.catch(() => {});
     return microP;
   }
-  // side-view model (models/wear-seg-side.onnx.js = seg14 fA: human-labelled chips, better 10Pi chip depth on held-out folds;
-  // its top-view tool IoU fell .844 -> .771, so top views keep wear-seg). Without the file the sides use wear-seg too.
-  let sideP = null;
-  function loadSide() {
-    if (sideP) return sideP;
-    sideP = (async () => {
-      const T = self.Tool3D, ort = await ortInit();
-      if (!T.segSideModelB64) await loadScript(base() + 'models/wear-seg-side.onnx.js');
-      const session = await ort.InferenceSession.create(b64(T.segSideModelB64), {executionProviders: ['wasm'], graphOptimizationLevel: 'all'});
-      T.segSideModelB64 = null;
-      return {ort, session};
-    })();
-    return sideP;
-  }
   const ortRunner = ({ort, session}) => async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
 
   // same inputs as Tool3D.wear.run; resolves to the wearResult (engine 'seg'); sides the network cannot read use the classic path
@@ -410,8 +396,7 @@
     const sides = shots.slice(0, k).filter(Boolean).map(W.toImage), top = shots[k] ? W.toImage(shots[k]) : null;
     if (sides.length < k) throw new Error(`wear: need ${k} side photos, got ${sides.length}`);
     const t0 = Date.now(), runner = ortRunner(await load());
-    let sideRunner = null; try { sideRunner = ortRunner(await loadSide()); } catch (e) { console.info('seg: no side model, wear-seg used for sides', e.message); }
-    const seg = createSegmenter(runner, W, {flutes: k, sideProbs: sideRunner});
+    const seg = createSegmenter(runner, W, {flutes: k});
     const {result, debug} = await W.measureAsync(Object.assign({}, opts, {sides, top}), seg, 'seg');
     let topFace = null;
     try { topFace = top && debug.top ? await seg.segmentTop(top, debug.top, opts.diameterMm) : null; } catch (e) { debug.segTopError = String(e && e.message || e); }
@@ -428,5 +413,5 @@
   const runner = async () => ortRunner(await load());   // browser runProbs for segmentImageProbs (js/micro)
   const microRunner = async () => { try { return Object.assign(ortRunner(await loadMicro()), {micro: true}); } catch (e) { if (!microWarned) console.info('seg: no microscope model, phone model used', e.message); microWarned = true; return Object.assign(await runner(), {micro: false}); } };
 
-  return {createSegmenter, segmentImage, segmentImageProbs, runner, microRunner, sideWindow, windowInput, classAt, components, load, loadSide, ortInit, run, segment, CLASSES, NC};
+  return {createSegmenter, segmentImage, segmentImageProbs, runner, microRunner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
 });

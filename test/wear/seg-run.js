@@ -30,10 +30,9 @@ function iou(seg, lab, pred) {
   console.log('\n# 1. parity torch (export.py) vs onnxruntime-web wasm');
   const im = readPng(path.join(DIR, 'parity.png')), P = im.width * im.height, x = new Float32Array(3 * P);
   for (let i = 0; i < P; i++) for (let c = 0; c < 3; c++) x[c * P + i] = im.data[4 * i + c] / 255;
-  // wear-seg (top views) and, when loaded, the side-view model wear-seg-side (parity-side.json)
-  for (const [fn, file, tag] of [[run, 'parity.json', ''], [run.side, 'parity-side.json', ' (side model)']]) {
-    if (!fn || !fs.existsSync(path.join(DIR, file)) || fn === run && tag) continue;
-    if (tag && run.sideModel !== 'wear-seg-side.onnx.js') { console.log(`  side model ${run.sideModel}: no parity fixture, skipped`); continue; }
+  // wear-seg (ft4): the one model for every view
+  for (const [fn, file, tag] of [[run, 'parity.json', '']]) {
+    if (!fs.existsSync(path.join(DIR, file))) continue;
     const fx = JSON.parse(fs.readFileSync(path.join(DIR, file), 'utf8'));
     const prob = await fn(x, im.height, im.width), counts = [0, 0, 0, 0, 0], sums = [0, 0, 0, 0, 0];
     for (let i = 0; i < P; i++) { let b = 0; for (let c = 0; c < 5; c++) { sums[c] += prob[c * P + i]; if (prob[c * P + i] > prob[b * P + i]) b = c; } counts[b]++; }
