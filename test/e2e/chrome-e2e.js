@@ -262,6 +262,42 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   // one camera flow: the step-1 microscope choice is gone (no input-mode radio, no microscope panel or close-up slots)
   const MI = res.checks.micro = JSON.parse(await ev(`JSON.stringify({inmode:document.querySelectorAll('[name=inmode]').length,panel:!!document.querySelector('#miPanel'),slots:document.querySelectorAll('#slots .mi-slot').length})`));
   MI.ok = MI.inmode === 0 && !MI.panel && MI.slots === 0;
+  // ---------- ③ 3D metrology view: photo texture projected on the model, deviation / height maps with scale bar, per-flute
+  // labels + table (wear volume, equivalent edge radius, end-face worn area), edge sections, section profile, snapshot, CSV ----------
+  {
+    const SV = res.checks.surface3d = {}, sd = path.join(OUT, 'surface3d'); fs.mkdirSync(sd, {recursive: true});
+    const shot3 = async (sel, name) => {
+      const b = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return [r.x+scrollX,r.y+scrollY,r.width,r.height]})()`);
+      const {data} = await s('Page.captureScreenshot', {format: 'png', clip: {x: b[0], y: b[1], width: b[2], height: b[3], scale: 1}, captureBeyondViewport: true});
+      fs.writeFileSync(path.join(sd, name + '.png'), Buffer.from(data, 'base64'));
+    };
+    // real run (sample photos): projected photo texture, one row + one label per flute
+    await ev(`Tool3D.render.setMap(null);Tool3D.map3d.run({shots: st.shots, flutes: st.k, diameterMm: st.D});Tool3D.render.mode('photo');document.querySelector('#tool3d-view').scrollIntoView({block:'center'});1`); await sleep(800);
+    SV.real = JSON.parse(await ev(`JSON.stringify((()=>{const p=Tool3D.render.photo,r=Tool3D.surfaceResult;return {photo:!!(p&&p.side&&p.side.NA),coverage:p&&p.coverage,end:!!(p&&p.end),mode:Tool3D.render.mode(),
+      flutes:r&&r.flutes.length,rows:document.querySelectorAll('#surf-flutes tr').length,labels:[...document.querySelectorAll('#tool3d-labels > div')].filter(d=>d.style.display!=='none').length,
+      endWorn:r&&r.endWornMm2,ruler:document.querySelector('#tool3d-ruler').textContent}})())`));
+    for (const v of ['iso', 'corner', 'tip']) { await ev(`Tool3D.render.view('${v}');1`); await sleep(900); await shot3('#tool3d-view', 'photo-' + v); }
+    // mock wear on the model: deviation map (scale bar in um), height map, per-flute values, profile along F1's flank land
+    await ev(`Tool3D.map3d.mock();1`); await sleep(500);
+    SV.mock = JSON.parse(await ev(`JSON.stringify((()=>{const r=Tool3D.surfaceResult;return {vol:r.totals.wearVolumeMm3,edge:r.flutes.map(f=>f.edgeRadiusUm),vb:r.flutes.map(f=>f.vbMaxUm),endWorn:r.endWornMm2,dev:Tool3D.render.deviation,
+      tol:r.tolerance.rows.length,sections:document.querySelectorAll('#surf .secs svg').length}})())`));
+    await ev(`Tool3D.render.mode('dev');Tool3D.render.view('corner');1`); await sleep(900);
+    SV.scale = await ev(`document.querySelector('#tool3d-scale').style.display!=='none'?document.querySelector('#tool3d-scale').textContent:''`);
+    await shot3('#tool3d-view', 'deviation-corner'); await ev(`Tool3D.render.view('iso');1`); await sleep(900); await shot3('#tool3d-view', 'deviation-iso');
+    await ev(`Tool3D.render.mode('height');1`); await sleep(900); await shot3('#tool3d-view', 'height-iso');
+    await ev(`Tool3D.render.mode('photo');Tool3D.render.view('corner');document.querySelector('#surf button[data-act=p-edge]').click();1`); await sleep(1200);
+    SV.profile = JSON.parse(await ev(`JSON.stringify((()=>{const p=Tool3D.surface.profile;return p&&{n:p.points.length,len:p.lengthMm,devMin:p.devMinUm,svg:!!document.querySelector('#surf-profile svg')}})())`));
+    await shot3('#tool3d-view', 'profile-line'); await ev(`document.querySelector('#surf-profile').scrollIntoView({block:'center'});1`); await sleep(300); await shot3('#surf-profile', 'profile-chart');
+    await ev(`document.querySelector('#surf').scrollIntoView({block:'start'});1`); await sleep(300); await shot3('#surf', 'panel');
+    SV.snapshot = await ev(`(()=>{const u=Tool3D.render.snapshot();return String(u).startsWith('data:image/png')?u.length:0})()`);
+    SV.csv = await ev(`(()=>{const t=Tool3D.surface.csv();return /flute,VBmax_um,edge_radius_um/.test(t)&&/end_face_worn_area_mm2/.test(t)&&/profile_s_mm/.test(t)})()`);
+    SV.neutral = await ev(`!/keyence|alicona|vhx|infinite ?focus|sandvik|edge ?quality/i.test(document.querySelector('#tool3d-view').closest('section').innerText)`);
+    await ev(`Tool3D.render.clearProfile();Tool3D.render.setMap(null);Tool3D.render.view('iso');1`);
+    const R = SV.real, M = SV.mock;
+    SV.ok = R.photo && R.coverage > .5 && R.mode === 'photo' && R.flutes === 4 && R.rows === 6 && R.labels === 4 && /mm|µm/.test(R.ruler) &&
+      M.vol > 0 && M.edge.every(v => v > 0) && M.vb.every(v => v > 0) && M.endWorn > 0 && M.dev && M.dev.rangeUm > 0 && M.tol === 4 && M.sections === 4 &&
+      /Deviation/.test(SV.scale) && SV.profile && SV.profile.n === 300 && SV.profile.devMin < 0 && SV.profile.svg && SV.snapshot > 20000 && SV.csv === true && SV.neutral === true;
+  }
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(Seg\)|AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
@@ -271,6 +307,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
     map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), oneCameraFlow: !!(c.micro && c.micro.ok), postProcessing: !!(c.post && c.post.ok)};
+  res.pass.surface3d = !!(c.surface3d && c.surface3d.ok);
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

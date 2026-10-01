@@ -79,7 +79,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
   </section>
 
   <section>
-    <h2>③ 3D 화</h2>
+    <h2>③ 3D 형상 측정</h2>
     <button class="pri" id="run">3D 생성</button> <span id="busy" hidden><i class="spin"></i> 마모 분석 중… (AI 모델 첫 로드는 수 초 걸립니다)</span>
     <div id="msg"></div>
     <canvas id="gl"></canvas>
@@ -92,6 +92,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <table id="res"></table>
     <div class="ctl"><button id="dlStl">STL 저장</button><button id="dlTex">텍스처 PNG</button><button id="dlJson">결과 JSON</button><button id="dlInputs">입력 내보내기 (Export inputs)</button></div>
     <div id="strips"></div>
+    <div id="surf"></div>
   </section>
   <section id="metro"></section>
   <!-- TODO(god): delete #post, js/post/**, css/post.css and test/post once the 3D post-processing views live in section ③ (worker-view3d); its 2D views are now in ④ (js/metro) -->
@@ -651,6 +652,7 @@ renderSlots();
 <script src="js/render/viewer.js"></script>
 <script src="js/map3d/map3d-core.js"></script>
 <script src="js/map3d/map3d.js"></script>
+<script src="js/map3d/surface-metrology.js"></script><script src="js/map3d/photo-map.js"></script><script src="js/map3d/surface-ui.js"></script>
 <script src="js/post/post-core.js"></script><script src="js/post/post-ui.js"></script>
 </body>
 </html>

@@ -114,6 +114,28 @@
     let res = null;
     try { res = apply(faces, {source}); } catch (e) { console.warn('map3d:', e); }
     if (T.map3dResult) T.map3dResult.rejected = seg ? seg.rejected : [];
+    photo(o);
+    return res;
+  }
+
+  // true-colour texture: the rectified side strips (js/wear, colour) + the top photo projected onto the model (photo-map.js)
+  let lastPhoto = null;
+  function photo(o) {
+    const PM = T.photoMap, SC = T.surfaceCore, R3 = T.render, G = T._render && T._render.geometry, dbg = T.wearDebug;
+    if (o) lastPhoto = o; else o = lastPhoto;
+    if (!PM || !SC || !R3 || !R3.setPhoto || !R3.params || !G || !o) return null;
+    let res = null;
+    try {
+      const k = o.flutes, q = R3.params, L = G.layout(q), views = [];
+      (dbg && dbg.strips || []).forEach((e, i) => { const s = e && e.strip; if (s && s.rgb && i < k) views.push({rgb: s.rgb, g: s.g, w: s.w, h: s.h, axisX: s.cx + .5, tipY: s.top, ppm: s.ppm, angleDeg: i * 360 / k}); });
+      let top = null;
+      if (o.shots && o.shots[k] && dbg && dbg.top && dbg.top.rPx > 0 && T.wear && T.wear.toImage) {
+        const im = T.wear.toImage(o.shots[k]);
+        top = {data: im.data, width: im.width, height: im.height, cx: dbg.top.cx, cy: dbg.top.cy, rPx: dbg.top.rPx};
+      }
+      res = views.length ? PM.build({views, top, rNom: SC.nominalRadius(L), R: L.R, azSign: -1}) : null;
+    } catch (e) { console.warn('map3d photo:', e); }
+    R3.setPhoto(res);
     return res;
   }
   window.addEventListener('tool3d:faceseg', () => { if (lastRun) run(lastRun); });
@@ -127,7 +149,8 @@
   window.addEventListener('tool3d:params', () => {
     if (!last || !T.render || !T.render.map) return;
     try { apply(last.faces, last.o); } catch (e) { console.warn('map3d re-apply:', e); }
+    photo();
   });
 
-  T.map3d = {run, apply, mock, deriveFaces};
+  T.map3d = {run, apply, mock, deriveFaces, photo};
 })();
