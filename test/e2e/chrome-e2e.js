@@ -287,7 +287,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     SV.profile = JSON.parse(await ev(`JSON.stringify((()=>{const p=Tool3D.surface.profile;return p&&{n:p.points.length,len:p.lengthMm,devMin:p.devMinUm,svg:!!document.querySelector('#surf-profile svg')}})())`));
     await shot3('#tool3d-view', 'profile-line'); await ev(`document.querySelector('#surf-profile').scrollIntoView({block:'center'});1`); await sleep(300); await shot3('#surf-profile', 'profile-chart');
     await ev(`document.querySelector('#surf').scrollIntoView({block:'start'});1`); await sleep(300); await shot3('#surf', 'panel');
-    SV.snapshot = await ev(`(()=>{const u=Tool3D.render.snapshot();return /^data:image\/png/.test(u)?u.length:0})()`);
+    SV.snapshot = await ev(`(()=>{const u=Tool3D.render.snapshot();return String(u).startsWith('data:image/png')?u.length:0})()`);
     SV.csv = await ev(`(()=>{const t=Tool3D.surface.csv();return /flute,VBmax_um,edge_radius_um/.test(t)&&/end_face_worn_area_mm2/.test(t)&&/profile_s_mm/.test(t)})()`);
     SV.neutral = await ev(`!/keyence|alicona|vhx|infinite ?focus|sandvik|edge ?quality/i.test(document.querySelector('#tool3d-view').closest('section').innerText)`);
     await ev(`Tool3D.render.clearProfile();Tool3D.render.setMap(null);Tool3D.render.view('iso');1`);
