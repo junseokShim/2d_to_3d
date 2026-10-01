@@ -1,4 +1,4 @@
-// post-processing tests (Keyence / Alicona style evaluations). Run: node test/post/run.js
+// post-processing tests (3D deviation, edge defects; 2D scale bar / VB lines also in test/metro/vb.js). Run: node test/post/run.js
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const P = require('../../www/js/post/post-core.js'), M = require('../../www/js/map3d/map3d-core.js');
@@ -22,11 +22,11 @@ function loadGeometry() {
   const b300 = P.scaleBar(2940, 320), b100 = P.scaleBar(980, 260);
   check('scale bar X300 = 100 um', b300.um === 100 && Math.abs(b300.px - 294) < 1, JSON.stringify(b300));
   check('scale bar X100 = 250 um', b100.um === 250 && Math.abs(b100.px - 245) < 1, JSON.stringify(b100));
-  for (const [ppm, want] of [[192, 20], [980, 100], [2940, 300], [9600, 1000]]) check(`magnification ${want}`, P.keyenceMag(ppm, 2880).mag === want, P.keyenceMag(ppm, 2880).label);
+  for (const [ppm, want] of [[192, 20], [980, 100], [2940, 300], [9600, 1000]]) check(`magnification ${want}`, P.magnification(ppm, 2880).mag === want, P.magnification(ppm, 2880).label);
   const ref = 'C:/agent_research_team/datasets/toolwear/reference/keyence.json';
   if (fs.existsSync(ref)) {
     const K = JSON.parse(fs.readFileSync(ref, 'utf8')), sized = K.images.filter(i => i.pxPerMm && i.size[0] === 2880);
-    check('keyence.json magnification labels', sized.every(i => P.keyenceMag(i.pxPerMm, 2880).label === i.mag.split(' ')[0]), sized.map(i => i.mag + '->' + P.keyenceMag(i.pxPerMm, 2880).label).join(' '));
+    check('keyence.json magnification labels', sized.every(i => P.magnification(i.pxPerMm, 2880).label === i.mag.split(' ')[0]), sized.map(i => i.mag + '->' + P.magnification(i.pxPerMm, 2880).label).join(' '));
     check('keyence.json VB spot values', K.vbValuesUm.VB_X300 === 90.34 && K.vbValuesUm.VB_X100 === 123.51);
   } else console.log('SKIP  keyence.json not on this machine');
 }
@@ -49,7 +49,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
 
 // 3) EdgeQuality: flank recession + defects, and Alicona's own definition on a 3-defect profile
 {
-  const E = P.edgeProfile(rows, {clearanceDeg: 8, rakeDeg: 8, helixDeg: 30}), q = P.edgeQuality(E, 5), h = 200 * Math.tan(8 * Math.PI / 180);
+  const E = P.edgeProfile(rows, {clearanceDeg: 8, rakeDeg: 8, helixDeg: 30}), q = P.edgeDefects(E, 5), h = 200 * Math.tan(8 * Math.PI / 180);
   near('Ddmax = -VBmax tan(clearance)', q.Ddmax, -h, .02);
   check('one defect over the worn span', q.Nd === 1, JSON.stringify(q.defects.map(d => [d.u0Um, d.u1Um])));
   near('Ldcmax = VB / cos(a)', q.Ldcmax, 200 / Math.cos(8 * Math.PI / 180), .02);
@@ -58,14 +58,14 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   near('Vdmax = wedge volume', q.Vdmax, vol, 2);
   // Alicona slide: Pd = (L1+L2+L3)/L, Ldmax / Ldmean, Ddmax = min(Di)
   const D = [], n = 200; for (let i = 0; i < n; i++) D.push(i >= 20 && i < 50 ? -10 : i >= 80 && i < 130 ? -(15 + (i === 100 ? 5 : 0)) : i >= 160 && i < 180 ? -8 : -1);
-  const A = {du: 10, D, u: D.map((_, i) => (i + .5) * 10), area: D.map(d => -d), ldc: D.map(d => -2 * d), ldr: D.map(d => -3 * d), corner: D.map(() => 0)}, q2 = P.edgeQuality(A, 5);
+  const A = {du: 10, D, u: D.map((_, i) => (i + .5) * 10), area: D.map(d => -d), ldc: D.map(d => -2 * d), ldr: D.map(d => -3 * d), corner: D.map(() => 0)}, q2 = P.edgeDefects(A, 5);
   check('3 defects', q2.Nd === 3, JSON.stringify(q2.defects.map(d => d.LUm)));
   near('Pd = (300+500+200)/2000', q2.Pd, 50, 1e-6);
   near('Ldmax', q2.Ldmax, 500, 1e-6); near('Ldmean', q2.Ldmean, 1000 / 3, .01); near('Ddmax', q2.Ddmax, -20, 1e-6);
   near('Ddmean = mean over defect positions', q2.Ddmean, (30 * -10 + 49 * -15 - 20 + 20 * -8) / 100, .01);
   near('Vdrel = sum Vd / L', q2.Vdrel, (300 * 10 + (49 * 15 + 20) * 10 + 160 * 10) / 2000, .01);
   // corner damage (tip) becomes a defect at the tip
-  const Et = P.edgeProfile(rows, {tipMm: .05, cornerMm: 1}), qt = P.edgeQuality(Et, 5);
+  const Et = P.edgeProfile(rows, {tipMm: .05, cornerMm: 1}), qt = P.edgeDefects(Et, 5);
   check('corner damage defect at the tip', qt.defects[0].corner && qt.defects[0].u0Um === 0 && qt.Ddmax <= -49.99, JSON.stringify(qt.defects[0]));
 }
 
@@ -88,7 +88,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   near('flank Dmin = -VBmax tan(clearance) (mm)', fmin, -vbMaxT * Math.tan(L.q.clear1Deg * Math.PI / 180), .003);
   // map3d integrates the wedge from s = 0; cells only exist from the first sampled cell centre (~1 cell short) -> within 12 %
   near('flank deviation volume = map3d flank volume (rel)', fvol / r.totals.flank.volumeMm3, 1, .12);
-  const w = P.wmm(dev, 10);
+  const w = P.devStats(dev, 10);
   near('Dmin = -max chip depth', w.DminUm, -r.totals.chip.maxDepthMm * 1000, .6);
   near('Vv = flank + chip volume', w.VvMm3, fvol + r.totals.chip.volumeMm3, .002);
   check('Vdv <= Vv, Vp = 0 (adhesion thickness unknown)', w.VdvMm3 <= w.VvMm3 && w.VpMm3 === 0 && w.DmaxUm === 0, JSON.stringify(w));
@@ -111,20 +111,20 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   const store = {v: null, getItem() { return this.v; }, setItem(k, v) { this.v = v; }};
   P.historyAdd(store, 'T1', {vbMax: .1}); P.historyAdd(store, 'T1', {vbMax: .2});
   check('post history per tool', P.history(store, 'T1').length === 2 && P.history(store, 'T2').length === 0);
-  const pr = P.vbProfileU(rows, 30), E = P.edgeProfile(rows, {}), fl = {i: 0, lines: P.vbLines(rows, 'a', 0), stats: P.vbStats(pr), eq: P.edgeQuality(E), pxPerMm: 40, mag: P.keyenceMag(40, 400)};
-  const csv = P.csvRows({o: Object.assign({}, P.DEFAULTS), flutes: [fl], wmm: null, faces: [], chips: [], tol: t, trend: tr, vbMaxMm: .2, vbMeanMm: .1});
-  check('csv sections', /keyence_flute/.test(csv) && /edgequality_flute,Nd,L_um,Pd_%/.test(csv) && /tolerance,value/.test(csv) && /trend_per/.test(csv), csv.split('\r\n').length + ' lines');
+  const pr = P.vbProfileU(rows, 30), E = P.edgeProfile(rows, {}), fl = {i: 0, lines: P.vbLines(rows, 'a', 0), stats: P.vbStats(pr), eq: P.edgeDefects(E), pxPerMm: 40, mag: P.magnification(40, 400)};
+  const csv = P.csvRows({o: Object.assign({}, P.DEFAULTS), flutes: [fl], devStats: null, faces: [], chips: [], tol: t, trend: tr, vbMaxMm: .2, vbMeanMm: .1});
+  check('csv sections', !/keyence|edgequality/i.test(csv) && /edge_defects_flute,Nd,L_um,Pd_%/.test(csv) && /tolerance,value/.test(csv) && /trend_per/.test(csv), csv.split('\r\n').length + ' lines');
 }
 
 // 7) one design with wear-post.js: measured per-side edge metrics replace the wedge model, Ldr / Vd stay modelled
 {
   const WP = require('../../www/js/wear/wear-post.js'), w = 400, h = 300, ppm = 100, m = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const e = y > 100 && y < 140 ? 6 : 0; m[y * w + x] = x < 50 + e ? 0 : x < 70 ? 2 : 1; }   // edge x=50, land 0.20 mm, chip 0.06 x 0.40 mm
-  const wp = WP.analyze({mask: m, w, h, pxPerMm: ppm, edge: 'background'}), eq = P.edgeQuality(P.edgeProfile(rows, {}));
+  const wp = WP.analyze({mask: m, w, h, pxPerMm: ppm, edge: 'background'}), eq = P.edgeDefects(P.edgeProfile(rows, {}));
   const q = P.mergeEdge(eq, {keyence: wp.keyence, alicona: wp.alicona, lengthMm: wp.lengthMm, edgeSide: wp.edgeSide});
   check('merge: source wear-post, Nd 1, Ddmax -60 um, Ldmax 400 um', q.source === 'wear-post' && q.Nd === 1 && Math.abs(q.Ddmax + 60) <= 15 && Math.abs(q.Ldmax - 400) <= 30, `${q.Nd} ${q.Ddmax} ${q.Ldmax}`);
   check('merge: Ldr and Vdrel stay from the wedge model', q.Ldrmax === eq.Ldrmax && q.Vdrel === eq.Vdrel && q.measured.includes('Pd') && !q.measured.includes('Ldrmax'));
-  check('merge: keyence reference line VB 200 um, recession 60 um', Math.abs(q.keyence.VBmaxUm - 200) <= 15 && Math.abs(q.keyence.recessionUm - 60) <= 15, `${q.keyence.VBmaxUm} ${q.keyence.recessionUm}`);
+  check('merge: reference line VB 200 um, recession 60 um', Math.abs(q.refLine.VBmaxUm - 200) <= 15 && Math.abs(q.refLine.recessionUm - 60) <= 15, `${q.refLine.VBmaxUm} ${q.refLine.recessionUm}`);
   check('merge: no wear-post -> model', P.mergeEdge(eq, null).source === 'model' && P.mergeEdge(eq, null).Ddmax === eq.Ddmax);
 }
 
