@@ -11,7 +11,7 @@
 //   setMap(r|null)   per-face segmentation map from js/map3d (evaluate() result): class colours + chip deformation
 //   volume(deformed) closed-mesh volume (mm3) of the current model, with or without the chip deformation
 //   mode(name)       display: 'photo' (true-colour texture) | 'dev' (deviation vs nominal, um) | 'height' (r - R, um) | 'cad'
-//   setPhoto(o|null) photo texture {canvas, Hs, Cs, pxPerMm, diameterMm} from index.html (cylinder unwrap + end disc)
+//   setPhoto(o|null) true-colour textures projected from the photos (js/map3d/photo-map.js build() result)
 //   setDeviation(dev|null)  deviation fields from js/map3d/surface-metrology.js (side / end grids, mm, <= 0)
 //   setLabels([{pos:[x,y,z], text, cls}])  per-flute annotations pinned to tool-frame points
 //   profileMode(on)  pick two points on the model -> 'tool3d:profile-line' {p0, p1, part}; clearProfile()
@@ -86,7 +86,7 @@
     hud.style.cssText = 'position:absolute;left:10px;top:8px;font:12px/1.45 ui-monospace,Consolas,monospace;color:#e9edf2;text-shadow:0 1px 2px #000c;pointer-events:none;white-space:pre';
     wrap.append(hud);
     const bar = document.createElement('div');
-    bar.style.cssText = 'position:absolute;right:8px;bottom:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:calc(100% - 16px)';
+    bar.style.cssText = 'position:absolute;right:8px;bottom:8px;z-index:2;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:calc(100% - 16px)';
     for (const [t, f] of [['Iso', () => view('iso')], ['Tip', () => view('tip')], ['Side', () => view('side')],
       ['Corner', () => view('corner')], ['Wear', () => { showWear = !showWear; repaint(); }], ['Cloud', () => cloud()],
       ['RH', () => setHand(mesh && mesh.params.hand > 0 ? -1 : 1)], ['Profile', () => profileMode()]]) {
@@ -112,7 +112,8 @@
     // colour scale bar (right) and length ruler (bottom left)
     scaleEl = document.createElement('div');
     scaleEl.id = 'tool3d-scale';
-    scaleEl.style.cssText = 'position:absolute;right:10px;top:46px;display:none;font:11px/1 ui-monospace,Consolas,monospace;color:#e9edf2;text-shadow:0 1px 2px #000c;pointer-events:none';
+    scaleEl.addEventListener('click', e => { const b = e.target.closest('button[data-scale]'); if (b) devScale(+b.dataset.scale); });
+    scaleEl.style.cssText = 'position:absolute;right:8px;top:42px;z-index:2;display:none;padding:6px 8px;border-radius:6px;background:#0d1014d9;font:11px/1 ui-monospace,Consolas,monospace;color:#e9edf2;pointer-events:none';
     wrap.append(scaleEl);
     ruler = document.createElement('div');
     ruler.id = 'tool3d-ruler';
@@ -324,18 +325,20 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     repaint();
     return mode;
   }
+  // o = js/map3d/photo-map.js build() result: side {data RGBA, NA, NZ, zMax}, end {data, N, R} | null
   function setPhoto(o) {
-    if (photo) photo.tex.dispose();
-    photo = null; U.uPhotoOn.value = 0;
-    if (o && o.canvas && o.pxPerMm > 0 && o.diameterMm > 0) {
-      const W = o.canvas.width, H = o.canvas.height, S = o.pxPerMm, D = o.diameterMm, Cs = o.Cs || 0, Hs = o.Hs;
-      const tex = new THREE.CanvasTexture(o.canvas);
-      tex.flipY = false; tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.anisotropy = 4;
-      photo = {tex, W, H, S, D, Hs, Cs};
-      U.uPhoto.value = tex; U.uPhotoOn.value = 1; U.uPhotoS.value = S / H; U.uPhotoZ.value = Hs / S;
-      // end disc: atlas pixel (Cs/2 - Y/D Cs, Hs + Cs/2 + X/D Cs) (index.html buildMesh cap; model azimuth = -v0.1 azimuth)
-      if (Cs) U.uPhotoCap.value.set(Cs / 2 / W, (Hs + Cs / 2) / H, Cs / D / W, Cs / D / H); else U.uPhotoCap.value.set(0, 0, 0, 0);
+    if (photo) { photo.side.dispose(); if (photo.end) photo.end.dispose(); }
+    photo = null; U.uPhotoOn.value = 0; U.uPhotoEndOn.value = 0;
+    if (o && o.side && o.side.NA) {
+      const tex = (d, W, H, wrapS) => {
+        const t = new THREE.DataTexture(d, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+        t.wrapS = wrapS ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; t.wrapT = THREE.ClampToEdgeWrapping;
+        t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true;
+        return t;
+      };
+      photo = {side: tex(o.side.data, o.side.NA, o.side.NZ, true), end: o.end ? tex(o.end.data, o.end.N, o.end.N, false) : null, coverage: o.coverage, src: o};
+      U.uPhoto.value = photo.side; U.uPhotoOn.value = 1; U.uPhotoZ.value = o.side.zMax;
+      if (photo.end) { U.uPhotoEnd.value = photo.end; U.uPhotoEndOn.value = 1; U.uPhotoR.value = o.end.R; }
     }
     if (!userMode) setMode(photo ? 'photo' : 'cad'); else repaint();
     return !!photo;
@@ -355,14 +358,25 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
       };
       const side = enc(d.side, d.NA, d.NZ), end = enc(d.end, d.N, d.N);
       side.wrapS = THREE.RepeatWrapping;
-      dev = {side, end, range, scaleUm: niceUm(Math.max(5, range * 1000))};
+      // colour scale from the 95th percentile of the deviated cells, so one deep chip does not flatten the flank wear
+      const all = []; for (const a of [d.side, d.end]) for (let k = 0; k < a.length; k++) if (a[k] < 0) all.push(-a[k]);
+      all.sort((p, q) => p - q);
+      const p95 = all.length ? all[Math.floor(.95 * (all.length - 1))] : range;
+      dev = {side, end, range, scaleUm: niceUm(Math.max(5, p95 * 1000))}; dev.autoUm = dev.scaleUm;
       U.uDevSide.value = side; U.uDevEnd.value = end; U.uDevOn.value = 1; U.uDevRange.value = range;
       U.uDevZMax.value = d.NZ * d.dz; U.uDevR.value = d.R; U.uDevScale.value = dev.scaleUm / 1000;
     }
     repaint();
     return !!dev;
   }
-  const RAMP = ['#d90d0d', '#ffe600', '#1ad933', '#00bfff', '#0d1ad9'];
+  const RAMP = ['#d90d0d', '#ffe600', '#1ad933', '#00bfff', '#0d1ad9'], SB = 'font:11px system-ui;padding:1px 6px;border:1px solid #777;border-radius:4px;background:#2c3036;color:#eee;cursor:pointer';
+  function devScale(step) {
+    if (!dev) return null;
+    const L = [1, 2, 5]; let s = dev.scaleUm;
+    if (!step) s = dev.autoUm; else { const e = 10 ** Math.floor(Math.log10(s)), m = Math.round(s / e), i = L.indexOf(m) + step; s = i < 0 ? 5 * e / 10 : i > 2 ? 10 * e : L[i] * e; }
+    dev.scaleUm = Math.max(1, s); U.uDevScale.value = dev.scaleUm / 1000; repaint();
+    return dev.scaleUm;
+  }
   function scaleBar() {
     if (!scaleEl) return;
     const q = mesh && mesh.params;
@@ -374,7 +388,7 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     scaleEl.innerHTML = `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span>${title}</span><div style="display:flex;gap:5px;align-items:stretch">` +
       `<div style="display:flex;flex-direction:column;justify-content:space-between;text-align:right;height:180px"><span>${top}</span><span>${mid}</span><span>${bot}</span></div>` +
       `<div data-ramp style="width:14px;height:180px;border:1px solid #ddd;background:linear-gradient(${RAMP.join(',')})"></div></div>` +
-      (mode === 'dev' && dev ? `<span>min −${(dev.range * 1000).toFixed(1)}</span>` : mode === 'dev' ? '<span>no data</span>' : '') + '</div>';
+      (mode === 'dev' && dev ? `<span style="pointer-events:auto;display:flex;gap:3px"><button type="button" data-scale="-1" title="범위 축소" style="${SB}">−</button><button type="button" data-scale="0" title="자동" style="${SB}">A</button><button type="button" data-scale="1" title="범위 확대" style="${SB}">+</button></span><span>min −${(dev.range * 1000).toFixed(1)}</span>${dev.range * 1000 > dev.scaleUm ? '<span>&lt; −' + dev.scaleUm + ' = blue</span>' : ''}` : mode === 'dev' ? '<span>no data</span>' : '') + '</div>';
   }
   function setLabels(list) { labels = Array.isArray(list) ? list : []; dirty = true; }
   // per redraw: ruler length from the camera, flute labels projected from the tool frame
@@ -440,13 +454,14 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     if (!picks.length || !mesh) { dirty = true; return; }
     pickObj = new THREE.Group();
     const D = mesh.params.diameterMm, mk = new THREE.MeshBasicMaterial({color: 0xffe14d, depthTest: false});
-    for (const q of picks) { const s = new THREE.Mesh(new THREE.SphereGeometry(.018 * D, 12, 8), mk); s.position.set(q.p[0], q.p[1], q.p[2]); s.renderOrder = 10; pickObj.add(s); }
+    for (const q of picks) { const s = new THREE.Mesh(new THREE.SphereGeometry(.009 * D, 12, 8), mk); s.position.set(q.p[0], q.p[1], q.p[2]); s.renderOrder = 10; pickObj.add(s); }
     if (picks.length === 2) {
       const pts = [], a = picks[0].p, b = picks[1].p, end = picks[0].part === 'end' && picks[1].part === 'end';
-      for (let i = 0; i <= 64; i++) {                     // side lines follow the surface radius between the end points
-        const t = i / 64, x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t, z = a[2] + (b[2] - a[2]) * t;
-        if (end) pts.push(new THREE.Vector3(x, y, z - .002 * D));
-        else { const ra = Math.hypot(a[0], a[1]), r0 = ra + (Math.hypot(b[0], b[1]) - ra) * t, r = Math.hypot(x, y) || 1; pts.push(new THREE.Vector3(x / r * r0, y / r * r0, z)); }
+      const ta = Math.atan2(a[1], a[0]), dt = ((Math.atan2(b[1], b[0]) - ta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI, ra = Math.hypot(a[0], a[1]), rb = Math.hypot(b[0], b[1]);
+      for (let i = 0; i <= 96; i++) {                     // side lines: straight in (azimuth, z) on the surface, as surface-metrology profile() samples
+        const t = i / 96, z = a[2] + (b[2] - a[2]) * t;
+        if (end) pts.push(new THREE.Vector3(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, z - .002 * D));
+        else { const th = ta + dt * t, r = 1.003 * (ra + (rb - ra) * t); pts.push(new THREE.Vector3(r * Math.cos(th), r * Math.sin(th), z)); }
       }
       const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: 0xffe14d, depthTest: false}));
       ln.renderOrder = 10; pickObj.add(ln);
@@ -477,7 +492,7 @@ faces ${map.faces.length}   flank ${mt.flank.areaMm2.toFixed(3)} mm²   chip ${m
     return out.toDataURL('image/png');
   }
 
-  const api = {update, view, cloud, stl, setMap, hand: setHand, volume, refresh: () => repaint(), mode: m => m ? setMode(m, true) : mode, setPhoto, setDeviation, setLabels, profileMode, clearProfile, addPick, snapshot, get photo() { return !!photo; }, get deviation() { return dev && {rangeUm: dev.range * 1000, scaleUm: dev.scaleUm}; }, get map() { return map && map.result; }, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
+  const api = {update, view, cloud, stl, setMap, hand: setHand, volume, refresh: () => repaint(), mode: m => m ? setMode(m, true) : mode, setPhoto, setDeviation, setLabels, profileMode, clearProfile, addPick, snapshot, get photo() { return photo && photo.src; }, get deviation() { return dev && {rangeUm: dev.range * 1000, scaleUm: dev.scaleUm}; }, devScale, get map() { return map && map.result; }, setWear: w => { (window.Tool3D = window.Tool3D || {}).wearResult = w; }, get params() { return mesh && mesh.params; }};
   T3.render = api;
 
   function init() {

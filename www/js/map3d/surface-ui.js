@@ -65,7 +65,7 @@
       const cols = L.cols.filter(c => c.tooth === t && c.s >= 0 && c.s < 50); if (!cols.length) return;
       const c = cols.reduce((b, x) => x.s < b.s ? x : b), a = Math.atan2(c.y, c.x) + L.tanH * z;
       out.push({pos: [1.04 * R * Math.cos(a), 1.04 * R * Math.sin(a), z], cls: 'F' + f.flute,
-        text: `F${f.flute}  V ${f4(f.volumeMm3)} mm³\nrβ ${f1(f.edgeRadiusUm)} µm  VB ${f1(f.vbMaxUm)} µm`});
+        text: f.volumeMm3 > 0 || f.vbMaxUm > 0 ? `F${f.flute}  V ${f4(f.volumeMm3)} mm³\nrβ ${f1(f.edgeRadiusUm)} µm  VB ${f1(f.vbMaxUm)} µm` : `F${f.flute}`});
     });
     return out;
   }
@@ -75,7 +75,7 @@
   function sectionSvg(f) {
     const s = f.section, pts = s.nominal.concat(s.worn), W = 150, H = 120;
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs, 0), y0 = Math.min(...ys), y1 = Math.max(...ys, 0);
-    const sc = Math.min((W - 20) / ((x1 - x0) || 1), (H - 20) / ((y1 - y0) || 1)), X = x => 10 + (x - x0) * sc, Y = y => 10 + (y1 - y) * sc;
+    const sc = Math.min((W - 56) / ((x1 - x0) || 1), (H - 34) / ((y1 - y0) || 1)), X = x => 12 + (x - x0) * sc, Y = y => 24 + (y1 - y) * sc;
     const pl = a => a.map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ');
     const r = s.edgeRadiusUm / 1000 * sc;
     return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="F${f.flute} edge section"><rect width="${W}" height="${H}" fill="#fff"/>` +
@@ -83,28 +83,47 @@
       `<polygon points="${pl(s.worn)} ${X(s.worn[0][0] - .001)},${Y(s.worn[s.worn.length - 1][1])}" fill="#c9d6ea" stroke="none" opacity=".55"/>` +
       `<polyline points="${pl(s.worn)}" fill="none" stroke="#1f5fbf" stroke-width="1.8"/>` +
       (r > .5 ? `<circle cx="${X(s.centre[0]).toFixed(1)}" cy="${Y(s.centre[1]).toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="#d9480f" stroke-width="1.2"/>` : '') +
-      `<text x="4" y="${H - 4}" font-size="9" fill="#333">rake ↑  clearance ←</text></svg>`;
+      (f.vbMaxUm > 0 ? dims(s, X, Y) : '') +
+      `<text x="${(X(s.nominal[0][0]) - 4).toFixed(1)}" y="${(Y(s.nominal[0][1]) - 2).toFixed(1)}" font-size="9" text-anchor="end" fill="#556">경사면</text>` +
+      `<text x="${X(s.nominal[2][0]).toFixed(1)}" y="${(Y(s.nominal[2][1]) - 5).toFixed(1)}" font-size="9" fill="#556">여유면</text></svg>`;
   }
-  // section profile: height (nominal dashed, measured solid) + deviation band below
+  // dimension lines on the edge section: VB along the land (above it), edge recession h (right of the edge)
+  function dims(s, X, Y) {
+    const vb = -s.worn[2][0], h = s.recessionUm / 1000, yb = Y(0) - 9, xr = X(0) + 6;
+    const arrow = (x1, y1, x2, y2) => `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#e03131" stroke-width="1" marker-start="url(#da)" marker-end="url(#da)"/>`;
+    return `<defs><marker id="da" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#e03131"/></marker></defs>` +
+      arrow(X(-vb), yb, X(0), yb) + `<text x="${((X(-vb) + X(0)) / 2).toFixed(1)}" y="${(yb - 4).toFixed(1)}" font-size="9" text-anchor="middle" fill="#c92a2a">VB ${(vb * 1000).toFixed(1)}</text>` +
+      (Y(-h) - Y(0) > 3 ? arrow(xr, Y(0), xr, Y(-h)) : '') + `<text x="${(xr + 2).toFixed(1)}" y="${(Y(-h) + 3).toFixed(1)}" font-size="9" fill="#c92a2a">h ${s.recessionUm.toFixed(1)}</text>`;
+  }
+  // section profile on a dark plot: nominal (grey dashed) vs measured (cyan) height, deviation trace below (orange),
+  // grid with axis values, the deepest point annotated as [1] with an arrow from the nominal to the measured curve
   function profileSvg(pr) {
-    const W = 640, H1 = 170, H2 = 90, pad = 42, pts = pr.points, sMax = pr.lengthMm || 1;
+    const W = 700, H1 = 190, H2 = 100, pl = 56, pr_ = 14, top = 14, pts = pr.points, sMax = pr.lengthMm || 1, Ht = H1 + H2 + 34;
+    const end = pr.part === 'end', toUm = v => v * 1000;
     const hs = pts.flatMap(p => [p.nominalMm, p.measuredMm]), h0 = Math.min(...hs), h1 = Math.max(...hs), hr = (h1 - h0) || 1e-3;
-    const X = s => pad + s / sMax * (W - pad - 10), Y = h => 10 + (h1 - h) / hr * (H1 - 20);
-    const dv = pts.map(p => p.devUm), dMin = Math.min(-1, ...dv), Yd = d => H1 + 14 + (d / dMin) * (H2 - 24);
-    const line = (f, Yf) => pts.map((p, i) => (i ? 'L' : 'M') + X(p.sMm).toFixed(1) + ' ' + Yf(f(p)).toFixed(1)).join('');
-    const unit = pr.part === 'end' ? '축 위치 z (mm)' : '반경 r (mm)';
-    const iMin = dv.indexOf(Math.min(...dv));
-    let ticks = '';
-    for (let i = 0; i <= 4; i++) { const s = sMax * i / 4; ticks += `<text x="${X(s).toFixed(1)}" y="${H1 + H2 + 4}" font-size="10" text-anchor="middle" fill="#445">${s.toFixed(2)}</text>`; }
-    return `<svg viewBox="0 0 ${W} ${H1 + H2 + 22}" role="img" aria-label="section profile"><rect width="${W}" height="${H1 + H2 + 22}" fill="#fff"/>` +
-      `<text x="4" y="12" font-size="10" fill="#445">${unit}</text><text x="4" y="${Y(h1) + 14}" font-size="10" fill="#445">${h1.toFixed(3)}</text><text x="4" y="${Y(h0)}" font-size="10" fill="#445">${h0.toFixed(3)}</text>` +
-      `<path d="${line(p => p.nominalMm, Y)}" fill="none" stroke="#8a94a6" stroke-dasharray="5 3" stroke-width="1.3"/>` +
-      `<path d="${line(p => p.measuredMm, Y)}" fill="none" stroke="#1f5fbf" stroke-width="1.6"/>` +
-      `<line x1="${pad}" x2="${W - 10}" y1="${H1 + 14}" y2="${H1 + 14}" stroke="#16a34a" stroke-width="1"/>` +
-      `<path d="${line(p => p.devUm, Yd)}" fill="none" stroke="#d9480f" stroke-width="1.4"/>` +
-      `<text x="4" y="${H1 + 18}" font-size="10" fill="#445">0 µm</text><text x="4" y="${Yd(dMin)}" font-size="10" fill="#445">${dMin.toFixed(1)}</text>` +
-      (dv[iMin] < 0 ? `<circle cx="${X(pts[iMin].sMm).toFixed(1)}" cy="${Yd(dv[iMin]).toFixed(1)}" r="3" fill="#d9480f"/><text x="${Math.min(W - 120, X(pts[iMin].sMm) + 6).toFixed(1)}" y="${(Yd(dv[iMin]) - 4).toFixed(1)}" font-size="10" fill="#d9480f">Dmin ${dv[iMin].toFixed(1)} µm @ ${pts[iMin].sMm.toFixed(3)} mm</text>` : '') +
-      ticks + `<text x="${W - 10}" y="${H1 + H2 + 18}" font-size="10" text-anchor="end" fill="#445">거리 s (mm)</text></svg>`;
+    const X = s => pl + s / sMax * (W - pl - pr_), Y = h => top + (h1 - h) / hr * (H1 - top - 8);
+    const dv = pts.map(p => p.devUm), dMin = Math.min(-1, ...dv), y0d = H1 + 16, Yd = d => y0d + d / dMin * (H2 - 26);
+    const path = (f, Yf) => pts.map((p, i) => (i ? 'L' : 'M') + X(p.sMm).toFixed(1) + ' ' + Yf(f(p)).toFixed(1)).join('');
+    const tx = (x, y, t, o = '') => `<text x="${x.toFixed ? x.toFixed(1) : x}" y="${y.toFixed ? y.toFixed(1) : y}" font-size="10" fill="#c8d0da" ${o}>${t}</text>`;
+    let g = '';
+    for (let i = 0; i <= 5; i++) {
+      const s = sMax * i / 5, x = X(s); g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${top}" y2="${H1 + H2 - 6}" stroke="#2c333d"/>` + tx(x, Ht - 14, toUm(s).toFixed(0), 'text-anchor="middle"');
+    }
+    for (let i = 0; i <= 4; i++) { const h = h0 + hr * i / 4, y = Y(h); g += `<line x1="${pl}" x2="${W - pr_}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#2c333d"/>` + tx(pl - 4, y + 3, toUm(h).toFixed(0), 'text-anchor="end"'); }
+    const iMin = dv.indexOf(Math.min(...dv)), pm = pts[iMin];
+    const ann = dv[iMin] < 0 ? (() => {
+      const x = X(pm.sMm), ya = Y(pm.nominalMm), yb = Y(pm.measuredMm), lx = Math.min(W - 150, x + 10);
+      return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${ya.toFixed(1)}" y2="${yb.toFixed(1)}" stroke="#ff4d4d" stroke-width="1.5" marker-start="url(#ah)" marker-end="url(#ah)"/>` +
+        `<text x="${lx.toFixed(1)}" y="${(Math.min(ya, yb) - 6).toFixed(1)}" font-size="12" fill="#ffe14d">[1] ${Math.abs(dv[iMin]).toFixed(2)} µm</text>` +
+        `<circle cx="${x.toFixed(1)}" cy="${Yd(dv[iMin]).toFixed(1)}" r="3" fill="#ffe14d"/>`;
+    })() : '';
+    return `<svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="section profile" style="border-radius:6px"><defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ff4d4d"/></marker></defs>` +
+      `<rect width="${W}" height="${Ht}" fill="#0b0d10"/>${g}` +
+      tx(4, 10, end ? 'z µm' : 'r µm') + tx(W - pr_, Ht - 2, 'µm', 'text-anchor="end"') +
+      `<path d="${path(p => p.nominalMm, Y)}" fill="none" stroke="#9aa4b2" stroke-dasharray="5 3" stroke-width="1.2"/>` +
+      `<path d="${path(p => p.measuredMm, Y)}" fill="none" stroke="#33d6e0" stroke-width="1.6"/>` +
+      `<line x1="${pl}" x2="${W - pr_}" y1="${y0d}" y2="${y0d}" stroke="#3fa34d"/>` + tx(pl - 4, y0d + 3, '0', 'text-anchor="end"') + tx(pl - 4, Yd(dMin) + 3, dMin.toFixed(1), 'text-anchor="end"') +
+      tx(4, y0d - 4, 'Dev µm') + `<path d="${path(p => p.devUm, Yd)}" fill="none" stroke="#ff9f1a" stroke-width="1.4"/>` + ann + '</svg>';
   }
 
   // ---------- panel ----------
@@ -167,7 +186,9 @@
     const L = cur.L, R = L.R, D = cur.params.diameterMm;
     if (kind === 'p-end') { T.render.addPick([-.8 * R, 0, 0], 'end'); T.render.addPick([.8 * R, 0, 0], 'end'); return; }
     if (kind === 'p-circ') { const z = .3 * D; T.render.addPick([R, 0, z], 'side'); T.render.addPick([R * Math.cos(2.4), R * Math.sin(2.4), z], 'side'); return; }
-    const c = L.cols.filter(x => x.tooth === 0 && x.s >= 0 && x.s < 50).reduce((b, x) => x.s < b.s ? x : b, {s: 1e9, x: R, y: 0}), a0 = Math.atan2(c.y, c.x) - .02;
+    // along F1 on its flank land, half a VBmax behind the cutting edge (where the wear band is)
+    const vb = cur.flutes[0] ? cur.flutes[0].vbMaxUm / 1000 : 0, sT = Math.max(.01, Math.min(.8 * L.land1Mm, vb ? vb / 2 : L.land1Mm / 2));
+    const c = L.cols.filter(x => x.tooth === 0 && x.s >= 0 && x.s < 50).reduce((b, x) => Math.abs(x.s - sT) < Math.abs(b.s - sT) ? x : b, {s: 1e9, x: R, y: 0}), a0 = Math.atan2(c.y, c.x);
     const z1 = Math.min(1.2 * D, L.zTwistMax);
     T.render.addPick([R * Math.cos(a0), R * Math.sin(a0), 0], 'side'); T.render.addPick([R * Math.cos(a0 + L.tanH * z1), R * Math.sin(a0 + L.tanH * z1), z1], 'side');
   }

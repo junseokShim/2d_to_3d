@@ -95,6 +95,23 @@ const dev = P.deviation(r.atlas, look, o), S = r.atlas.side;
   check('history per tool', P.history(store, 'T1').length === 2 && P.history(store, 'T2').length === 0);
 }
 
+// 6) photo map: each side view painted one colour -> texels facing a view take its colour; view geometry = map3d convention
+{
+  const PM = require('../../www/js/map3d/photo-map.js'), rN = P.nominalRadius(L), R = D / 2, ppm = 20, cols = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]];
+  const views = cols.map((c, i) => { const w = Math.ceil(2.4 * R * ppm), h = Math.ceil(12 * ppm) + 10, rgb = new Uint8Array(w * h * 3), g = new Float32Array(w * h).fill(100);
+    for (let q = 0; q < w * h; q++) rgb.set(c, 3 * q); return {rgb, g, w, h, axisX: w / 2, tipY: 10, ppm, angleDeg: i * 90}; });
+  const m = PM.build({views, top: null, rNom: rN, R, azSign: -1});
+  check('photo map built, coverage > 0.9', m && m.coverage > .9, m && m.coverage.toFixed(3));
+  const at = (th, z) => { const S = m.side, j = Math.floor(((th % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * S.NA), i = Math.floor(z / S.zMax * S.NZ), q = 4 * (i * S.NA + j); return [S.data[q], S.data[q + 1], S.data[q + 2], S.data[q + 3]]; };
+  // view i looks at model azimuth -90 i deg (azSign -1): the envelope there is red / green / blue / white
+  const ok = [0, 1, 2, 3].every(i => { const c = at(-i * Math.PI / 2 + .01, 6), a = c[3] / 255 || 1, want = cols[i]; return c.slice(0, 3).every((v, k) => Math.abs(v / a - want[k]) < 40); });
+  check('texel facing view i takes view i colour', ok, JSON.stringify([0, 1, 2, 3].map(i => at(-i * Math.PI / 2 + .01, 6))));
+  // a column offset in the image lands at the matching azimuth: paint the right half of view 0 black -> theta slightly negative (image right) dark
+  const v0 = views[0]; for (let y = 0; y < v0.h; y++) for (let x = Math.ceil(v0.axisX); x < v0.w; x++) v0.rgb.set([0, 0, 0], 3 * (y * v0.w + x));
+  const m2 = PM.build({views, top: null, rNom: rN, R, azSign: -1}), S2 = m2.side, at2 = th => { const j = Math.floor(((th + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI) * S2.NA), i = Math.floor(6 / S2.zMax * S2.NZ); return S2.data[4 * (i * S2.NA + j)]; };
+  check('image right of the axis = model azimuth below the view azimuth (map3d convention)', at2(-.3) < 60 && at2(.3) > 150, at2(-.3) + ' / ' + at2(.3));
+}
+
 // 5) shipped code carries no third-party product names
 {
   const bad = /keyence|alicona|vhx|infinite\s*focus|sandvik|edge\s*quality/i, dirs = ['www/js/render', 'www/js/map3d'].map(d => path.join(__dirname, '../..', d));

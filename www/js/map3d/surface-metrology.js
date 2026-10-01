@@ -200,12 +200,14 @@
     const n = o.n || 240, out = [];
     let dist = 0, prev = null;
     for (let i = 0; i < n; i++) {
-      const t = i / (n - 1), x = o.p0[0] + (o.p1[0] - o.p0[0]) * t, y = o.p0[1] + (o.p1[1] - o.p0[1]) * t, z = o.p0[2] + (o.p1[2] - o.p0[2]) * t;
+      // side: straight in (azimuth, z) = a helix on the surface, the short way round; end: straight in (x, y)
+      const t = i / (n - 1), z = o.p0[2] + (o.p1[2] - o.p0[2]) * t, th0 = Math.atan2(o.p0[1], o.p0[0]), th = th0 + wrap(Math.atan2(o.p1[1], o.p1[0]) - th0) * t;
+      const x = o.part === 'end' ? o.p0[0] + (o.p1[0] - o.p0[0]) * t : Math.cos(th), y = o.part === 'end' ? o.p0[1] + (o.p1[1] - o.p0[1]) * t : Math.sin(th);
       let nom, d, P;
       if (o.part === 'end') {
         nom = o.endZ ? o.endZ(x, y) : 0; d = o.dev ? devAt(o.dev, x, y, 0, 'end') : 0; P = [x, y, nom];
       } else {
-        const th = Math.atan2(y, x); nom = o.rNom(th, z); d = o.dev ? devAt(o.dev, Math.cos(th), Math.sin(th), z, 'side') : 0; P = [nom * Math.cos(th), nom * Math.sin(th), z];
+        nom = o.rNom(th, z); d = o.dev ? devAt(o.dev, Math.cos(th), Math.sin(th), z, 'side') : 0; P = [nom * Math.cos(th), nom * Math.sin(th), z];
       }
       if (prev) dist += Math.hypot(P[0] - prev[0], P[1] - prev[1], P[2] - prev[2]);
       prev = P;
