@@ -144,24 +144,13 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   m.mobileNoHScroll = await ev(`document.documentElement.scrollWidth<=innerWidth+1`);
   await shotEl('#metro', 'metro-mobile.png');
   await s('Emulation.setDeviceMetricsOverride', {width: 1280, height: 1600, deviceScaleFactor: 1, mobile: false}); await sleep(500);
-  // ---------- ④ microscope-style VB (js/metro + metro-vb) and the ⑤ 3D post-processing views (js/post, until they move to ③) ----------
+  // ---------- ④ microscope-style VB (js/metro + metro-vb) and the report sections; the 3D views are checked in ③ (surface3d) ----------
   const Pp = res.checks.post = {};
   await ev(`document.querySelector('#metro').scrollIntoView({block:'start'});1`); await sleep(500);
   Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metro.summary(),v=(s.vb||[]).filter(Boolean);return {n:v.length,lines:v.map(x=>x.lines.length),vbMaxUm:v.map(x=>x.stats.maxUm),metroVb:s.flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),mag:v[0]&&v[0].mag,pos:v.every(x=>x.pos&&x.pos.vbMax&&x.pos.vbb),teeth:s.endFace?s.endFace.teeth.length:0,endTotal:s.endFace&&s.endFace.total,tol:!!(s.tolerance&&s.tolerance.rows)}})())`)));
   await shotEl('#metro', 'metro-vb.png');
-  await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.setTab();1`); await sleep(1500);
-  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,v=document.querySelector('#paView');return {view:v.dataset.state,devVerts:+v.dataset.devVerts||0,eqRows:document.querySelectorAll('#paEq tr').length,devStats:R.devStats,faces:R.faces.length,tolRows:R.tol.rows.length,badge:document.querySelector('#psOverall').textContent}})())`)));
-  await shotEl('#post', 'post-3d.png');
-  // synthetic chips + flank on the model (map3d mock) -> chip list, deviation colours; two saved results -> tool-life trend
-  await ev(`Tool3D.map3d.mock();1`); await sleep(1200);
-  await ev(`Tool3D.post.saveHistory();1`); await sleep(300); await ev(`Tool3D.post.saveHistory();1`); await sleep(600);
-  Object.assign(Pp, {mock: JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,v=document.querySelector('#paView');return {chips:R.chips.length,chipSide:R.chips.some(c=>c.where==='side'),chipRows:document.querySelectorAll('#paChips tr').length,Dmin:R.devStats&&R.devStats.DminUm,Vv:R.devStats&&R.devStats.VvMm3,devVerts:+v.dataset.devVerts||0,hist:R.hist.length,trendTag:document.querySelector('#paTrTag').textContent,
-    colours:(()=>{const c=v.querySelector('canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let g=0,m=0;for(let i=0;i<d.length;i+=4){const r=d[i],G=d[i+1],b=d[i+2];if(G>r+30&&G>b+20)g++;if(b>G+40&&(r>G+20||b>150))m++}return {green:g,blueMag:m}})()}})())`))});
-  await shotEl('#post', 'post-3d-mock.png');
-  await ev(`Tool3D.render.setMap(null);1`); await sleep(300);
   Pp.vbOk = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^[×X]\d/.test(Pp.mag) && Pp.pos && Pp.tol;
-  Pp.ok = Pp.vbOk && Pp.view === 'ok' && Pp.eqRows === 15 && Pp.tolRows === 5 && Pp.faces === 5 && !!Pp.devStats && Pp.mock.chips > 0 && Pp.mock.chipSide && Pp.mock.Dmin < 0 && Pp.mock.Vv > 0 && Pp.mock.devVerts > 0 &&
-    Pp.mock.colours.green > 500 && Pp.mock.colours.blueMag > 50 && Pp.mock.hist >= 2 && /µm\//.test(Pp.mock.trendTag) && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
+  Pp.ok = Pp.vbOk && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
   const A = res.checks.assisted = {};
   const deg = require('./degraded-inputs.js')(path.join(OUT, 'degraded')).slice(0, 4).map(f => f.replace(/\//g, '\\'));

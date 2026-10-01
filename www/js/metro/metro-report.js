@@ -154,7 +154,7 @@
   function pdf() {
     if (!ready()) return null;
     const d = data(), pages = [page1(d), page2(d)];
-    const post = T.postReport && T.postReport.pdfPage ? T.postReport.pdfPage() : null;   // js/post: 3D deviation page
+    const post = T.postReport && T.postReport.pdfPage ? T.postReport.pdfPage() : null;   // optional extra page (none registered today)
     pages.forEach((P, i) => footer(P, i + 1, pages.length + (post ? 1 : 0)));
     return M.pdfBytes(post ? pages.concat([post]) : pages);
   }
