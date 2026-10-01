@@ -59,3 +59,14 @@
 .mt-assist button{margin-left:auto}
 .mt-mode{font-size:10.5px;padding:1px 4px;border-radius:4px;background:#fff4d6;color:#8a6200;white-space:nowrap}
 .mt-mode.operator-assisted{background:#e3f5e9;color:#16723a}
+/* microscope-style measurement additions: reference line legend, positions, dimension list, end face, tolerance */
+.mt-legend .mt-dash{background:none;border-top:2px dashed #fff;height:0;vertical-align:middle}
+.mt-nl{font-size:12px;color:var(--mt-mut);display:inline-flex;align-items:center;gap:4px}.mt-nl input{width:46px;font:inherit;padding:3px 4px}
+.mt-at{color:var(--mt-mut);font-size:10.5px;white-space:nowrap}
+.mt-tab tr.mt-max td{color:#c00000;font-weight:600}
+.mt-stat td:first-child{color:var(--mt-mut)}.mt-stat td{text-align:left}
+.mt-topwrap{background:#000;border-radius:4px;overflow:hidden;max-width:420px;margin:6px auto}.mt-topwrap canvas{display:block;width:100%}
+.mt-toptab td,.mt-toptab th{font-size:11.5px}
+.mt-verdict{float:right;padding:2px 10px;border-radius:4px;color:#fff;background:#889}.mt-verdict.ok{background:#1e9e4a}.mt-verdict.ng{background:#d0342c}
+.mt-ok{color:#1e9e4a}.mt-ng{color:#d0342c}
+#mtTol input{width:70px;font:inherit;padding:2px 4px}

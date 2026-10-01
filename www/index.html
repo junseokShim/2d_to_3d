@@ -58,7 +58,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 #shutter{width:64px;height:64px;border-radius:50%;border:4px solid #fff;background:#e33}
 #shutter.ok{background:#e9a800}#shutter.sharp{background:#1db954}
 </style>
-<link rel="stylesheet" href="css/metro.css"><link rel="stylesheet" href="css/micro.css"><link rel="stylesheet" href="css/post.css">
+<link rel="stylesheet" href="css/metro.css"><link rel="stylesheet" href="css/post.css">
 <script src="native/android-save.js"></script>
 </head>
 <body>
@@ -68,7 +68,6 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <label class="row"><span>날 수(flute)</span><select id="flutes"></select></label>
     <label class="row"><span>공구경 φ</span><select id="dia"></select></label>
     <p class="hint">날 수 2~6, 공구경 4~12 mm</p>
-    <div id="inmode"></div>
   </section>
 
   <section>
@@ -95,6 +94,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
     <div id="strips"></div>
   </section>
   <section id="metro"></section>
+  <!-- TODO(god): delete #post, js/post/**, css/post.css and test/post once the 3D post-processing views live in section ③ (worker-view3d); its 2D views are now in ④ (js/metro) -->
   <section id="post"></section>
 </main>
 
@@ -113,8 +113,7 @@ td{border-bottom:1px solid var(--line);padding:5px 4px}td:last-child{text-align:
 <script src="js/wear/wear-core.js"></script><script src="js/wear/wear.js"></script><script src="js/wear/ai-wear.js"></script><script src="js/wear/wear-post.js"></script><script src="js/wear/seg-wear.js"></script>
 <script src="js/enhance/quality.js"></script><script src="js/enhance/enhance.js"></script>
 <script src="js/capture/camera-core.js"></script><script src="js/capture/camera.js"></script>
-<script src="js/metro/metro-core.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
-<script src="js/micro/micro-core.js"></script><script src="js/micro/micro-ui.js"></script>
+<script src="js/metro/metro-core.js"></script><script src="js/metro/metro-vb.js"></script><script src="js/metro/metro-ui.js"></script><script src="js/metro/metro-report.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const S = 30;                          // 정규화 해상도 px/mm
@@ -140,7 +139,6 @@ function thumb(src) {
 
 function renderSlots() {
   st.k = +$('#flutes').value; st.D = +$('#dia').value;
-  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.renderSlots($('#slots'));   // 현미경 입력 (js/micro)
   const box = $('#slots'); box.innerHTML = '';
   for (let i = 0; i <= st.k; i++) {
     const d = document.createElement('div'); d.className = 'slot';
@@ -414,7 +412,6 @@ async function measureWear(shots, opts) {
   try { W.run?.(shots, opts); return 'classic'; } catch (e) { console.warn('wear:', e); return 'none'; }
 }
 $('#run').onclick = async () => {
-  if (window.Tool3D?.microUI?.active()) return Tool3D.microUI.run();   // 현미경 입력: 영상 전체 분할 → 절삭날 기준 VB (js/micro)
   msg(); const {k, D} = st, btn = $('#run');
   if (btn.disabled) return;
   for (let i = 0; i < k; i++) if (!st.shots[i]) return msg(`측면 ${i + 1} 사진이 없습니다.`);
@@ -431,7 +428,7 @@ $('#run').onclick = async () => {
   } finally { btn.disabled = false; $('#busy').hidden = true; }
   $('#engine').textContent = 'Engine: ' + engine;
   analyze();
-  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), flutes: k, diameterMm: D, engine, quality: st.shots.slice(0, k).map((_, i) => shotQuality(i))});   // ④ 측정 패널 (js/metro)
+  window.Tool3D?.metro?.update({shots: st.shots.slice(0, k), top: st.shots[k], flutes: k, diameterMm: D, engine, quality: st.shots.slice(0, k).map((_, i) => shotQuality(i))});   // ④ 측정 패널 (js/metro)
 };
 $('#sens').onchange = $('#zone').onchange = () => det && analyze();
 
