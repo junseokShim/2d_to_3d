@@ -1,9 +1,10 @@
-/* Tool3D measurement report: two-page PDF (own writer, metro-core PdfPage), printable HTML and CSV, laid out like a
+/* Tool3D measurement report: PDF (two pages + a 3D page when section ③ has a result) (own writer, metro-core PdfPage), printable HTML and CSV, laid out like a
  * digital-microscope measurement report.
  * Page 1: tool info, overall decision, flank wear per flute (VBmax / VBB / VBC / VBN, value ± U, positions), annotated image
  * of the worst flute (reference line, VB dimension lines with values, scale bar, magnification), its dimension list and
  * statistics, VB profile along the edge. Page 2: end-face wear area per tooth (annotated top image + table), all flutes,
- * tolerance verdict, tool-life trend, uncertainty budget, calibration, manual measurements, method.
+ * tolerance verdict, tool-life trend, uncertainty budget, calibration, manual measurements, method. Page 3 (Tool3D.surfaceReport.pdfPage from map3d/surface-ui.js): 3D view in deviation
+ * mode, deviation statistics, per-flute wear volume + equivalent edge radius, 3D tolerance verdict, chips, wear-volume trend.
  */
 (function () {
   'use strict';
@@ -154,9 +155,10 @@
   function pdf() {
     if (!ready()) return null;
     const d = data(), pages = [page1(d), page2(d)];
-    const post = T.postReport && T.postReport.pdfPage ? T.postReport.pdfPage() : null;   // optional extra page (none registered today)
-    pages.forEach((P, i) => footer(P, i + 1, pages.length + (post ? 1 : 0)));
-    return M.pdfBytes(post ? pages.concat([post]) : pages);
+    const s3 = T.surfaceReport && T.surfaceReport.pdfPage ? T.surfaceReport.pdfPage() : null;   // page 3: section ③ 3D surface metrology (surface-ui.js)
+    if (s3) pages.push(s3);
+    pages.forEach((P, i) => footer(P, i + 1, pages.length));
+    return M.pdfBytes(pages);
   }
 
   // ---------- HTML (self-contained, A4 print) ----------
@@ -214,7 +216,7 @@ ${tol ? `<h2>Tolerance verdict — ${tol.pass == null ? '-' : tol.pass ? '<span 
 <p class="note">Calibration: ${d.calib.method === 'diameter' ? `tool diameter Ø${d.D} ± ${S.prefs.diaTolMm} mm` : d.calib.method === 'reference' ? `reference target ${S.prefs.refMm} mm (deviation vs diameter ${d.calib.deviationPct.toFixed(2)} %)` : esc(d.calib.method)}; ${Object.entries(d.calib.parts || {}).map(([k, v]) => `${k} ${(100 * v).toFixed(2)} %`).join(', ')}.</p>
 ${d.manual.length ? `<h2>Manual measurements</h2><table><tr><th>Type</th><th>Flute</th><th>Value mm</th><th>U mm</th></tr>${d.manual.map(mm => `<tr><td>${mm.kind}</td><td>F${mm.flute}</td><td>${f3(mm.mm)}</td><td>${f3(mm.U)}</td></tr>`).join('')}</table>` : ''}
 <p class="note">${esc(METHOD)}</p>
-${T.postReport && T.postReport.html ? T.postReport.html() || '' : ''}
+${T.surfaceReport && T.surfaceReport.html ? T.surfaceReport.html() || '' : ''}
 <footer><span>Tool3D measurement — estimate from photographs, not a certified measurement.</span><span>Signature: ____________________</span></footer></body></html>`;
   }
 
@@ -225,7 +227,7 @@ ${T.postReport && T.postReport.html ? T.postReport.html() || '' : ''}
     print() { const h = htmlDoc(); if (!h) return; const w = window.open('', '_blank'); if (!w) return this.html(); w.document.write(h); w.document.close(); setTimeout(() => { try { w.print(); } catch (e) { /* closed */ } }, 600); },
     csv() {
       if (!ready()) return null; const d = data();
-      const t = M.csv(d) + (T.metroVb ? T.metroVb.csvSections(d) : '') + (T.postReport && T.postReport.csv ? String.fromCharCode(13, 10) + (T.postReport.csv() || '') : '');
+      const t = M.csv(d) + (T.metroVb ? T.metroVb.csvSections(d) : '') + (T.surfaceReport && T.surfaceReport.csv ? String.fromCharCode(13, 10) + (T.surfaceReport.csv() || '') : '');
       save(`tool3d-${safeId()}-${fileStamp()}.csv`, new Blob(['﻿' + t], {type: 'text/csv'})); return t;
     }
   };
