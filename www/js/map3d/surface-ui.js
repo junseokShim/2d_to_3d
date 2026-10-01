@@ -5,7 +5,7 @@
  *   edge sections normal to the cutting edge (nominal vs worn + inscribed edge radius), deviation statistics per face,
  *   chips, tolerance check, tool-life trend (wear volume per measurement, browser storage), section profile along a
  *   line picked on the model ('tool3d:profile-line'), CSV + PNG export.
- * Publishes window.Tool3D.surfaceResult and 'tool3d:surface' (report / section ④ may read it).
+ * Publishes window.Tool3D.surfaceResult and 'tool3d:surface', and Tool3D.surfaceReport {csv, html, pdfPage} (metro-report.js: PDF page 3).
  */
 (function () {
   'use strict';
@@ -227,6 +227,83 @@
     const card = $('#surf-profile'); if (card && T.render) T.render.profileMode(false);
     window.dispatchEvent(new CustomEvent('tool3d:surface-profile', {detail: prof}));
   }
+
+  // ---------- report page (metro-report.js hook Tool3D.surfaceReport) ----------
+  // the 3D view (deviation mode when a deviation field exists) drawn straight from the WebGL canvas (preserveDrawingBuffer)
+  function view3d() {
+    const R3 = T.render, g = $('#tool3d-view canvas'); if (!R3 || !g || !g.width) return null;
+    const prev = R3.mode(), sw = cur && cur.dev && prev !== 'dev';
+    if (sw) R3.mode('dev');
+    let c = null;
+    try {
+      R3.snapshot();   // renders the scene synchronously
+      const k = Math.min(1, 900 / g.width); c = Object.assign(document.createElement('canvas'), {width: Math.round(g.width * k), height: Math.round(g.height * k)});
+      const x = c.getContext('2d'); x.fillStyle = '#20242c'; x.fillRect(0, 0, c.width, c.height); x.drawImage(g, 0, 0, c.width, c.height);
+    } catch (e) { c = null; }
+    if (sw) R3.mode(prev);
+    return c;
+  }
+  const TOL_EN = {devMaxUm: '|Dmin| max deviation', chipDepthUm: 'max chip depth', vdvMm3: 'Vdv volume beyond tolerance', wearVolumeMm3: 'max wear volume per flute'};
+  const asc = u => String(u).replace('µ', 'u').replace('³', '3').replace('²', '2');
+  function pdfPage() {
+    const S = cur, M = T.metroCore; if (!S || !M) return null;
+    const Pg = M.PdfPage(), W = Pg.W, L = 36, R = W - 36, st = S.stats;
+    const jpeg = c => { const b = atob(c.toDataURL('image/jpeg', .88).split(',')[1]), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+    const sect = (y, t) => { Pg.text(L, y, t, 10, {bold: true}); Pg.line(L, y + 4, R, y + 4, .8, '#1f2a36'); return y + 16; };
+    Pg.rect(0, 0, W, 50, '#1f2a36'); Pg.text(L, 24, '3D surface metrology - deviation vs nominal model', 14, {bold: true, color: '#ffffff'});
+    Pg.text(L, 40, `${S.params.flutes} flutes, D ${S.params.diameterMm} mm, helix ${f1(S.params.helixDeg)} deg, clearance ${S.params.clearanceDeg} deg, rake ${S.params.rakeDeg} deg${S.mock ? ' [MOCK]' : ''}`, 8, {color: '#c8d2dc'});
+    const ok = S.tol.pass; Pg.rect(R - 110, 12, 110, 26, ok == null ? '#889999' : ok ? '#1e9e4a' : '#d0342c'); Pg.text(R - 55, 29, 'TOLERANCE ' + (ok == null ? '-' : ok ? 'PASS' : 'FAIL'), 9, {bold: true, color: '#ffffff', align: 'center'});
+    let y = 64;
+    // 3D view + deviation statistics side by side
+    const v = view3d(), yi = y;
+    if (v) { const h = Math.min(230, 300 * v.height / v.width), w = h * v.width / v.height; Pg.image(jpeg(v), v.width, v.height, L, y, w, h); Pg.text(L, y + h + 10, (S.dev ? 'Deviation map vs nominal (um, negative = material loss)' : '3D view'), 7, {color: '#667788'}); y += h + 18; }
+    else { Pg.text(L, y + 8, 'No 3D view available.', 8, {color: '#667788'}); y += 20; }
+    const sx = L + 320; let sy = yi + 8;
+    Pg.text(sx, sy, `Deviation statistics (tolerance ${st.tolUm} um)`, 9, {bold: true}); sy += 13;
+    P.STAT_ROWS.forEach(r => { Pg.text(sx, sy, r[0], 8); Pg.text(sx + 110, sy, (r[2] === 'mm³' ? f4(st[r[1]]) : r[2] === 'mm²' ? f3(st[r[1]]) : f1(st[r[1]])) + ' ' + asc(r[2]), 8, {bold: true}); sy += 11; });
+    sy += 6; Pg.text(sx, sy, 'Per face', 8.5, {bold: true}); sy += 11;
+    [['face', 0], ['Dmin um', 64], ['Vv mm3', 116], ['Vdv mm3', 168]].forEach(([h, dx]) => Pg.text(sx + dx, sy, h, 7, {bold: true})); sy += 10;
+    S.faces.slice(0, 8).forEach(f => { [String(f.face) + (f.kind === 'side' ? ' ' + Math.round(f.angleDeg) : ''), f1(f.DminUm), f4(f.VvMm3), f4(f.VdvMm3)].forEach((c, j) => Pg.text(sx + [0, 64, 116, 168][j], sy, c, 7)); sy += 9; });
+    y = Math.max(y, sy) + 8;
+    // per-flute wear volume + equivalent edge radius
+    y = sect(y, 'Per flute: wear volume and equivalent edge radius');
+    const cols = [['Flute', 40], ['VBmax um', 56], ['edge radius um', 70], ['recession um', 62], ['worn mm2', 54], ['end mm2', 50], ['volume mm3', 60], ['chip um', 48], ['Dmin um', 50]];
+    Pg.rect(L, y - 10, R - L, 14, '#e8edf2'); let x = L + 3; cols.forEach(([h, w]) => { Pg.text(x, y, h, 7.5, {bold: true}); x += w; }); y += 13;
+    const rowOut = (a, bold) => { x = L + 3; a.forEach((c, j) => { Pg.text(x, y, String(c), 8, {bold}); x += cols[j][1]; }); Pg.line(L, y + 4, R, y + 4, .3, '#d5d9e0'); y += 12; };
+    S.flutes.forEach(f => rowOut(['F' + f.flute, f1(f.vbMaxUm), f1(f.edgeRadiusUm), f1(f.recessionUm), f3(f.wornAreaMm2), f3(f.endAreaMm2), f4(f.volumeMm3), f1(f.chipDepthUm), f1(f.DminUm)]));
+    const mx = k => Math.max(0, ...S.flutes.map(f => f[k])), sm = k => S.flutes.reduce((s, f) => s + f[k], 0);
+    rowOut(['sum/max', f1(mx('vbMaxUm')), f1(mx('edgeRadiusUm')), f1(mx('recessionUm')), f3(sm('wornAreaMm2')), f3(sm('endAreaMm2')), f4(sm('volumeMm3')), f1(mx('chipDepthUm')), f1(Math.min(0, ...S.flutes.map(f => f.DminUm)))], true);
+    Pg.text(L, y + 2, `End-face worn area ${f3(S.endWornMm2)} mm2. Equivalent edge radius = radius of the circle inscribed between flank, rake face and wear land (edge section normal to the cutting edge).`, 7, {color: '#445566'}); y += 18;
+    // tolerance verdict + chips
+    const yt0 = y; let yt = sect(y, '3D tolerance verdict' + (ok == null ? '' : ok ? '  -  PASS' : '  -  FAIL'));
+    S.tol.rows.forEach(t => { Pg.text(L, yt, TOL_EN[t.key] || t.key, 7.8); Pg.text(L + 150, yt, (t.value == null ? '-' : t.unit === 'mm³' ? f4(t.value) : f1(t.value)) + ' ' + asc(t.unit), 7.8, {bold: true}); Pg.text(L + 210, yt, '<= ' + t.limit + ' ' + asc(t.unit), 7.8); Pg.text(L + 270, yt, t.pass == null ? '-' : t.pass ? 'PASS' : 'FAIL', 7.8, {bold: true, color: t.pass == null ? '#667788' : t.pass ? '#1e9e4a' : '#d0342c'}); yt += 11; });
+    const cx = L + 310; let yc = yt0;
+    Pg.text(cx, yc, `Chipping (${S.chips.length})`, 10, {bold: true}); yc += 16;
+    (S.chips.length ? S.chips.slice(0, 8) : [null]).forEach(c => { Pg.text(cx, yc, c ? `#${c.n} ${c.where}${c.tooth == null ? '' : ' F' + (c.tooth + 1)}  L ${f3(c.lengthMm)} mm, A ${f4(c.areaMm2)} mm2, d ${f1(c.maxDepthUm)} um, V ${f4(c.volumeMm3)} mm3` : 'no chipping', 7.3); yc += 10; });
+    y = Math.max(yt, yc) + 10;
+    // wear-volume trend (browser storage)
+    const hist = P.history(storage(), toolId()), tr = P.trend(hist, P.DEFAULTS.tol.wearVolumeMm3 * S.flutes.length, 'volumeMm3');
+    if (y < Pg.H - 90) {
+      y = sect(y, `Wear volume trend - tool ${toolId()} (${hist.length} recorded)`);
+      if (tr) { Pg.text(L, y, `+${f4(tr.slope)} mm3 per measurement` + (tr.remaining != null ? `, limit in about ${f1(tr.remaining)} measurements` : ''), 7.8); y += 11; }
+      hist.slice(-4).forEach(h => { Pg.text(L, y, `${h.t ? new Date(h.t).toISOString().slice(0, 16).replace('T', ' ') : '-'}  volume ${f4(h.volumeMm3)} mm3  VBmax ${f1(h.vbMaxUm)} um`, 7.3); y += 10; });
+      if (!hist.length) Pg.text(L, y, 'no recorded measurements for this tool id', 7.3, {color: '#667788'});
+    }
+    Pg.text(L, Pg.H - 52, 'Heights and volumes are estimates from the wedge model (VB tan clearance) and the map3d chip depth; photographs give no height.', 7, {color: '#667788'});
+    return Pg;
+  }
+  function htmlSection() {
+    const S = cur; if (!S) return '';
+    const v = view3d(), st = S.stats;
+    return `<h2 class="pb">3D surface metrology — deviation vs nominal model</h2>
+${v ? `<div class="imgs"><figure><img src="${v.toDataURL('image/jpeg', .88)}" style="height:240px"><figcaption>${S.dev ? 'Deviation map (µm, negative = material loss)' : '3D view'}</figcaption></figure></div>` : ''}
+<table><tr><th>Flute</th><th>VBmax µm</th><th>edge radius µm</th><th>recession µm</th><th>worn mm²</th><th>end mm²</th><th>volume mm³</th><th>chip µm</th><th>Dmin µm</th></tr>
+${S.flutes.map(f => `<tr><td>F${f.flute}</td><td>${f1(f.vbMaxUm)}</td><td>${f1(f.edgeRadiusUm)}</td><td>${f1(f.recessionUm)}</td><td>${f3(f.wornAreaMm2)}</td><td>${f3(f.endAreaMm2)}</td><td>${f4(f.volumeMm3)}</td><td>${f1(f.chipDepthUm)}</td><td>${f1(f.DminUm)}</td></tr>`).join('')}</table>
+<table><tr>${P.STAT_ROWS.map(r => `<th>${r[0]} <small>${r[2]}</small></th>`).join('')}</tr><tr>${P.STAT_ROWS.map(r => `<td>${r[2] === 'mm³' ? f4(st[r[1]]) : r[2] === 'mm²' ? f3(st[r[1]]) : f1(st[r[1]])}</td>`).join('')}</tr></table>
+<table><tr><th>3D tolerance</th><th>value</th><th>limit</th><th>result</th></tr>${S.tol.rows.map(t => `<tr><td>${TOL_EN[t.key] || esc(t.key)}</td><td>${t.value == null ? '-' : t.unit === 'mm³' ? f4(t.value) : f1(t.value)} ${t.unit}</td><td>${t.limit} ${t.unit}</td><td class="${t.pass == null ? '' : t.pass ? 'pass' : 'fail'}">${t.pass == null ? '-' : t.pass ? 'PASS' : 'FAIL'}</td></tr>`).join('')}</table>
+<p class="note">Chipping: ${S.chips.length ? S.chips.slice(0, 8).map(c => `#${c.n} ${c.where}${c.tooth == null ? '' : ' F' + (c.tooth + 1)} d ${f1(c.maxDepthUm)} µm, V ${f4(c.volumeMm3)} mm³`).join('; ') : 'none'}. Heights and volumes are estimates from the wedge model; photographs give no height.</p>`;
+  }
+  T.surfaceReport = {csv, html: htmlSection, pdfPage};
 
   window.addEventListener('tool3d:map3d', () => setTimeout(run, 0));
   window.addEventListener('tool3d:profile-line', onProfile);

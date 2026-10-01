@@ -274,7 +274,7 @@
     const chunks = [], offs = []; let len = 0;
     const put = b => { if (typeof b === 'string') b = enc(b); chunks.push(b); len += b.length; };
     const obj = (i, body) => { offs[i] = len; put(`${i} 0 obj\n`); (Array.isArray(body) ? body : [body]).forEach(put); put('\nendobj\n'); };
-    // one page (object) or several ([page, page, ...]; an optional extra page may follow the metrology page)
+    // one page (object) or several ([page, page, ...]; page 3 = Tool3D.surfaceReport.pdfPage(), section ③ 3D surface metrology)
     const pages = Array.isArray(page) ? page : [page];
     put('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n');
     obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
