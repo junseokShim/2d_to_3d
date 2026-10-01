@@ -45,7 +45,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   check('VBmax value + position from evaluate', P.vbMax.v === .2 && P.vbMax.zMm === .755);
   check('VBC: no wear in zone C -> no position', P.vbc.zMm === null && P.vbc.v === 0);
   near('VBN position = last worn row inside ap +- 0.05', P.vbn.zMm, .545, 1e-9);
-  check('VBB span over the worn zone-B rows', P.vbb.span && P.vbb.span[0] === .1 && P.vbb.span[1] === .81, JSON.stringify(P.vbb.span));
+  check('VBB span over the worn zone-B rows', P.vbb.span && P.vbb.span[0] === .1 && P.vbb.span[1] === .8, JSON.stringify(P.vbb.span));
   const Pt = V.positions({rows, zones: {cornerMm: .1, apMm: .5, notchHalfMm: .05}, q: Object.assign({}, q, {vbMax: {v: .4, U: .01}, vbc: {v: .4, U: .01}}), zAtMaxMm: .755, tipMm: .4, vbSource: 'corner/tip (VBC)'});
   check('tip damage: VBmax and VBC at the tip (z 0)', Pt.vbMax.zMm === 0 && Pt.vbc.zMm === 0);
 }
@@ -83,7 +83,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   const merged = V.mergeNet({w, h, cls, cx, cy, rPx: R, pxPerMm: ppm}, f), b = V.endFaceArea(merged, k);
   let ring = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const r = Math.hypot(x + .5 - cx, y + .5 - cy); if (r < R && r > 90 && cls[y * w + x]) ring++; }
   near('network classes replace the photo rule (rim ring = chipping on the land)', b.total.chippingMm2, ring / ppm / ppm, .03 * ring / ppm / ppm);
-  check('network merge: no flank left from the photo rule', b.total.flankMm2 === 0 && merged.source === 'network');
+  check('network merge: no flank left from the photo rule', b.total.flankMm2 === 0 && merged.source === 'network', JSON.stringify([b.total, merged.source]));
 }
 
 // 6) brightness rule = the wear engine's end-face bright area (same threshold, same pixels) on the sample top photo

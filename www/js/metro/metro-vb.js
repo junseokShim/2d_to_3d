@@ -185,9 +185,9 @@
   function mergeNet(c, f, top) {
     const {w, h, cx, cy, rPx: r} = c, k = f.netD / (2 * r), cls = new Uint8Array(c.cls);
     for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(h, cy + r); y++) for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(w, cx + r); x++) {
-      const i = y * w + x; if ((x - cx) ** 2 + (y - cy) ** 2 >= r * r) continue;
+      const i = y * w + x; if ((x + .5 - cx) ** 2 + (y + .5 - cy) ** 2 >= r * r) continue;
       const X = Math.floor((x + .5 - cx) * k + f.w / 2), Y = Math.floor((y + .5 - cy) * k + f.h / 2), s = X >= 0 && Y >= 0 && X < f.w && Y < f.h ? f.mask[Y * f.w + X] : 0;
-      cls[i] = s >= 2 ? s : cls[i] >= 2 ? 1 : cls[i];
+      if (cls[i]) cls[i] = s >= 2 ? s : 1;
     }
     return Object.assign({}, c, {cls, source: 'network'});
   }
