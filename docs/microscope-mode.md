@@ -1,8 +1,10 @@
 # Microscope input mode (현미경 입력)
 
+> **Removed from the UI (one camera flow).** Step ① no longer offers a microscope choice: microscope photos go through the normal camera flow, and section ④ shows the microscope-style VB (reference line, VB dimension lines, scale bar, magnification). `micro-core.js` (maths) and `node test/micro/run.js` remain; the UI steps below are historical.
+
 Measures flank wear VB on microscope close-ups of one cutting edge (flank land in view, tool above the edge,
 background below), like the MUDESTREDA images. Code: `www/js/micro/micro-core.js` (maths), `www/js/micro/micro-ui.js` (UI).
-Test: `node test/micro/run.js`; E2E step "microscope" in `test/e2e/chrome-e2e.js`.
+Test: `node test/micro/run.js`; the E2E step "oneCameraFlow" in `test/e2e/chrome-e2e.js` checks the choice is gone.
 
 ## Workflow
 1. Step ① 입력 방식: choose **현미경**. Pick the magnification (배율: 10x-500x or 직접 입력).
