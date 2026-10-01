@@ -1,15 +1,15 @@
-/* Tool3D wear, post-processing of a segmented wear land in the way two commercial VB measurement solutions report it.
+/* Tool3D wear, post-processing of a segmented wear land in the two ways VB measurement instruments report it.
  * Input: a class map (0 background, 1 tool, 2 flank wear, 3 chipping, 4 adhesion) of one side, e.g. the seg network's window.
  * The land (largest piece of classes 2 + 3) is cut into stations along its own axis; at each station the land has a
  * cutting-edge boundary e(s) and a wear boundary b(s) (offsets normal to the edge, mm on the tool surface).
  *
- * keyence  (VHX digital microscope practice, datasets/키엔스자료): the operator draws a straight reference line on the
+ * refLine  (digital microscope practice): the operator draws a straight reference line on the
  *          unworn part of the cutting edge and extends it; VB = perpendicular distance from that line to the wear
  *          boundary ([1] 90.34 um), edge recession / chipping = perpendicular distance from the line to the actual edge
  *          ([2] 24.33 um); the edge-height profile is read the same way (line on the unworn part, max drop below it).
  *          Here: the longest run of stations whose edge lies on the robust edge line (within the tolerance) = the unworn
  *          part; least-squares line on it, extrapolated over the whole land.
- * alicona  (EdgeMasterModule EdgeQuality + WearMeasurementModule, datasets/알리코나 자료, ISO 8688): a reference edge
+ * edgeDev  (3D edge-measurement practice, ISO 8688): a reference edge
  *          fitted to the whole evaluated edge; a defect = a stretch where the edge lies below the reference by more than
  *          the tolerance. Nd defects, L evaluated length, Pd = sum Li / L, Ddmax / Ddmean depth, Ldmax / Ldmean length
  *          along the edge, Ldcmax / Ldcmean length along the clearance (flank) surface, VBmax / VBmean / VB(s).
@@ -99,7 +99,7 @@
     const E = edgeLo ? LO : HI.map(v => -v), B = edgeLo ? HI : LO.map(v => -v);
     const len = S[S.length - 1] - S[0] + step;
 
-    // ---- alicona: reference edge over the whole evaluated edge, defects below tolerance ----
+    // ---- edgeDev: reference edge over the whole evaluated edge, defects below tolerance ----
     const {L: La} = robustEdge(S, E, tol), refA = s => La.a + La.c * s;
     const dA = E.map((e, i) => e - refA(S[i])), vbA = B.map((b, i) => b - refA(S[i]));
     const defects = runs(dA.map(d => d > tol)).map(([a, b]) => {
@@ -110,7 +110,7 @@
     const sum = a => a.reduce((p, q) => p + q, 0), mean = a => a.length ? sum(a) / a.length : 0, iMax = a => a.indexOf(Math.max(...a));
     const dDef = []; defects.forEach(d => { for (let i = 0; i < S.length; i++) if (S[i] - S[0] >= d.fromMm - 1e-9 && S[i] - S[0] < d.toMm - 1e-9) dDef.push(dA[i]); });
     const kA = iMax(vbA);
-    const alicona = {
+    const edgeDev = {
       method: 'reference edge = robust line over the whole edge; defect = edge below it by > tolerance',
       toleranceMm: r4(tol), L: r4(len), Nd: defects.length, Pd: r4(100 * sum(defects.map(d => d.lengthMm)) / len),
       Ddmax: r4(defects.length ? Math.max(...defects.map(d => d.depthMaxMm)) : 0), Ddmean: r4(mean(dDef)),
@@ -120,17 +120,17 @@
       Dmin: r4(-Math.max(0, ...dA)), Dmax: r4(Math.max(0, ...dA.map(d => -d))), Dmean: r4(-mean(dA)),
       VBmax: r4(vbA[kA]), VBmean: r4(mean(vbA)), VBmaxAtMm: r4(S[kA] - S[0]), defects};
 
-    // ---- keyence: line on the unworn part of the edge (longest run on the reference), extended over the whole land ----
+    // ---- refLine: line on the unworn part of the edge (longest run on the reference), extended over the whole land ----
     const on = runs(dA.map(d => Math.abs(d) <= tol), 0).sort((p, q) => (q[1] - q[0]) - (p[1] - p[0]))[0];
     const Lk = on && on[1] - on[0] >= 2 ? fitLine(S.slice(on[0], on[1] + 1), E.slice(on[0], on[1] + 1)) : La, refK = s => Lk.a + Lk.c * s;
     const vbK = B.map((b, i) => b - refK(S[i])), dK = E.map((e, i) => e - refK(S[i])), kK = iMax(vbK), kR = iMax(dK);
-    const keyence = {
+    const refLine = {
       method: 'reference line on the unworn cutting edge (least squares, extended); perpendicular distances to it',
       referenceMm: on ? [r4(S[on[0]] - S[0]), r4(S[on[1]] - S[0] + step)] : null,
       VBmax: r4(vbK[kK]), VBmaxAtMm: r4(S[kK] - S[0]), VBmean: r4(mean(vbK)),
       edgeRecessionMax: r4(Math.max(0, dK[kR])), edgeRecessionAtMm: r4(S[kR] - S[0]), angleDeg: r4(Math.atan(Lk.c - La.c) * 180 / Math.PI)};
     const profile = S.map((s, i) => ({sMm: r4(s - S[0]), vbMm: r4(vbA[i]), edgeDevMm: r4(dA[i])}));
-    return {edgeSide: mode === 'auto' ? (Math.max(...bf) > .3 && Math.abs(bf[0] - bf[1]) > .2 ? 'background' : 'straight') : mode, lengthMm: r4(len), stations: S.length, keyence, alicona, profile};
+    return {edgeSide: mode === 'auto' ? (Math.max(...bf) > .3 && Math.abs(bf[0] - bf[1]) > .2 ? 'background' : 'straight') : mode, lengthMm: r4(len), stations: S.length, refLine, edgeDev, profile};
   }
 
   return {analyze, fitLine, TOL_PX, TOL_MM};

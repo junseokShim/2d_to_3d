@@ -17,7 +17,7 @@ function loadGeometry() {
   return ctx.window.Tool3D._render.geometry;
 }
 
-// 1) Keyence scale bar + magnification reproduce the real VHX screens (datasets/toolwear/reference/keyence.json)
+// 1) scale bar + magnification reproduce the real reference microscope screens (reference json in the dataset folder)
 {
   const b300 = P.scaleBar(2940, 320), b100 = P.scaleBar(980, 260);
   check('scale bar X300 = 100 um', b300.um === 100 && Math.abs(b300.px - 294) < 1, JSON.stringify(b300));
@@ -26,9 +26,9 @@ function loadGeometry() {
   const ref = 'C:/agent_research_team/datasets/toolwear/reference/keyence.json';
   if (fs.existsSync(ref)) {
     const K = JSON.parse(fs.readFileSync(ref, 'utf8')), sized = K.images.filter(i => i.pxPerMm && i.size[0] === 2880);
-    check('keyence.json magnification labels', sized.every(i => P.magnification(i.pxPerMm, 2880).label === i.mag.split(' ')[0]), sized.map(i => i.mag + '->' + P.magnification(i.pxPerMm, 2880).label).join(' '));
-    check('keyence.json VB spot values', K.vbValuesUm.VB_X300 === 90.34 && K.vbValuesUm.VB_X100 === 123.51);
-  } else console.log('SKIP  keyence.json not on this machine');
+    check('reference magnification labels', sized.every(i => P.magnification(i.pxPerMm, 2880).label === i.mag.split(' ')[0]), sized.map(i => i.mag + '->' + P.magnification(i.pxPerMm, 2880).label).join(' '));
+    check('reference VB spot values', K.vbValuesUm.VB_X300 === 90.34 && K.vbValuesUm.VB_X100 === 123.51);
+  } else console.log('SKIP  reference json not on this machine');
 }
 
 // synthetic metro rows: 100 rows of 0.01 mm, VB 0 for z < .1, ramp to .2 mm, 0 from z = .8; band columns around edge x = 50
@@ -47,7 +47,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   near('stats worn length', st.wornMm, 70 * .01 / Math.cos(Math.PI / 6), .002);
 }
 
-// 3) EdgeQuality: flank recession + defects, and Alicona's own definition on a 3-defect profile
+// 3) edge defects: flank recession + defects, and the instrument's own definition on a 3-defect profile
 {
   const E = P.edgeProfile(rows, {clearanceDeg: 8, rakeDeg: 8, helixDeg: 30}), q = P.edgeDefects(E, 5), h = 200 * Math.tan(8 * Math.PI / 180);
   near('Ddmax = -VBmax tan(clearance)', q.Ddmax, -h, .02);
@@ -56,7 +56,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   near('Ldrmax = h / cos(g)', q.Ldrmax, h / Math.cos(8 * Math.PI / 180), .02);
   const vol = E.area.reduce((s, a) => s + a * E.du, 0);
   near('Vdmax = wedge volume', q.Vdmax, vol, 2);
-  // Alicona slide: Pd = (L1+L2+L3)/L, Ldmax / Ldmean, Ddmax = min(Di)
+  // reference definition: Pd = (L1+L2+L3)/L, Ldmax / Ldmean, Ddmax = min(Di)
   const D = [], n = 200; for (let i = 0; i < n; i++) D.push(i >= 20 && i < 50 ? -10 : i >= 80 && i < 130 ? -(15 + (i === 100 ? 5 : 0)) : i >= 160 && i < 180 ? -8 : -1);
   const A = {du: 10, D, u: D.map((_, i) => (i + .5) * 10), area: D.map(d => -d), ldc: D.map(d => -2 * d), ldr: D.map(d => -3 * d), corner: D.map(() => 0)}, q2 = P.edgeDefects(A, 5);
   check('3 defects', q2.Nd === 3, JSON.stringify(q2.defects.map(d => d.LUm)));
@@ -121,7 +121,7 @@ for (let r = 0; r < 100; r++) { const z = (r + .5) * .01; rows.vb[r] = z < .1 ||
   const WP = require('../../www/js/wear/wear-post.js'), w = 400, h = 300, ppm = 100, m = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const e = y > 100 && y < 140 ? 6 : 0; m[y * w + x] = x < 50 + e ? 0 : x < 70 ? 2 : 1; }   // edge x=50, land 0.20 mm, chip 0.06 x 0.40 mm
   const wp = WP.analyze({mask: m, w, h, pxPerMm: ppm, edge: 'background'}), eq = P.edgeDefects(P.edgeProfile(rows, {}));
-  const q = P.mergeEdge(eq, {keyence: wp.keyence, alicona: wp.alicona, lengthMm: wp.lengthMm, edgeSide: wp.edgeSide});
+  const q = P.mergeEdge(eq, {refLine: wp.refLine, edgeDev: wp.edgeDev, lengthMm: wp.lengthMm, edgeSide: wp.edgeSide});
   check('merge: source wear-post, Nd 1, Ddmax -60 um, Ldmax 400 um', q.source === 'wear-post' && q.Nd === 1 && Math.abs(q.Ddmax + 60) <= 15 && Math.abs(q.Ldmax - 400) <= 30, `${q.Nd} ${q.Ddmax} ${q.Ldmax}`);
   check('merge: Ldr and Vdrel stay from the wedge model', q.Ldrmax === eq.Ldrmax && q.Vdrel === eq.Vdrel && q.measured.includes('Pd') && !q.measured.includes('Ldrmax'));
   check('merge: reference line VB 200 um, recession 60 um', Math.abs(q.refLine.VBmaxUm - 200) <= 15 && Math.abs(q.refLine.recessionUm - 60) <= 15, `${q.refLine.VBmaxUm} ${q.refLine.recessionUm}`);

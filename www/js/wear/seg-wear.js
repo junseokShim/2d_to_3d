@@ -189,7 +189,7 @@
       source: dn && dc ? 'seg+color' : dc ? 'color' : 'seg', netDepthMm: dn, colorDepthMm: dc};
   }
 
-  // wear-post.js (Keyence / Alicona style post-processing): Node require, browser Tool3D.wear.post
+  // wear-post.js (microscope-style (reference line + edge deviation) post-processing): Node require, browser Tool3D.wear.post
   const postApi = () => { try { return typeof module === 'object' && module.exports ? require('./wear-post.js') : (self.Tool3D && self.Tool3D.wear && self.Tool3D.wear.post) || null; } catch (e) { return null; } };
 
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
@@ -260,7 +260,7 @@
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
       for (const c of [2, 3, 4]) areas[c] = r4(areas[c] / ppmNet / ppmNet);
       const al = P.al, Rmm = R / strip.ppm, k = opts.flutes || 0;
-      // Keyence / Alicona style reports of the land (wear-post.js), on the tool surface (cylinder unwrapped)
+      // microscope-style (reference line + edge deviation) reports of the land (wear-post.js), on the tool surface (cylinder unwrapped)
       let post = null; const PO = postApi();
       if (PO) try {
         const Rn = win.netD / 2;
@@ -359,8 +359,8 @@
     try { topFace = top && debug.top ? await seg.segmentTop(top, debug.top, opts.diameterMm) : null; } catch (e) { debug.segTopError = String(e && e.message || e); }
     T.faceSeg = seg.faces.filter(Boolean).concat(topFace ? [topFace] : []);
     result.faces = T.faceSeg.map(f => ({face: f.face, angleDeg: f.angleDeg, areasMm2: f.areasMm2, confidence: f.confidence}));
-    // per side: Keyence / Alicona style post-processing of the land (null where the network found no land)
-    result.post = seg.faces.map(f => f && f.post ? {keyence: f.post.keyence, alicona: f.post.alicona, lengthMm: f.post.lengthMm, edgeSide: f.post.edgeSide} : null);
+    // per side: microscope-style (reference line + edge deviation) post-processing of the land (null where the network found no land)
+    result.post = seg.faces.map(f => f && f.post ? {refLine: f.post.refLine, edgeDev: f.post.edgeDev, lengthMm: f.post.lengthMm, edgeSide: f.post.edgeSide} : null);
     debug.segMs = Date.now() - t0; debug.faceSeg = T.faceSeg;
     T.wearResult = result; T.wearDebug = debug;
     window.dispatchEvent(new CustomEvent('tool3d:wear', {detail: result}));

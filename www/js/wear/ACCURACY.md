@@ -29,14 +29,14 @@ Diagnostics (alignment, thresholds, warnings, top-view circle) go to `window.Too
 | volume | 0.0025–0.013 mm³ | ≤ 5 % | 25 % |
 | top-view scale | 20 px/mm | 0.3 % | 3 % |
 
-## Expected error vs Alicona (real photos)
-Alicona InfiniteFocus / Keyence VHX measure VB at about 1 µm resolution and wear volume from a 3D surface. A phone photo cannot reach that. Realistic expectations:
+## Expected error vs a 3D reference instrument (real photos)
+Focus-variation 3D instruments and digital microscopes measure VB at about 1 µm resolution and wear volume from a 3D surface. A phone photo cannot reach that. Realistic expectations:
 - **Resolution floor: about 1–1.5 px.** VB error ≈ ±1 px / (px/mm). A phone macro at 50–100 px/mm gives about ±0.01–0.03 mm. The scenario screenshots are about 4 px/mm (±0.25 mm), so VB there is not meaningful; `wearDebug.warnings` flags any side below 20 px/mm.
 - **Segmentation is the main error on real tools.** Bright means worn only when coating loss or a worn land shows contrast. Specular glints on the cylinder and on flute edges, and chips or built-up edge, read as wear and inflate VB, often by 2× or more. Dark (e.g. TiAlN) coating on carbide under diffuse light works best. Use `sens` and `zoneMm` to tune.
 - **Helix**: each 4° error changes VB by about 4 %. Enter the catalogue helix when known.
-- **Volume**: the wedge model assumes a flat land and the nominal clearance angle. It ignores edge rounding, cratering and chipping, so expect ±30–50 % against Alicona's volume even when VB is right. Volume scales with VB², so VB errors double in volume.
+- **Volume**: the wedge model assumes a flat land and the nominal clearance angle. It ignores edge rounding, cratering and chipping, so expect ±30–50 % against a 3D instrument's volume even when VB is right. Volume scales with VB², so VB errors double in volume.
 - **Perspective**: this assumes orthographic, axis-perpendicular shots. At a 20 cm distance, perspective distorts a Ø10 tool's width by about 1–2 %, and a 10° off-axis camera tilt about 1.5 %.
-- **Summary**: at ≥ 50 px/mm with good light, expect VBmax within about ±0.02–0.04 mm and VBavg within about ±0.02 mm of Alicona, and area within about ±15 %. Volume is an estimate. These real-photo numbers are estimates, not validated: there were no real photos with Alicona reference values to validate against.
+- **Summary**: at ≥ 50 px/mm with good light, expect VBmax within about ±0.02–0.04 mm and VBavg within about ±0.02 mm of a 3D reference instrument, and area within about ±15 %. Volume is an estimate. These real-photo numbers are estimates, not validated: there were no real photos with 3D-instrument reference values to validate against.
 
 ## Tests
 `node test/wear/run.js` (no dependencies). Covers synthetic accuracy cases, no-wear, contract shape, and an end-to-end run on the scenario sample crops (`test/wear/samples/`, yellow guide lines removed). The sample result is written to `test/wear/samples/result.json`.

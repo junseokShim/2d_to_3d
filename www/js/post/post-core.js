@@ -130,8 +130,8 @@
   // The two input groups are the wear engine's per-side keys (wear-post.js): edge deviation and reference line.
   const EDGE_MEASURED = ['Nd', 'L', 'Pd', 'Ddmax', 'Ddmean', 'Ldmax', 'Ldmean', 'Ldcmax', 'Ldcmean'];
   function mergeEdge(eq, wp) {
-    if (!wp || !wp.alicona) return Object.assign({}, eq, {source: 'model', measured: [], refLine: null});
-    const A = wp.alicona, K = wp.keyence || null, um = v => v == null ? null : r2(1000 * v), neg = v => v ? -um(v) : 0;
+    if (!wp || !wp.edgeDev) return Object.assign({}, eq, {source: 'model', measured: [], refLine: null});
+    const A = wp.edgeDev, K = wp.refLine || null, um = v => v == null ? null : r2(1000 * v), neg = v => v ? -um(v) : 0;
     const defects = (A.defects || []).map((d, k) => ({n: k + 1, u0Um: um(d.fromMm), u1Um: um(d.toMm), LUm: um(d.lengthMm), DdUm: neg(d.depthMaxMm), uAtDdUm: um(d.atMm),
       VdUm3: null, LdcUm: um(d.clearanceLengthMm), LdrUm: null, corner: false}));
     return Object.assign({}, eq, {source: 'wear-post', measured: EDGE_MEASURED.slice(), tolUm: um(A.toleranceMm), defects, modelDefects: eq.defects,
