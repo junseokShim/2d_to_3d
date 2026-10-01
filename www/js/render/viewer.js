@@ -113,7 +113,7 @@
     scaleEl = document.createElement('div');
     scaleEl.id = 'tool3d-scale';
     scaleEl.addEventListener('click', e => { const b = e.target.closest('button[data-scale]'); if (b) devScale(+b.dataset.scale); });
-    scaleEl.style.cssText = 'position:absolute;right:8px;top:42px;z-index:2;display:none;padding:6px 8px;border-radius:6px;background:#0d1014d9;font:11px/1 ui-monospace,Consolas,monospace;color:#e9edf2;pointer-events:none';
+    scaleEl.style.cssText = 'position:absolute;right:8px;top:42px;z-index:2;width:max-content;white-space:nowrap;display:none;padding:6px 8px;border-radius:6px;background:#0d1014d9;font:11px/1 ui-monospace,Consolas,monospace;color:#e9edf2;pointer-events:none';
     wrap.append(scaleEl);
     ruler = document.createElement('div');
     ruler.id = 'tool3d-ruler';

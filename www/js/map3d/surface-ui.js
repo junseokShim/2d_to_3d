@@ -106,8 +106,10 @@
     const path = (f, Yf) => pts.map((p, i) => (i ? 'L' : 'M') + X(p.sMm).toFixed(1) + ' ' + Yf(f(p)).toFixed(1)).join('');
     const tx = (x, y, t, o = '') => `<text x="${x.toFixed ? x.toFixed(1) : x}" y="${y.toFixed ? y.toFixed(1) : y}" font-size="10" fill="#c8d0da" ${o}>${t}</text>`;
     let g = '';
-    for (let i = 0; i <= 5; i++) {
-      const s = sMax * i / 5, x = X(s); g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${top}" y2="${H1 + H2 - 6}" stroke="#2c333d"/>` + tx(x, Ht - 14, toUm(s).toFixed(0), 'text-anchor="middle"');
+    // distance ticks on a 1-2-5 step in mm
+    const e10 = 10 ** Math.floor(Math.log10(sMax / 5)), st = [1, 2, 5, 10].map(m => m * e10).find(v => sMax / v <= 6), dec = Math.max(0, -Math.floor(Math.log10(st)));
+    for (let s = 0; s <= sMax + 1e-9; s += st) {
+      const x = X(s); g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${top}" y2="${H1 + H2 - 6}" stroke="#2c333d"/>` + tx(x, Ht - 14, s.toFixed(dec), 'text-anchor="middle"');
     }
     for (let i = 0; i <= 4; i++) { const h = h0 + hr * i / 4, y = Y(h); g += `<line x1="${pl}" x2="${W - pr_}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#2c333d"/>` + tx(pl - 4, y + 3, toUm(h).toFixed(0), 'text-anchor="end"'); }
     const iMin = dv.indexOf(Math.min(...dv)), pm = pts[iMin];
@@ -119,7 +121,7 @@
     })() : '';
     return `<svg viewBox="0 0 ${W} ${Ht}" role="img" aria-label="section profile" style="border-radius:6px"><defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#ff4d4d"/></marker></defs>` +
       `<rect width="${W}" height="${Ht}" fill="#0b0d10"/>${g}` +
-      tx(4, 10, end ? 'z µm' : 'r µm') + tx(W - pr_, Ht - 2, 'µm', 'text-anchor="end"') +
+      tx(4, 10, end ? 'z µm' : 'r µm') + tx(W - pr_, Ht - 2, 's mm', 'text-anchor="end"') +
       `<path d="${path(p => p.nominalMm, Y)}" fill="none" stroke="#9aa4b2" stroke-dasharray="5 3" stroke-width="1.2"/>` +
       `<path d="${path(p => p.measuredMm, Y)}" fill="none" stroke="#33d6e0" stroke-width="1.6"/>` +
       `<line x1="${pl}" x2="${W - pr_}" y1="${y0d}" y2="${y0d}" stroke="#3fa34d"/>` + tx(pl - 4, y0d + 3, '0', 'text-anchor="end"') + tx(pl - 4, Yd(dMin) + 3, dMin.toFixed(1), 'text-anchor="end"') +
