@@ -1,6 +1,6 @@
-/* Tool3D post-processing core: the Keyence VHX and Alicona (WearMeasurementModule / EdgeQuality) evaluations that
+/* Tool3D post-processing core: 3D deviation (worn vs nominal model), edge-defect profile and cross sections that
  * follow a measurement, computed from what Tool3D already has. Pure JS, no DOM: browser (window.Tool3D.postCore)
- * and Node (module.exports). See research/vendor-postproc.md.
+ * and Node (module.exports). The 2D views (reference-line VB, scale bar, statistics) live in js/metro (metro-vb.js).
  *
  * Inputs (all produced elsewhere, never modified here):
  *   metro rows  = Tool3D.metro evaluate() result per flute: rows {vb (mm, VB normal), A, B (band columns), dz (mm/row)},
@@ -25,14 +25,14 @@
   const wrap = a => { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; };
   const DEFAULTS = {
     clearanceDeg: 8, rakeDeg: 8, helixDeg: 30,
-    defectTolUm: 5,            // EdgeQuality: a position is a defect when the edge lies this far below the reference
-    devTolUm: 10,              // WearMeasurementModule: Vdv / Vdp count the volume beyond this tolerance
-    nVbLines: 5,               // Keyence-style VB arrows per flute (plus the maximum)
-    magConstMm: 297,           // Keyence VHX: display magnification X ~= 297 mm / field-of-view width (fits X20..X1000 within 1 %)
+    defectTolUm: 5,            // edge defects: a position is a defect when the edge lies this far below the reference
+    devTolUm: 10,              // deviation volumes: Vdv / Vdp count the volume beyond this tolerance
+    nVbLines: 5,               // VB dimension lines per flute (plus the maximum)
+    magConstMm: 297,           // equivalent display magnification X ~= 297 mm / field-of-view width
     tol: {vbMaxMm: .3, ddMaxUm: 30, pdPct: 60, chipDepthUm: 50, vdvMm3: .005}
   };
 
-  // ---------- Keyence: scale bar, magnification, VB arrows, VB(u) statistics ----------
+  // ---------- scale bar, magnification, VB dimension lines, VB(u) statistics ----------
   // largest 1/2/2.5/5 x 10^n um bar that fits targetPx
   function scaleBar(pxPerMm, targetPx) {
     const ppu = pxPerMm / 1000; let best = null;
@@ -41,10 +41,10 @@
     return {um: best.um, px: best.px, label: (best.um >= 1000 ? r2(best.um / 1000) + 'mm' : r2(best.um) + 'µm')};
   }
   const MAGS = [20, 30, 50, 80, 100, 150, 200, 300, 400, 500, 700, 1000, 1500, 2000, 2500, 3000, 5000];
-  // Keyence-equivalent display magnification of an image of widthPx at pxPerMm
-  function keyenceMag(pxPerMm, widthPx, magConstMm = DEFAULTS.magConstMm) {
+  // equivalent display magnification of an image of widthPx at pxPerMm
+  function magnification(pxPerMm, widthPx, magConstMm = DEFAULTS.magConstMm) {
     const fovMm = widthPx / pxPerMm, x = magConstMm / fovMm, sig = 10 ** (Math.floor(Math.log10(x)) - 1);
-    const std = MAGS.find(m => Math.abs(x / m - 1) < .05), mag = std || Math.round(x / sig) * sig;   // VHX lens steps when close
+    const std = MAGS.find(m => Math.abs(x / m - 1) < .05), mag = std || Math.round(x / sig) * sig;   // standard lens steps when close
     return {fovMm: r4(fovMm), mag: r4(mag), umPerPx: r4(1000 / pxPerMm), label: 'X' + r4(mag)};
   }
   // arrows across the worn land on the rectified strip: n evenly spaced worn rows + the row of VBmax
@@ -62,7 +62,7 @@
         zMm: r4((r + .5) * rows.dz), uMm: r4((r + .5) * rows.dz / cb), isMax: r === rMax};
     });
   }
-  // VB along the cutting edge: u = z / cos(helix) = length along the helical edge (Keyence measures along the edge)
+  // VB along the cutting edge: u = z / cos(helix) = length along the helical edge (microscopes measure along the edge)
   function vbProfileU(rows, helixDeg) {
     const cb = Math.cos((helixDeg == null ? DEFAULTS.helixDeg : helixDeg) * DEG), out = [];
     for (let r = 0; r < rows.vb.length; r++) out.push({uMm: r4((r + .5) * rows.dz / cb), zMm: r4((r + .5) * rows.dz), vbUm: r2(rows.vb[r] * 1000)});
@@ -76,7 +76,7 @@
       sdUm: r2(sd(w)), medianUm: r2(quant(w, .5)), p25Um: r2(quant(w, .25)), p75Um: r2(quant(w, .75))};
   }
 
-  // ---------- Alicona EdgeQuality: profile along the edge, defects, cross sections ----------
+  // ---------- edge defects: profile along the edge, defects, cross sections ----------
   // per row of one flute: D (um, <= 0 below the nominal edge), removed cross-section area (um^2), Ldc / Ldr (um)
   // flank land VB -> h = VB tan(a), area = VB h / 2, Ldc = VB / cos(a), Ldr = h / cos(g); corner damage (tipMm) replaces the
   // rows z < min(corner zone, tip depth) with D = -tip (the missing corner, measured by js/wear), area ~ tip^2 / 2
@@ -93,8 +93,8 @@
     }
     return P;
   }
-  // EdgeQuality parameters (Alicona names) from an edgeProfile; tolUm = defect threshold below the reference
-  function edgeQuality(P, tolUm = DEFAULTS.defectTolUm) {
+  // edge-defect parameters from an edgeProfile; tolUm = defect threshold below the reference
+  function edgeDefects(P, tolUm = DEFAULTS.defectTolUm) {
     const n = P.D.length, L = n * P.du, defects = [];
     let cur = null;
     for (let i = 0; i <= n; i++) {
@@ -124,23 +124,24 @@
     };
   }
   // one post-processing design with wear-post.js (Tool3D.wear.post -> wearResult.post[flute]): the per-side edge metrics
-  // measured on the segmented land (Alicona Nd, L, Pd, Dd, Ld, Ldc; Keyence reference-line VB + edge recession) replace
-  // the wedge-model values; what one photo cannot give (Ldr, Vd*, Vdrel: rake face, heights) stays from the wedge model.
-  // Returns an edgeQuality-shaped object (Dd negative = below the reference, um) with source / measured / keyence.
-  const EQ_MEASURED = ['Nd', 'L', 'Pd', 'Ddmax', 'Ddmean', 'Ldmax', 'Ldmean', 'Ldcmax', 'Ldcmean'];
+  // measured on the segmented land (Nd, L, Pd, Dd, Ld, Ldc; reference-line VB + edge recession) replace the wedge-model
+  // values; what one photo cannot give (Ldr, Vd*, Vdrel: rake face, heights) stays from the wedge model.
+  // Returns an edgeDefects-shaped object (Dd negative = below the reference, um) with source / measured / refLine.
+  // The two input groups are the wear engine's per-side keys (wear-post.js): edge deviation and reference line.
+  const EDGE_MEASURED = ['Nd', 'L', 'Pd', 'Ddmax', 'Ddmean', 'Ldmax', 'Ldmean', 'Ldcmax', 'Ldcmean'];
   function mergeEdge(eq, wp) {
-    if (!wp || !wp.alicona) return Object.assign({}, eq, {source: 'model', measured: [], keyence: null});
+    if (!wp || !wp.alicona) return Object.assign({}, eq, {source: 'model', measured: [], refLine: null});
     const A = wp.alicona, K = wp.keyence || null, um = v => v == null ? null : r2(1000 * v), neg = v => v ? -um(v) : 0;
     const defects = (A.defects || []).map((d, k) => ({n: k + 1, u0Um: um(d.fromMm), u1Um: um(d.toMm), LUm: um(d.lengthMm), DdUm: neg(d.depthMaxMm), uAtDdUm: um(d.atMm),
       VdUm3: null, LdcUm: um(d.clearanceLengthMm), LdrUm: null, corner: false}));
-    return Object.assign({}, eq, {source: 'wear-post', measured: EQ_MEASURED.slice(), tolUm: um(A.toleranceMm), defects, modelDefects: eq.defects,
+    return Object.assign({}, eq, {source: 'wear-post', measured: EDGE_MEASURED.slice(), tolUm: um(A.toleranceMm), defects, modelDefects: eq.defects,
       Nd: A.Nd, L: um(A.L), Pd: r2(A.Pd), Ddmax: neg(A.Ddmax), Ddmean: neg(A.Ddmean), uAtDdmax: defects.length ? defects.reduce((b, d) => d.DdUm < b.DdUm ? d : b).uAtDdUm : null,
       Ldmax: um(A.Ldmax), Ldmean: um(A.Ldmean), Ldcmax: um(A.Ldcmax), Ldcmean: um(A.Ldcmean), VBmaxUm: um(A.VBmax), VBmeanUm: um(A.VBmean),
-      keyence: K && {VBmaxUm: um(K.VBmax), VBmaxAtUm: um(K.VBmaxAtMm), VBmeanUm: um(K.VBmean), recessionUm: um(K.edgeRecessionMax), recessionAtUm: um(K.edgeRecessionAtMm), referenceMm: K.referenceMm, angleDeg: K.angleDeg},
+      refLine: K && {VBmaxUm: um(K.VBmax), VBmaxAtUm: um(K.VBmaxAtMm), VBmeanUm: um(K.VBmean), recessionUm: um(K.edgeRecessionMax), recessionAtUm: um(K.edgeRecessionAtMm), referenceMm: K.referenceMm, angleDeg: K.angleDeg},
       edgeSide: wp.edgeSide || null, lengthMm: wp.lengthMm == null ? null : wp.lengthMm});
   }
-  // Alicona result-table rows: [name, value, unit, Korean description]
-  const EQ_ROWS = [['Nd', '', '결함 개수'], ['L', 'µm', '평가 길이 (절삭날 따라)'], ['Pd', '%', '결함이 있는 날 길이 비율 ΣLi / L'], ['Vdrel', 'µm²', '길이당 결함 체적'],
+  // edge-defect result-table rows: [name, value, unit, Korean description]
+  const EDGE_ROWS = [['Nd', '', '결함 개수'], ['L', 'µm', '평가 길이 (절삭날 따라)'], ['Pd', '%', '결함이 있는 날 길이 비율 ΣLi / L'], ['Vdrel', 'µm²', '길이당 결함 체적'],
     ['Ddmax', 'µm', '프로파일 최대 결함 깊이'], ['Ddmean', 'µm', '프로파일 평균 결함 깊이'], ['Vdmax', 'µm³', '최대 결함 체적'], ['Vdmean', 'µm³', '평균 결함 체적'],
     ['Ldmax', 'µm', '프로파일 따라 최대 결함 길이'], ['Ldmean', 'µm', '프로파일 따라 평균 결함 길이'], ['Ldcmax', 'µm', '여유면 최대 결함 길이'], ['Ldcmean', 'µm', '여유면 평균 결함 길이'],
     ['Ldrmax', 'µm', '경사면 최대 결함 길이'], ['Ldrmean', 'µm', '경사면 평균 결함 길이']];
@@ -156,7 +157,7 @@
     return {nominal, worn, hMm: r4(h), LdcMm: r4(vbMm / Math.cos(a)), LdrMm: r4(tR), areaMm2: r4(vbMm * h / 2), wedgeDeg: r2(90 - (a + g) / DEG)};
   }
 
-  // ---------- Alicona WearMeasurementModule: deviation worn vs nominal on the model ----------
+  // ---------- deviation worn vs nominal on the model ----------
   // side / end deviation fields (mm, <= 0 = material below the nominal surface) from the map3d atlas + the tooth lookup
   function deviationAtlas(atlas, look, o = {}) {
     // s is arc length behind the edge on the envelope; normal to the helical edge it is s * cos(helix) (VB = W cos(helix))
@@ -189,8 +190,8 @@
     let a = Math.atan2(y, x) % TAU; if (a < 0) a += TAU;
     return dev.side[Math.min(dev.NZ - 1, Math.floor(z / dev.dz)) * dev.NA + Math.floor(a / dev.dA) % dev.NA];
   }
-  // WearMeasurementModule parameters; cells = {side|end} restricts to a subset (per face)
-  function wmm(dev, tolUm = DEFAULTS.devTolUm, filter) {
+  // deviation parameters; cells = {side|end} restricts to a subset (per face)
+  function devStats(dev, tolUm = DEFAULTS.devTolUm, filter) {
     const tol = tolUm / 1000; let dMin = 0, dMax = 0, s = 0, n = 0, Vv = 0, Vp = 0, Vdv = 0, Vdp = 0, area = 0;
     const add = (d, A) => {
       if (!d) return; n++; s += d; area += A;
@@ -200,14 +201,14 @@
     for (let k = 0; k < dev.end.length; k++) if (!filter || filter.end(k)) add(dev.end[k], dev.endCell);
     return {DminUm: r2(dMin * 1000), DmaxUm: r2(dMax * 1000), DmeanUm: r2(n ? s / n * 1000 : 0), VvMm3: r4(Vv), VpMm3: r4(Vp), VdvMm3: r4(Vdv), VdpMm3: r4(Vdp), areaMm2: r4(area), tolUm};
   }
-  const WMM_ROWS = [['Dmin', 'DminUm', 'µm', '기준면 아래 최대 편차'], ['Dmax', 'DmaxUm', 'µm', '기준면 위 최대 편차 (응착 두께 미측정 → 0)'], ['Dmean', 'DmeanUm', 'µm', '편차 영역 평균 편차'],
+  const DEV_ROWS = [['Dmin', 'DminUm', 'µm', '기준면 아래 최대 편차'], ['Dmax', 'DmaxUm', 'µm', '기준면 위 최대 편차 (응착 두께 미측정 → 0)'], ['Dmean', 'DmeanUm', 'µm', '편차 영역 평균 편차'],
     ['Vp', 'VpMm3', 'mm³', '기준면 위 볼록 체적'], ['Vv', 'VvMm3', 'mm³', '기준면 아래 오목 체적 (마모+치핑)'], ['Vdp', 'VdpMm3', 'mm³', '공차 초과 볼록 결함 체적'], ['Vdv', 'VdvMm3', 'mm³', '공차 초과 오목 결함 체적']];
   // per photographed face: cells that face saw (|view angle| < 75 deg), same convention as map3d (azSign)
   function perFace(dev, faces, azSign = -1, tolUm) {
     return faces.map(f => {
-      if (f.kind === 'top' || /^(top|end)$/i.test(f.face)) return Object.assign({face: f.face, kind: 'top'}, wmm(dev, tolUm, {side: () => false, end: () => true}));
+      if (f.kind === 'top' || /^(top|end)$/i.test(f.face)) return Object.assign({face: f.face, kind: 'top'}, devStats(dev, tolUm, {side: () => false, end: () => true}));
       const ac = azSign * f.angleDeg * DEG, lim = 75 * DEG;
-      return Object.assign({face: f.face, kind: 'side', angleDeg: f.angleDeg}, wmm(dev, tolUm, {side: k => Math.abs(wrap(azSign * ((k % dev.NA + .5) * dev.dA - ac))) < lim, end: () => false}));
+      return Object.assign({face: f.face, kind: 'side', angleDeg: f.angleDeg}, devStats(dev, tolUm, {side: k => Math.abs(wrap(azSign * ((k % dev.NA + .5) * dev.dA - ac))) < lim, end: () => false}));
     });
   }
   // connected chip regions (4-neighbour, azimuth wraps) on the side atlas, plus the end atlas
@@ -280,24 +281,20 @@
   // ---------- export ----------
   function csvRows(R) {
     const L = [], esc = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }, row = a => L.push(a.map(esc).join(','));
-    row(['Tool3D post-processing (Keyence VHX / Alicona style)']); row(['model', 'depths from the wedge model (VB tan clearance) and map3d chip depth; photos give no height']);
+    row(['Tool3D post-processing (3D deviation / edge defects)']); row(['model', 'depths from the wedge model (VB tan clearance) and map3d chip depth; photos give no height']);
     row(['clearance_deg', R.o.clearanceDeg, 'rake_deg', R.o.rakeDeg, 'helix_deg', R.o.helixDeg, 'defect_tol_um', R.o.defectTolUm, 'dev_tol_um', R.o.devTolUm]);
-    row([]); row(['keyence_flute', 'n', 'u_mm', 'z_mm', 'VB_um', 'is_max']);
-    R.flutes.forEach(f => f && f.lines.forEach(l => row(['F' + (f.i + 1), l.n, l.uMm, l.zMm, l.vbUm, l.isMax ? 1 : 0])));
-    row([]); row(['keyence_stats_flute', 'VBmax_um', 'VBmean_um', 'VBmin_um', 'sd_um', 'median_um', 'worn_mm', 'worn_pct', 'length_mm', 'scale_px_per_mm', 'mag_equiv']);
-    R.flutes.forEach(f => f && row(['F' + (f.i + 1), f.stats.maxUm, f.stats.meanUm, f.stats.minUm, f.stats.sdUm, f.stats.medianUm, f.stats.wornMm, f.stats.wornPct, f.stats.lengthMm, f.pxPerMm, f.mag.label]));
-    row([]); row(['edgequality_flute'].concat(EQ_ROWS.map(r => r[0] + (r[1] ? '_' + r[1].replace('µ', 'u').replace('²', '2').replace('³', '3') : ''))).concat(['source']));
-    R.flutes.forEach(f => f && row(['F' + (f.i + 1)].concat(EQ_ROWS.map(r => f.eq[r[0]])).concat([f.eq.source || 'model'])));
-    if (R.flutes.some(f => f && f.eq.keyence)) {
-      row([]); row(['keyence_refline_flute', 'VBmax_um', 'VBmax_at_um', 'VBmean_um', 'edge_recession_um', 'recession_at_um', 'source']);
-      R.flutes.forEach(f => f && f.eq.keyence && row(['F' + (f.i + 1), f.eq.keyence.VBmaxUm, f.eq.keyence.VBmaxAtUm, f.eq.keyence.VBmeanUm, f.eq.keyence.recessionUm, f.eq.keyence.recessionAtUm, 'wear-post']));
+    row([]); row(['edge_defects_flute'].concat(EDGE_ROWS.map(r => r[0] + (r[1] ? '_' + r[1].replace('µ', 'u').replace('²', '2').replace('³', '3') : ''))).concat(['source']));
+    R.flutes.forEach(f => f && row(['F' + (f.i + 1)].concat(EDGE_ROWS.map(r => f.eq[r[0]])).concat([f.eq.source || 'model'])));
+    if (R.flutes.some(f => f && f.eq.refLine)) {
+      row([]); row(['refline_flute', 'VBmax_um', 'VBmax_at_um', 'VBmean_um', 'edge_recession_um', 'recession_at_um', 'source']);
+      R.flutes.forEach(f => f && f.eq.refLine && row(['F' + (f.i + 1), f.eq.refLine.VBmaxUm, f.eq.refLine.VBmaxAtUm, f.eq.refLine.VBmeanUm, f.eq.refLine.recessionUm, f.eq.refLine.recessionAtUm, 'wear-post']));
     }
     row([]); row(['defect_flute', 'n', 'u0_um', 'u1_um', 'L_um', 'Dd_um', 'Vd_um3', 'Ldc_um', 'Ldr_um', 'corner']);
     R.flutes.forEach(f => f && f.eq.defects.forEach(d => row(['F' + (f.i + 1), d.n, d.u0Um, d.u1Um, d.LUm, d.DdUm, d.VdUm3, d.LdcUm, d.LdrUm, d.corner ? 1 : 0])));
-    if (R.wmm) {
-      row([]); row(['wmm'].concat(WMM_ROWS.map(r => r[0] + '_' + r[2].replace('µ', 'u').replace('³', '3'))).concat(['VBmax_mm', 'VBmean_mm']));
-      row(['model'].concat(WMM_ROWS.map(r => R.wmm[r[1]])).concat([R.vbMaxMm, R.vbMeanMm]));
-      R.faces.forEach(f => row([f.face].concat(WMM_ROWS.map(r => f[r[1]]))));
+    if (R.devStats) {
+      row([]); row(['deviation'].concat(DEV_ROWS.map(r => r[0] + '_' + r[2].replace('µ', 'u').replace('³', '3'))).concat(['VBmax_mm', 'VBmean_mm']));
+      row(['model'].concat(DEV_ROWS.map(r => R.devStats[r[1]])).concat([R.vbMaxMm, R.vbMeanMm]));
+      R.faces.forEach(f => row([f.face].concat(DEV_ROWS.map(r => f[r[1]]))));
     }
     if (R.chips && R.chips.length) { row([]); row(['chip', 'where', 'tooth', 'z0_mm', 'z1_mm', 'length_mm', 'area_mm2', 'max_depth_um', 'volume_mm3']); R.chips.forEach(c => row([c.n, c.where, c.tooth == null ? '' : c.tooth + 1, c.z0Mm, c.z1Mm, c.lengthMm, c.areaMm2, c.maxDepthUm, c.volumeMm3])); }
     row([]); row(['tolerance', 'value', 'limit', 'unit', 'pass']); R.tol.rows.forEach(t => row([t.key, t.value, t.limit, t.unit, t.pass == null ? '' : t.pass ? 'PASS' : 'FAIL']));
@@ -306,6 +303,6 @@
     return L.join('\r\n') + '\r\n';
   }
 
-  return {DEFAULTS, EQ_ROWS, WMM_ROWS, scaleBar, keyenceMag, vbLines, vbProfileU, vbStats, edgeProfile, edgeQuality, wedgeSection,
-    mergeEdge, EQ_MEASURED, deviationAtlas, devAt, wmm, perFace, chipList, tolerance, HKEY, history, historyAdd, trend, csvRows, r4, r2};
+  return {DEFAULTS, EDGE_ROWS, DEV_ROWS, scaleBar, magnification, vbLines, vbProfileU, vbStats, edgeProfile, edgeDefects, wedgeSection,
+    mergeEdge, EDGE_MEASURED, deviationAtlas, devAt, devStats, perFace, chipList, tolerance, HKEY, history, historyAdd, trend, csvRows, r4, r2};
 });

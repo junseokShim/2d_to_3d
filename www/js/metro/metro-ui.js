@@ -272,8 +272,13 @@
   }
   function drawTop() {
     const cvs = $('#mtTopCv'), a = S.top; if (!cvs || !a) return;
-    const {c, k} = topCanvas(), dpr = devicePixelRatio || 1, W = Math.min(cvs.clientWidth || 360, 420), H = W, s = W / c.width;
-    cvs.width = W * dpr; cvs.height = H * dpr; cvs.style.height = H + 'px'; const x = cvs.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const dpr = devicePixelRatio || 1, W = Math.min(cvs.clientWidth || 360, 420);
+    cvs.width = W * dpr; cvs.height = W * dpr; cvs.style.height = W + 'px'; const x = cvs.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    topInto(x, W);
+  }
+  function topAnnotated(W = 480) { if (!S.top) return null; const c = el('canvas', {width: W, height: W}); topInto(c.getContext('2d'), W); return c; }
+  function topInto(x, W) {
+    const a = S.top, {c, k} = topCanvas(), H = W, s = W / c.width;
     x.drawImage(c, 0, 0, W, H);
     const C = W / 2, Rr = a.rPx * k * s, sec = 2 * Math.PI / a.k, ph = a.phaseDeg * Math.PI / 180;
     x.strokeStyle = 'rgba(0,208,255,.9)'; x.lineWidth = 1.2; x.beginPath(); x.arc(C, C, Rr, 0, 7); x.stroke();
@@ -445,7 +450,7 @@
       }
       cx.setLineDash([]);
       const X = S.vbx && S.vbx[S.sel];
-      if (S.dims && X) dimsOverlay(X, F, lw);
+      if (S.dims && X) dimsOverlay(cx, X, lw);
       else if (e.zAtMaxMm != null) { const r = Math.round(e.zAtMaxMm * ppm - .5), y = top + r + .5; cx.strokeStyle = '#ff3b30'; cx.lineWidth = 2 * lw; cx.beginPath(); cx.moveTo(A[r] - .5, y); cx.lineTo(B[r] + .5, y); cx.stroke(); cx.fillStyle = '#ff3b30'; cx.fillText('VBmax', B[r] + 4 * lw, y - 3 * lw); }
       if (S.tool === 'edit') for (const side of ['a', 'b']) for (let i = 0; i < F.nodeRows.length; i++) {
         const [x, y] = nodePos(F, side, i), s = 5 * lw, on = S.selNode && S.selNode.side === side && S.selNode.i === i;
@@ -469,27 +474,44 @@
   }
   // microscope-style annotation: dashed reference line on the unworn edge, VB dimension lines (edge -> wear front) with
   // arrowheads, extension tick to the reference line and a boxed [n] value label; the maximum in bright red
-  function dimsOverlay(X, F, lw) {
+  function dimsOverlay(g, X, lw) {
     const L = X.ref, y0 = L.y0 - 6, y1 = L.y1 + 6;
-    cx.save(); cx.setLineDash([7 * lw, 4 * lw]); cx.strokeStyle = 'rgba(255,255,255,.95)'; cx.lineWidth = 1.4 * lw;
-    cx.beginPath(); cx.moveTo(L.x(y0), y0); cx.lineTo(L.x(y1), y1); cx.stroke(); cx.setLineDash([]);
-    cx.font = `600 ${11 * lw}px system-ui,sans-serif`; cx.fillStyle = '#fff'; cx.fillText('기준선', L.x(y0) + 4 * lw, y0 + 10 * lw);
+    g.save(); g.setLineDash([7 * lw, 4 * lw]); g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 1.4 * lw;
+    g.beginPath(); g.moveTo(L.x(y0), y0); g.lineTo(L.x(y1), y1); g.stroke(); g.setLineDash([]);
+    g.font = `600 ${11 * lw}px system-ui,sans-serif`; g.fillStyle = '#fff'; g.fillText('기준선', L.x(y0) + 4 * lw, y0 + 10 * lw);
     const hd = 6 * lw, arrow = (ax, bx, y) => {
-      cx.beginPath(); cx.moveTo(ax, y); cx.lineTo(bx, y); cx.stroke();
-      for (const [p, d] of [[ax, Math.sign(ax - bx) || 1], [bx, Math.sign(bx - ax) || -1]]) { cx.beginPath(); cx.moveTo(p, y); cx.lineTo(p - d * hd, y - .45 * hd); cx.lineTo(p - d * hd, y + .45 * hd); cx.closePath(); cx.fill(); }
+      g.beginPath(); g.moveTo(ax, y); g.lineTo(bx, y); g.stroke();
+      for (const [p, d] of [[ax, Math.sign(ax - bx) || 1], [bx, Math.sign(bx - ax) || -1]]) { g.beginPath(); g.moveTo(p, y); g.lineTo(p - d * hd, y - .45 * hd); g.lineTo(p - d * hd, y + .45 * hd); g.closePath(); g.fill(); }
     };
     let lastY = -1e9;
     for (const l of X.lines) {
       const out = l.xFront > l.xEdge ? 1 : -1, grow = Math.max(0, 14 * lw - Math.abs(l.xFront - l.xEdge)) / 2;   // tiny lands: arrows stay readable
-      cx.strokeStyle = cx.fillStyle = l.isMax ? '#ff1f1f' : '#ff5a5a'; cx.lineWidth = (l.isMax ? 2.2 : 1.6) * lw;
+      g.strokeStyle = g.fillStyle = l.isMax ? '#ff1f1f' : '#ff5a5a'; g.lineWidth = (l.isMax ? 2.2 : 1.6) * lw;
       arrow(l.xEdge - out * grow, l.xFront + out * grow, l.y);
-      cx.lineWidth = lw; cx.setLineDash([2 * lw, 2 * lw]); cx.beginPath(); cx.moveTo(l.xRef, l.y - 4 * lw); cx.lineTo(l.xRef, l.y + 4 * lw); cx.moveTo(l.xEdge, l.y); cx.lineTo(l.xRef, l.y); cx.stroke(); cx.setLineDash([]);
-      const t = `[${l.n}] ${l.vbUm.toFixed(1)} µm`, tw = cx.measureText(t).width, ly = Math.max(lastY + 16 * lw, l.y - 7 * lw), lx = out > 0 ? l.xFront + grow + 8 * lw : l.xFront - grow - tw - 14 * lw; lastY = ly;
-      cx.strokeStyle = l.isMax ? '#ff1f1f' : '#ff5a5a'; cx.beginPath(); cx.moveTo(l.xFront + out * grow, l.y); cx.lineTo(out > 0 ? lx : lx + tw + 6 * lw, ly + 7 * lw); cx.stroke();
-      cx.fillStyle = 'rgba(255,255,255,.94)'; cx.fillRect(lx, ly - 1 * lw, tw + 6 * lw, 15 * lw); cx.strokeStyle = l.isMax ? '#ff1f1f' : '#000'; cx.strokeRect(lx, ly - 1 * lw, tw + 6 * lw, 15 * lw);
-      cx.fillStyle = l.isMax ? '#c00000' : '#000'; cx.fillText(t, lx + 3 * lw, ly + 10 * lw);
+      g.lineWidth = lw; g.setLineDash([2 * lw, 2 * lw]); g.beginPath(); g.moveTo(l.xRef, l.y - 4 * lw); g.lineTo(l.xRef, l.y + 4 * lw); g.moveTo(l.xEdge, l.y); g.lineTo(l.xRef, l.y); g.stroke(); g.setLineDash([]);
+      const t = `[${l.n}] ${l.vbUm.toFixed(1)} µm`, tw = g.measureText(t).width, ly = Math.max(lastY + 16 * lw, l.y - 7 * lw), lx = out > 0 ? l.xFront + grow + 8 * lw : l.xFront - grow - tw - 14 * lw; lastY = ly;
+      g.strokeStyle = l.isMax ? '#ff1f1f' : '#ff5a5a'; g.beginPath(); g.moveTo(l.xFront + out * grow, l.y); g.lineTo(out > 0 ? lx : lx + tw + 6 * lw, ly + 7 * lw); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,.94)'; g.fillRect(lx, ly - 1 * lw, tw + 6 * lw, 15 * lw); g.strokeStyle = l.isMax ? '#ff1f1f' : '#000'; g.strokeRect(lx, ly - 1 * lw, tw + 6 * lw, 15 * lw);
+      g.fillStyle = l.isMax ? '#c00000' : '#000'; g.fillText(t, lx + 3 * lw, ly + 10 * lw);
     }
-    cx.restore();
+    g.restore();
+  }
+  // annotated flute image for the report: rectified strip around the flute, VB band, edge / wear-front lines, reference
+  // line, VB dimension lines with values, scale bar and magnification tag (same drawing as the workspace)
+  function annotated(i, maxW = 460, maxH = 640) {
+    const F = S.F && S.F[i], e = S.ev && S.ev[i], X = S.vbx && S.vbx[i]; if (!F || !e || !X) return null;
+    const img = stripImage(i), top = F.strip.top, y0 = Math.max(0, top - 12), y1 = Math.min(img.height, top + F.n + 12);
+    const x0 = Math.max(0, Math.floor(F.strip.cx - 1.15 * F.strip.R)), x1 = Math.min(img.width, Math.ceil(F.strip.cx + 1.15 * F.strip.R)), pad = 120;
+    const k = Math.min((maxW - 2 * pad) / (x1 - x0), (maxH - 40) / (y1 - y0), 8), W = Math.round((x1 - x0) * k) + 2 * pad, H = Math.round((y1 - y0) * k) + 40;
+    const c = el('canvas', {width: W, height: H}), g = c.getContext('2d');
+    g.fillStyle = '#111'; g.fillRect(0, 0, W, H); g.setTransform(k, 0, 0, k, pad - x0 * k, 4 - y0 * k); g.imageSmoothingEnabled = k < 3;
+    g.drawImage(img, 0, 0); const {A, B, vb} = e.rows, lw = 1 / k;
+    g.fillStyle = 'rgba(255,40,40,.35)'; for (let r = 0; r < F.n; r++) if (vb[r] > 0) g.fillRect(A[r] - .5, top + r, B[r] - A[r] + 1, 1);
+    const line = (side, color) => { g.strokeStyle = color; g.lineWidth = 1.4 * lw; g.beginPath(); for (let r = 0; r < F.n; r++) { const x = side === 'a' ? A[r] - .5 : B[r] + .5; r ? g.lineTo(x, top + r + .5) : g.moveTo(x, top + r + .5); } g.stroke(); };
+    line(F.edge === 'a' ? 'b' : 'a', '#ffd400'); line(F.edge, '#00d0ff');
+    dimsOverlay(g, X, lw); g.setTransform(1, 0, 0, 1, 0, 0);
+    scaleBarAt(g, X.ppmCal * k, W, H, `배율 ${X.mag.label.replace('×', 'x')} · F${i + 1}`);
+    return c;
   }
   function drawLoupe() {
     const on = S.hoverScr && S.tool !== 'pan'; loupe.hidden = !on; if (!on) return;
@@ -573,7 +595,7 @@
     update, recompute, summary, chartModel, COLORS, LIGHT, LBL,
     get state() { return S; },
     select, setTool, fit, confirmAssist,
-    stripImage, topCanvas: () => S.top ? topCanvas().c : null, // for the report
+    stripImage, annotated, topAnnotated, // for the report
     // test hooks: image px of the active view -> viewport client coords
     imgToClient(ix, iy) { const r = cv.getBoundingClientRect(), [x, y] = toScr(ix, iy); return [r.left + x, r.top + y]; },
     nodeClient(side, i) { return this.imgToClient(...nodePos(S.F[S.sel], side, i)); },

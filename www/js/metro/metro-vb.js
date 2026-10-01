@@ -192,5 +192,29 @@
     return Object.assign({}, c, {cls, source: 'network'});
   }
 
-  return {DEFAULTS, scaleBar, magnification, refLine, vbLines, profileU, stats, positions, tolerance, trend, endFaceArea, classesFromGray, mergeNet, CLS, r2, r4};
+  // ---------- CSV sections appended to the measurement CSV (metro-core csv) ----------
+  // s = Tool3D.metro.summary(): s.vb[i] {pos, lines, stats, mag, umPerPx, ref}, s.endFace, s.tolerance
+  function csvSections(s) {
+    const L = [], esc = v => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }, row = a => L.push(a.map(esc).join(','));
+    const vb = (s.vb || []).map((x, i) => x && Object.assign({i}, x)).filter(Boolean);
+    if (vb.length) {
+      row([]); row(['vb_position_flute', 'VBmax_mm', 'VBmax_z_mm', 'VBB_mm', 'VBB_z0_mm', 'VBB_z1_mm', 'VBBmax_mm', 'VBBmax_z_mm', 'VBC_mm', 'VBC_z_mm', 'VBN_mm', 'VBN_z_mm']);
+      vb.forEach(x => { const p = x.pos; row(['F' + (x.i + 1), p.vbMax.v, p.vbMax.zMm, p.vbb.v, p.vbb.span ? p.vbb.span[0] : '', p.vbb.span ? p.vbb.span[1] : '', p.vbbMax.v, p.vbbMax.zMm, p.vbc.v, p.vbc.zMm, p.vbn.v, p.vbn.zMm]); });
+      row([]); row(['vb_line_flute', 'n', 'z_mm', 'u_mm', 'VB_um', 'is_max']);
+      vb.forEach(x => x.lines.forEach(l => row(['F' + (x.i + 1), l.n, l.zMm, l.uMm, l.vbUm, l.isMax ? 1 : 0])));
+      row([]); row(['vb_stats_flute', 'VBmax_um', 'VBmean_um', 'VBmin_um', 'sd_um', 'median_um', 'worn_mm', 'worn_pct', 'length_mm', 'mag_equiv', 'um_per_px', 'refline_angle_deg', 'refline_residual_px', 'refline_fit']);
+      vb.forEach(x => { const t = x.stats; row(['F' + (x.i + 1), t.maxUm, t.meanUm, t.minUm, t.sdUm, t.medianUm, t.wornMm, t.wornPct, t.lengthMm, String(x.mag).replace('×', 'x'), x.umPerPx, x.ref.angleDeg, x.ref.residualPx, x.ref.from]); });
+    }
+    const E = s.endFace;
+    if (E) {
+      row([]); row(['end_face_tooth', 'centre_deg', 'land_mm2', 'worn_mm2', 'flank_mm2', 'chipping_mm2', 'adhesion_mm2', 'worn_pct', 'rim_depth_mm', 'source']);
+      E.teeth.forEach(t => row(['T' + t.tooth, t.centreDeg, t.landMm2, t.wornMm2, t.flankMm2, t.chippingMm2, t.adhesionMm2, t.wornPct, t.rimDepthMm, E.source]));
+      row(['total', '', E.total.landMm2, E.total.wornMm2, E.total.flankMm2, E.total.chippingMm2, E.total.adhesionMm2, E.total.wornPct, '', E.source]);
+    }
+    const T = s.tolerance;
+    if (T) { row([]); row(['tolerance', 'value', 'limit', 'unit', 'result']); T.rows.forEach(r => row([r.key, r.value, r.limit, r.unit.replace('²', '2'), r.pass == null ? '' : r.pass ? 'PASS' : 'FAIL'])); row(['overall', '', '', '', T.pass == null ? '' : T.pass ? 'PASS' : 'FAIL']); }
+    return L.join('\r\n') + (L.length ? '\r\n' : '');
+  }
+
+  return {DEFAULTS, csvSections, scaleBar, magnification, refLine, vbLines, profileU, stats, positions, tolerance, trend, endFaceArea, classesFromGray, mergeNet, CLS, r2, r4};
 });

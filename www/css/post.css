@@ -1,4 +1,4 @@
-/* Tool3D post-processing panel (www/js/post): Keyence VHX / Alicona style views. Same look as the metrology panel. */
+/* Tool3D post-processing panel (www/js/post): 3D deviation and edge-defect views. Same look as the measurement panel. */
 #post{grid-column:1/-1;padding:0;overflow:hidden;--ps-line:#d5d9e0}
 #post h2{margin:0;font-size:17px}#post h2 small{font-weight:400;color:#c8d2dc;font-size:12px;margin-left:6px}
 .ps-head{background:#1f2a36;color:#fff;padding:12px 16px}
