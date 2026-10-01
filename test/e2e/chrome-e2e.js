@@ -147,7 +147,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   // ---------- ⑤ post-processing (js/post): Keyence VHX overlay + Alicona deviation / EdgeQuality / trend ----------
   const Pp = res.checks.post = {};
   await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.setTab('keyence');1`); await sleep(600);
-  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {n:f&&f.length,lines:f&&f.map(x=>x.lines.length),vbMaxUm:f&&f.map(x=>x.stats.maxUm),metroVb:Tool3D.metro.summary().flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),assist:Tool3D.metro.summary().flutes.map(e=>!!(e&&e.assist)),mag:f&&f[0].mag.label,list:document.querySelectorAll('#pkList tr').length,stats:document.querySelectorAll('#pkStats tr').length,
+  Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {n:f&&f.length,lines:f&&f.map(x=>x.lines.length),vbMaxUm:f&&f.map(x=>x.stats.maxUm),metroVb:Tool3D.metro.summary().flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),mag:f&&f[0].mag.label,list:document.querySelectorAll('#pkList tr').length,stats:document.querySelectorAll('#pkStats tr').length,
     ink:(()=>{const c=document.querySelector('#pkCanvas'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let r=0,b=0;for(let i=0;i<d.length;i+=4){if(d[i]>200&&d[i+1]<90&&d[i+2]<90)r++;if(d[i+2]>200&&d[i]<80&&d[i+1]<90)b++}return {red:r,blue:b}})()}})())`)));
   await shotEl('#post', 'post-keyence.png');
   await ev(`Tool3D.post.setTab('alicona');1`); await sleep(1500);
@@ -160,7 +160,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     colours:(()=>{const c=v.querySelector('canvas'),t=document.createElement('canvas');t.width=c.width;t.height=c.height;const x=t.getContext('2d');x.drawImage(c,0,0);const d=x.getImageData(0,0,t.width,t.height).data;let g=0,m=0;for(let i=0;i<d.length;i+=4){const r=d[i],G=d[i+1],b=d[i+2];if(G>r+30&&G>b+20)g++;if(b>G+40&&(r>G+20||b>150))m++}return {green:g,blueMag:m}})()}})())`))});
   await shotEl('#post', 'post-alicona-mock.png');
   await ev(`Tool3D.render.setMap(null);Tool3D.post.setTab('keyence');1`); await sleep(300);
-  Pp.ok = Pp.n === 4 && Pp.lines.every((n, i) => n >= 1 || Pp.assist[i]) && Pp.lines.some(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats >= 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
+  Pp.ok = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^X\d/.test(Pp.mag) && Pp.list >= 2 && Pp.stats >= 7 && Pp.ink.red > 50 && Pp.ink.blue > 20 &&
     Pp.view === 'ok' && Pp.eqRows === 15 && Pp.tol === 5 && Pp.faces === 5 && !!Pp.wmm && Pp.mock.chips > 0 && Pp.mock.chipSide && Pp.mock.Dmin < 0 && Pp.mock.Vv > 0 && Pp.mock.devVerts > 0 &&
     Pp.mock.colours.green > 500 && Pp.mock.colours.blueMag > 50 && Pp.mock.hist >= 2 && /µm\//.test(Pp.mock.trendTag) && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
@@ -260,8 +260,53 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     const o={def:hud(),btn0:btn().textContent};Tool3D.map3d.mock();btn().click();o.user=hud();o.btn1=btn().textContent;o.hand1=Tool3D.render.params.hand;o.mapAfter=!!Tool3D.render.map&&Tool3D.map3dResult.faces.length;
     Tool3D.render.hand(null);o.back=hud();o.hand2=Tool3D.render.params.hand;Tool3D.render.setMap(null);return o})())`));
   { const H = res.checks.hand; H.ok = /RH \(default\)/.test(H.def) && H.btn0 === 'RH' && /LH \(user\)/.test(H.user) && H.btn1 === 'LH' && H.hand1 === -1 && H.mapAfter === 5 && /RH \(default\)/.test(H.back) && H.hand2 === 1; }
-  // one input path: no camera/microscope choice in step 1 (every photo goes through the camera pipeline)
-  res.checks.oneInput = await ev(`!document.querySelector('#inmode') && !document.querySelector('[name=inmode]') && !document.querySelector('#miPanel') && !(window.Tool3D && Tool3D.microUI)`);
+  // microscope input mode (js/micro): step-1 mode + magnification + um/px calibration, two MUDESTREDA close-ups on F1 and one on F2,
+  // run -> whole-image segmentation, VB normal to the edge; metro panel on the edge-aligned strips (drag edit), CSV with mode + magnification.
+  // Uses the local dataset (GPL data is not copied into the repo); skipped when it is not on this machine
+  const MI = res.checks.micro = {}, MUD = (process.env.TOOLWEAR || 'C:/agent_research_team/datasets/toolwear') + '/processed/images/';
+  const mimgs = ['mud_T10R5B2', 'mud_T10R6B2', 'mud_T10R12B1'].map(n => MUD + n + '.png');
+  if (!mimgs.every(f => fs.existsSync(f))) MI.skipped = 'dataset not found';
+  else {
+    await ev(`document.querySelector('[name=inmode][value=microscope]').click();1`); await sleep(300);
+    MI.panel = await ev(`JSON.stringify({shown:!document.querySelector('#miPanel').hidden,mags:[...document.querySelectorAll('#miMag option')].map(o=>o.textContent),multiHidden:document.querySelector('#multiRow').hidden,slots:document.querySelectorAll('#slots .mi-slot').length})`);
+    MI.cal = await ev(`(()=>{const s=document.querySelector('#miMag');s.value='200';s.dispatchEvent(new Event('change'));document.querySelector('#miUm').value='1.25';document.querySelector('#miUmSave').click();return document.querySelector('#miCalState').textContent})()`);
+    const {root: r2} = await s('DOM.getDocument');
+    for (const [fl, files] of [[0, mimgs.slice(0, 2)], [1, mimgs.slice(2)]]) {
+      const {nodeId: ni} = await s('DOM.querySelector', {nodeId: r2.nodeId, selector: `#slots .mi-slot[data-flute="${fl}"] input`});
+      await s('DOM.setFileInputFiles', {nodeId: ni, files: files.map(f => f.replace(/\//g, '\\'))}); await sleep(1200);
+    }
+    MI.thumbs = await ev(`[...document.querySelectorAll('#slots .mi-slot')].map(d=>d.querySelectorAll('canvas').length).join()`);
+    await ev(`document.querySelector('#engine').textContent='';document.querySelector('#run').click();1`);
+    const t0 = Date.now(); while (Date.now() - t0 < 300000 && !(await ev(`document.querySelector('#engine').textContent`))) await sleep(500);
+    MI.runMs = Date.now() - t0; await sleep(800);
+    MI.engine = await ev(`document.querySelector('#engine').textContent`); MI.msg = await ev(`document.querySelector('#msg').textContent`);
+    MI.wr = JSON.parse(await ev(`JSON.stringify((()=>{const w=Tool3D.wearResult;return w&&{mode:w.inputMode,mag:w.magnification,n:w.perFlute.length,vb:w.perFlute.map(f=>f.vbMaxMm),imgs:(Tool3D.wearDebug.images||[]).map(m=>m.error||m.q)}})())`));
+    MI.metro = JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metro.summary();return {mode:s.inputMode,mag:s.magnification,cal:s.calib.method,ppm:s.calib.pxPerMm,fl:s.flutes.map(e=>e&&e.q.vbMax.v),micro:!!Tool3D.metro.state.F[0].strip.micro,zlbl:document.querySelector('#mtZlbl').textContent}})())`));
+    await ev(`document.querySelector('#metro').scrollIntoView();Tool3D.metro.select(0);Tool3D.metro.setTool('edit');1`); await sleep(300);
+    const vb0 = await ev(`Tool3D.metro.summary().flutes[0].q.vbMax.v`);
+    const [p0, ddx] = await ev(`(()=>{const S=Tool3D.metro.state,F=S.F[0],e=S.ev[0],r=Math.max(1,Math.round(e.zAtMaxMm*F.strip.ppm)),i=F.nodeRows.reduce((b,v,j)=>Math.abs(v-r)<Math.abs(F.nodeRows[b]-r)?j:b,0);return [Tool3D.metro.nodeClient('b',i),Math.max(6,12*S.view.s)]})()`);
+    await mouse('mouseMoved', p0, 0); await mouse('mousePressed', p0);
+    for (let j = 1; j <= 4; j++) await mouse('mouseMoved', [p0[0] + ddx * j / 4, p0[1]]);
+    await mouse('mouseReleased', [p0[0] + ddx, p0[1]]); await sleep(300);
+    MI.edit = JSON.parse(await ev(`JSON.stringify({vb:Tool3D.metro.summary().flutes[0].q.vbMax.v,edited:Tool3D.metro.summary().flutes[0].edited,wr:Tool3D.wearResult.perFlute[0].vbMaxMm})`)); MI.edit.before = vb0;
+    MI.csv = await ev(`(()=>{const t=Tool3D.metroReport.csv()||'';return [/input_mode,microscope/.test(t),/magnification,200x/.test(t),/scale_method,microscope/.test(t)]})()`);
+    MI.html = await ev(`(()=>{const o=Tool3D.metroReport.html;return typeof o==='function'})()`);
+    const {data: mic} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const r=document.querySelector('#metro').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`), captureBeyondViewport: true});
+    fs.writeFileSync(path.join(OUT, 'micro-metro.png'), Buffer.from(mic, 'base64'));
+    const {data: mip} = await s('Page.captureScreenshot', {format: 'png', clip: await ev(`(()=>{const a=document.querySelector('main section').getBoundingClientRect(),b=document.querySelectorAll('main section')[2].getBoundingClientRect();return {x:a.x+scrollX,y:a.y+scrollY,width:b.right-a.x,height:Math.max(a.bottom,b.bottom)-a.y,scale:1}})()`), captureBeyondViewport: true});
+    fs.writeFileSync(path.join(OUT, 'micro-steps.png'), Buffer.from(mip, 'base64'));
+    // ⑤ post-processing in microscope mode: overlay labels the microscope magnification, per-side edge metrics from wear-post
+    await ev(`document.querySelector('#post').scrollIntoView({block:'start'});Tool3D.post.refresh();Tool3D.post.setTab('keyence');1`); await sleep(900);
+    MI.post = JSON.parse(await ev(`JSON.stringify((()=>{const R=Tool3D.post.result,f=R&&R.flutes.filter(Boolean);return {mode:R&&R.inputMode,mag:R&&R.magnification,n:f&&f.length,src:f&&f.map(x=>x.eq.source),vb:f&&f.map(x=>x.stats.maxUm)}})())`));
+    await shotEl('#post', 'post-micro-keyence.png');
+    await ev(`Tool3D.post.setTab('alicona');1`); await sleep(1200); await shotEl('#post', 'post-micro-alicona.png'); await ev(`Tool3D.post.setTab('keyence');1`);
+    MI.post.ok = MI.post.mode === 'microscope' && MI.post.mag === 200 && MI.post.n >= 1 && MI.post.vb.every(v => v > 0);
+    const P = JSON.parse(MI.panel);
+    MI.ok = P.shown && P.mags.length === 8 && P.multiHidden && P.slots === 4 && /200x 교정/.test(MI.cal) && MI.thumbs === '2,1,0,0' && /현미경 200x/.test(MI.engine) && !MI.msg &&
+      MI.wr && MI.wr.mode === 'microscope' && MI.wr.mag === 200 && MI.wr.n === 4 && MI.wr.vb[0] > 0 && MI.wr.vb[1] > 0 && MI.wr.imgs.every(q => q === 0) &&
+      MI.metro.mode === 'microscope' && MI.metro.mag === 200 && MI.metro.cal === 'microscope' && Math.abs(MI.metro.ppm - 800) < 1e-6 && MI.metro.micro && MI.metro.fl[2] === null &&
+      MI.edit.edited === true && MI.edit.vb > MI.edit.before && Math.abs(MI.edit.wr - MI.edit.vb) < 1e-4 && MI.csv.every(Boolean);
+  }
   const c = res.checks;
   res.pass = {spinner: c.spinnerShown === true, engineLabel: /^Engine: (AI \(Seg\)|AI \(PatchCore\)|classic)/.test(c.engine || '') && c.engineRow === true, exportButton: !!(c.exportZip && c.exportZip.ok),
     wear: /"n":4/.test(c.wearResult || ''), stl: !!(c.stl && c.stl.ok), json: c.jsonHasWear === true,
@@ -270,7 +315,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     qualityBadges: Array.isArray(c.quality) && c.quality.length === 4 && c.quality.every(v => /pass|warn|fail/.test(v[0]) && v[1]) && Array.isArray(A.quality) && A.quality.length === 4 && A.quality.every(v => v[0] === 'fail' && v[2] > 0),
     enhanceToggle: m.enhanceOk === true, assistedFallback: A.ok === true,
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
-    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), oneInputPath: c.oneInput === true, postProcessing: !!(c.post && c.post.ok)};
+    map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), microscope: !!(c.micro && (c.micro.ok || c.micro.skipped)), postProcessing: !!(c.post && c.post.ok), postMicroscope: !!(c.micro && (c.micro.skipped || (c.micro.post && c.micro.post.ok)))};
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

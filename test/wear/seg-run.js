@@ -28,18 +28,14 @@ function iou(seg, lab, pred) {
   console.log(`# model loaded in ${Date.now() - t0} ms`);
 
   console.log('\n# 1. parity torch (export.py) vs onnxruntime-web wasm');
-  const im = readPng(path.join(DIR, 'parity.png')), P = im.width * im.height, x = new Float32Array(3 * P);
+  const fx = JSON.parse(fs.readFileSync(path.join(DIR, 'parity.json'), 'utf8')), im = readPng(path.join(DIR, 'parity.png'));
+  const P = im.width * im.height, x = new Float32Array(3 * P);
   for (let i = 0; i < P; i++) for (let c = 0; c < 3; c++) x[c * P + i] = im.data[4 * i + c] / 255;
-  // wear-seg (ft4): the one model for every view
-  for (const [fn, file, tag] of [[run, 'parity.json', '']]) {
-    if (!fs.existsSync(path.join(DIR, file))) continue;
-    const fx = JSON.parse(fs.readFileSync(path.join(DIR, file), 'utf8'));
-    const prob = await fn(x, im.height, im.width), counts = [0, 0, 0, 0, 0], sums = [0, 0, 0, 0, 0];
-    for (let i = 0; i < P; i++) { let b = 0; for (let c = 0; c < 5; c++) { sums[c] += prob[c * P + i]; if (prob[c * P + i] > prob[b * P + i]) b = c; } counts[b]++; }
-    const dCount = counts.reduce((s, v, c) => s + Math.abs(v - fx.counts[c]), 0) / P, dSum = Math.max(...sums.map((v, c) => Math.abs(v - fx.probSums[c]) / P));
-    check('argmax agrees on >= 99.9 % of pixels' + tag, dCount <= .001, `diff ${(100 * dCount).toFixed(3)} %`);
-    check('mean class probability within 1e-3' + tag, dSum < 1e-3, `max diff ${dSum.toExponential(2)}`);
-  }
+  const prob = await run(x, im.height, im.width), counts = [0, 0, 0, 0, 0], sums = [0, 0, 0, 0, 0];
+  for (let i = 0; i < P; i++) { let b = 0; for (let c = 0; c < 5; c++) { sums[c] += prob[c * P + i]; if (prob[c * P + i] > prob[b * P + i]) b = c; } counts[b]++; }
+  const dCount = counts.reduce((s, v, c) => s + Math.abs(v - fx.counts[c]), 0) / P, dSum = Math.max(...sums.map((v, c) => Math.abs(v - fx.probSums[c]) / P));
+  check('argmax agrees on >= 99.9 % of pixels', dCount <= .001, `diff ${(100 * dCount).toFixed(3)} %`);
+  check('mean class probability within 1e-3', dSum < 1e-3, `max diff ${dSum.toExponential(2)}`);
 
   console.log('\n# 2. held-out synthetic photos: IoU against exact labels');
   const idx = JSON.parse(fs.readFileSync(path.join(SET, 'index.json'), 'utf8'));
@@ -67,20 +63,11 @@ function iou(seg, lab, pred) {
   // the rendered land (ragged noise, corner boost); its comparison is printed for the record only.
   const pairs = [], cleanVb = [], app = {ok: 0, flagged: 0, silent: [], cleanOk: 0, cleanFlagged: 0, cleanSilent: []}, nomApp = {ok: 0, flagged: 0, silent: []}, corner = [];
   let nSides = 0, segSides = 0;
-  // experiments (default off): SEG_NETMIN / SEG_NETMAX = network pixels per tool diameter; SEG_TTA=1 = mean of the photo and its mirror
-  const segOpts = {dumpEdge: !!process.env.SEG_DUMP, netMin: +process.env.SEG_NETMIN || undefined, netMax: +process.env.SEG_NETMAX || undefined};
-  const runE = process.env.SEG_TTA !== '1' ? run : async (x, H, Wd) => {
-    const P = H * Wd, xf = new Float32Array(x.length);
-    for (let c = 0; c < 3; c++) for (let y = 0; y < H; y++) for (let X = 0; X < Wd; X++) xf[c * P + y * Wd + X] = x[c * P + y * Wd + Wd - 1 - X];
-    const a = await run(x, H, Wd), b = await run(xf, H, Wd), o = new Float32Array(a.length);
-    for (let c = 0; c < 5; c++) for (let y = 0; y < H; y++) for (let X = 0; X < Wd; X++) o[c * P + y * Wd + X] = (a[c * P + y * Wd + X] + b[c * P + y * Wd + Wd - 1 - X]) / 2;
-    return o;
-  };
   for (const [name, c] of Object.entries(cases)) {
     if (name === 'nw') continue;
     const k = c.e.flutes, labs = idx.filter(e => e.case === name && e.view !== 'top').map(e => readLabel(path.join(SET, e.label)));
     const args = {sides: c.sides, flutes: k, diameterMm: c.e.D};
-    const segR = SEG.createSegmenter(runE, W, {flutes: k, ...segOpts}), {result: R, debug} = await W.measureAsync(args, segR, 'seg');
+    const {result: R, debug} = await W.measureAsync(args, SEG.createSegmenter(run, W, {flutes: k}), 'seg');
     const {result: O, debug: dO} = await W.measureAsync(args, SEG.createSegmenter(null, W, {flutes: k, oracle: require('./seg-oracle.js')(labs)}), 'seg');
     const isSeg = (d, i) => d.sides && d.sides[i] && d.sides[i].method === 'seg';
     const row = [];
@@ -93,7 +80,6 @@ function iou(seg, lab, pred) {
       // what the app shows: a VBmax within 0.1 mm of the rendered land (clean: < 0.1 mm), or the side is sent to the operator
       if (name === 'clean') { if (g < .1) app.cleanOk++; else if (flag) app.cleanFlagged++; else app.cleanSilent.push(`${name}${i + 1} ${f3(g)}`); }
       else if (Math.abs(g - want) <= .1) app.ok++; else if (flag) app.flagged++; else app.silent.push(`${name}${i + 1} ${f3(g)} vs ${f3(want)}`);
-      if (process.env.SEG_DUMP) { const sd = debug.sides[i] || {}, sg = segR.faces && segR.faces[i]; console.log('DUMP ' + JSON.stringify({c: name, i, g, want, reasons: sd.needsOperator ? sd.reasons : [], vb: (sg && sg.vb) || null})); }
       if (!isSeg(debug, i) || !isSeg(dO, i)) { row.push(`${f3(g)}/-`); continue; }
       // network vs exact labels on the flank land (the colour tip stage folded into VBmax is the same code in both runs' reach but
       // the oracle skips it; comparing VBmax would score wear-core's tip stage, not the network)

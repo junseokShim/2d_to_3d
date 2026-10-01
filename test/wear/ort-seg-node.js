@@ -9,7 +9,6 @@ module.exports = async function loadSeg() {
   const ort = require(path.join(WWW, 'vendor/ort/ort.wasm.min.js')), T = global.Tool3D;
   const glue = path.join(os.tmpdir(), `tool3d-ort-glue-${process.pid}.mjs`); fs.writeFileSync(glue, T.ortGlue);
   ort.env.wasm.numThreads = 1; ort.env.wasm.wasmBinary = Buffer.from(T.ortWasmB64, 'base64'); ort.env.wasm.wasmPaths = {mjs: url.pathToFileURL(glue).href};
-  const session = await ort.InferenceSession.create(Buffer.from(T.segMicroModelB64 || T.segModelB64, 'base64'), {executionProviders: ['wasm']});   // SEG_MODEL may be the microscope variant
-  const run = async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
-  return run;
+  const session = await ort.InferenceSession.create(Buffer.from(T.segModelB64, 'base64'), {executionProviders: ['wasm']});
+  return async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
 };

@@ -22,7 +22,6 @@
   const NC = 5, CLASSES = ['background', 'tool', 'flank wear', 'chipping', 'adhesion'];
   const NET_MIN = 224, NET_MAX = 384;      // tool diameter in network pixels (training covered 60..460, mostly 150..400)
   const ABOVE = .3, BELOW = .3, SIDE = .8;  // window around the zone, in tool diameters
-  const EDGE_ON = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_ON) || .85, EDGE_ON_SHARE = +(typeof process !== 'undefined' && process.env && process.env.SEG_EDGE_SHARE) || .5;   // vb-edge-on flag (seg9; u .85 / share .5 chosen by seg10 on .work/valset88-117 with .work/edgesim.py)
   const EDGE_U = .96;                       // |u| < EDGE_U R: the last few % of the silhouette are foreshortened
   const VB_SMOOTH_MM = .3;                  // VB profile: running median along the axis (chosen on .work/valset1-3, not the test set)
   const MAX_ABOVE = .5;                     // share of tool pixels allowed in the strip above the tip line (see segmentSide)
@@ -46,8 +45,8 @@
   }
 
   // window (network frame) -> photo: X, Y network px -> photo x, y
-  function sideWindow(P, lim = {}) {
-    const {al, zoneRows, strip} = P, sep = al.sepPx, D = Math.max(lim.netMin || NET_MIN, Math.min(lim.netMax || NET_MAX, sep)), k = D / sep;
+  function sideWindow(P) {
+    const {al, zoneRows, strip} = P, sep = al.sepPx, D = NET_ClampD(sep), k = D / sep;
     const v0 = al.vTip - ABOVE * sep, v1 = al.vTip + zoneRows + BELOW * sep;
     const Wn = ceil32((1 + 2 * SIDE) * sep * k), Hn = ceil32((v1 - v0) * k);
     const toPhoto = (X, Y) => al.toImg(al.uC + (X + .5 - Wn / 2) / k, v0 + (Y + .5) / k);
@@ -114,13 +113,12 @@
   // band normal in the photo (towards the nearest outside pixel) and f = 1 / sqrt(1 - (u/R)^2) the circumferential
   // compression, a projected thickness t is T = t / |(m_x / f, m_y)|.  Largest piece of flank wear + chipping in the zone (one photo = the flute it faces).
   function landWidth(wc, Wn, Hn, win, P, edgeU, vo = {}) {
-    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn)
-    const uRow = new Float32Array(Hn);   // |u| / R of each row's ridge (the land seen edge-on near the silhouette: foreshortening x 1 / sqrt(1 - u^2))
+    const Rn = win.netD / 2, Y0 = Math.round(ABOVE * win.netD), ppm = win.k * P.al.pxPerMm, vbMm = new Float32Array(Hn);
     const m = new Uint8Array(Wn * Hn), Yc = Y0 + Math.round((vo.zc || 0) * win.netD), uR = (vo.umax || 9) * Rn;
     for (let Y = Y0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if ((c === 2 || c === 3) && Math.abs(X + .5 - Wn / 2) < edgeU * Rn) m[Y * Wn + X] = 1; }
     const {lab, sizes} = components(m, Wn, Hn);
     let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
-    if (!best) return {vbMm, px: 0, uRow};
+    if (!best) return {vbMm, px: 0};
     for (let j = 0; j < m.length; j++) m[j] = lab[j] === best ? 1 : 0;
     const d = distIn(m, Wn, Hn);
     for (let Y = Yc; Y < Hn; Y++) {
@@ -134,12 +132,11 @@
       }
       const u = Math.min(.96, Math.abs(X + .5 - Wn / 2) / Rn), f = 1 / Math.sqrt(1 - u * u), n = Math.hypot(bx, by) || 1;
       vbMm[Y] = Math.max(1, 2 * d[jb] - .5) / Math.sqrt((bx / n / f) ** 2 + (by / n) ** 2) / ppm;
-      uRow[Y] = u;
     }
     // running median along the axis over +-VB_SMOOTH_MM: VBmax is the land's width, not a blob where lands meet
     const h = Math.round(VB_SMOOTH_MM * ppm), sm = new Float32Array(Hn);
-    if (h > 0) { for (let Y = 0; Y < Hn; Y++) { const q = Array.from(vbMm.subarray(Math.max(0, Y - h), Math.min(Hn, Y + h + 1))).sort((p, r) => p - r); sm[Y] = q[q.length >> 1]; } return {vbMm: sm, px: sizes[best], uRow}; }
-    return {vbMm, px: sizes[best], uRow};
+    if (h > 0) { for (let Y = 0; Y < Hn; Y++) { const q = Array.from(vbMm.subarray(Math.max(0, Y - h), Math.min(Hn, Y + h + 1))).sort((p, r) => p - r); sm[Y] = q[q.length >> 1]; } return {vbMm: sm, px: sizes[best]}; }
+    return {vbMm, px: sizes[best]};
   }
 
   // chipping / broken corner (class 3) that reaches the tip region -> wear-core's tip damage (VBC): axial depth from the
@@ -162,8 +159,7 @@
     }
     if (!best.px) return null;
     const {w, h, top} = strip, mask = new Uint8Array(w * h);
-    // only the kept blobs (the network's class-3 specks down the flank are not tip damage)
-    for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { if (cls[y * w + x] !== 3) continue; const X = Math.round((x - strip.cx) * win.k + Wn / 2 - .5), Y = Math.round((P.al.vTip - strip.top + y - win.v0) * win.k - .5); if (X >= 0 && Y >= 0 && X < Wn && Y < Hn && keep[lab[Y * Wn + X]]) mask[y * w + x] = 1; }
+    for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) if (cls[y * w + x] === 3) mask[y * w + x] = 1;
     return Object.assign(best, {mask, y1, source: 'seg'});
   }
 
@@ -197,12 +193,11 @@
   const postApi = () => { try { return typeof module === 'object' && module.exports ? require('./wear-post.js') : (self.Tool3D && self.Tool3D.wear && self.Tool3D.wear.post) || null; } catch (e) { return null; } };
 
   // runProbs(x Float32Array, H, W) -> Promise<Float32Array probs (NC*H*W)>;  core = wear-core api
-  // one model (models/wear-seg.onnx.js, ft4) for every view, side and top
   function createSegmenter(runProbs, core, opts = {}) {
     const faces = [];
     async function segmentSide(P, i) {
       if (!P.img) throw new Error('seg: photo missing (wear-core too old)');
-      const win = sideWindow(P, opts), {Wn, Hn, fromStrip} = win, n = Wn * Hn;
+      const win = sideWindow(P), {Wn, Hn, fromStrip} = win, n = Wn * Hn;
       // opts.oracle(i, toPhoto, Wn, Hn) -> probs: exact labels instead of the network (tests of the VB maths)
       const prob = opts.oracle ? opts.oracle(i, win.toPhoto, Wn, Hn) : await runProbs(windowInput(P.img, Wn, Hn, win.toPhoto), Hn, Wn);
       const {strip} = P, {w, h, cx, R, top} = strip, y1 = Math.min(h, top + P.zoneRows);
@@ -233,27 +228,13 @@
       }
       const aboveTip = an ? at / an : 0, flags = aboveTip > MAX_ABOVE ? ['tip-misplaced'] : [];
       if (toolFrac < TOOL_OK) flags.push('seg-coverage');
-      // candidates = flank wear + chipping inside the zone, on the tool (the backdrop seen between the end teeth is not);
-      // wear-core sorts the blobs (classifyBlobs, with the network's vote: a blob mostly labelled chipping at the tip line is
-      // a chip): specular streaks are dropped, chips go to the tip damage (VBC), the flank band = the largest land piece
-      // (one photo measures the flute it faces)
-      const tm = core && core.toolMask ? core.toolMask(strip) : null, m = new Uint8Array(w * h);
-      for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const j = y * w + x, c = cls[j]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R && (!tm || tm[j])) m[j] = 1; }
-      // the sorting needs the photo to resolve a land from a chip (validated on the human's microscope views, >= 47 px/mm); on
-      // phone photos below core.MIN_PPM (a 0.6 mm resolution limit) a land running into a chip would all go to the tip damage
-      // and leave no flank band -> there the flank band = the largest wear piece, as before the sorting
-      const sortBlobs = core && core.classifyBlobs && !(P.al.pxPerMm < (core.MIN_PPM || 0));
-      const CB = sortBlobs ? core.classifyBlobs(strip, m, tm, y1, pts => { let c3 = 0; for (const p of pts) if (cls[p] === 3) c3++; return c3 > .5 * pts.length; }) : {land: m, chip: null, blobs: []};
-      // a tool wider than the frame (al.cutOff, 12Pi / QIT close-ups): the streak test was tuned on whole-tool views (10Pi) and
-      // there removes the worn land itself -> only the chips leave the band (docs/debug-p6.md)
-      if (P.al.cutOff && CB.chip) { const L = new Uint8Array(w * h); for (let j = 0; j < w * h; j++) L[j] = m[j] && !CB.chip[j] ? 1 : 0; CB.land = L; }
-      const {lab, sizes} = components(CB.land, w, h);
+      // flank band = flank wear + chipping inside the zone; one photo measures the flute it faces = the largest piece
+      const m = new Uint8Array(w * h);
+      for (let y = top; y < y1; y++) for (let x = 0; x < w; x++) { const c = cls[y * w + x]; if ((c === 2 || c === 3) && Math.abs(x - cx) < EDGE_U * R) m[y * w + x] = 1; }
+      const {lab, sizes} = components(m, w, h);
       let best = 0; for (let c = 1; c < sizes.length; c++) if (sizes[c] > (sizes[best] || 0)) best = c;
       const band = new Uint8Array(w * h); if (best) for (let j = 0; j < w * h; j++) if (lab[j] === best) band[j] = 1;
-      // the network-grid land width (landWidth) sees only the band: every other flank / chip pixel is set to tool
-      const toStrip = (X, Y) => [Math.round((X + .5 - Wn / 2) / win.k + cx - .5), Math.round((Y + .5) / win.k + win.v0 - P.al.vTip + top - .5)];
-      const gate = (cl, mirror) => { const a = new Uint8Array(n); for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const j = Y * Wn + X, c = cl[j]; if (c !== 2 && c !== 3) { a[j] = c; continue; } const [sx, sy] = toStrip(mirror ? Wn - 1 - X : X, Y); a[j] = sx >= 0 && sy >= 0 && sx < w && sy < h && band[sy * w + sx] ? c : 1; } return a; };
-      const land = landWidth(gate(wc), Wn, Hn, win, P, EDGE_U, opts.vb);
+      const land = landWidth(wc, Wn, Hn, win, P, EDGE_U, opts.vb);
       const rowVbMm = new Float32Array(y1 - top);
       for (let y = top; y < y1; y++) {
         const Ya = Math.max(0, Math.floor(fromStrip(cx, y - .5)[1])), Yb = Math.min(Hn - 1, Math.ceil(fromStrip(cx, y + .5)[1]));
@@ -263,27 +244,17 @@
       // argmax), and from the horizontally mirrored photo (test-time flip). A soft or two-way land edge moves VBmax
       const zEnd0 = Math.min(Hn, Math.ceil((P.al.vTip + P.zoneRows - win.v0) * win.k)), Yw = Math.round(ABOVE * win.netD);
       const vbMaxOf = lw => { let v = 0; for (let Y = Yw; Y < zEnd0; Y++) v = Math.max(v, lw.vbMm[Y]); return v; };
-      const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(gate(a), Wn, Hn, win, P, EDGE_U, opts.vb)); };
+      const byThr = t => { const a = new Uint8Array(n); for (let j = 0; j < n; j++) a[j] = prob[2 * n + j] + prob[3 * n + j] > t ? 2 : (wc[j] ? 1 : 0); return vbMaxOf(landWidth(a, Wn, Hn, win, P, EDGE_U, opts.vb)); };
       const vbArg = vbMaxOf(land), vbLo = byThr(.3), vbHi = byThr(.7);
-      // share of the rows at the land's widest (>= 90 % of VBmax, +-VB_SMOOTH_MM) whose ridge lies at |u| > EDGE_ON R: there a
-      // 1-3 px sliver is multiplied by the foreshortening (x 2.3-3.5), so VBmax is set by the geometry, not by the land
-      const hS = Math.round(VB_SMOOTH_MM * win.k * P.al.pxPerMm);
-      let edgeN = 0, topN = 0;
-      for (let Y = Yw; Y < zEnd0; Y++) if (vbArg > 0 && land.vbMm[Y] >= .9 * vbArg) for (let Z = Math.max(Yw, Y - hS); Z <= Math.min(zEnd0 - 1, Y + hS); Z++) if (land.uRow[Z] > 0) { topN++; if (land.uRow[Z] > EDGE_ON) edgeN++; }
-      const edgeShare = topN ? edgeN / topN : 0;
-      const edgeBy = {}; if (opts.dumpEdge) for (const t of [.8, .85, .88, .9, .92, .94]) { let a = 0, b = 0; for (let Y = Yw; Y < zEnd0; Y++) if (vbArg > 0 && land.vbMm[Y] >= .9 * vbArg) for (let Z = Math.max(Yw, Y - hS); Z <= Math.min(zEnd0 - 1, Y + hS); Z++) if (land.uRow[Z] > 0) { b++; if (land.uRow[Z] > t) a++; } edgeBy[t] = b ? r4(a / b) : 0; }
-      if (edgeShare > EDGE_ON_SHARE) flags.push('vb-edge-on');
       let vbFlip = null;
       if (opts.tta !== false && !opts.oracle) {
         const xin = windowInput(P.img, Wn, Hn, (X, Y) => win.toPhoto(Wn - 1 - X, Y)), pf = await runProbs(xin, Hn, Wn), wf = new Uint8Array(n);
         for (let Y = 0; Y < Hn; Y++) for (let X = 0; X < Wn; X++) { const i0 = Y * Wn + (Wn - 1 - X); let b = 0; for (let c = 1; c < NC; c++) if (pf[c * n + i0] > pf[b * n + i0]) b = c; wf[Y * Wn + X] = b; }
-        vbFlip = vbMaxOf(landWidth(gate(wf, true), Wn, Hn, win, P, EDGE_U, opts.vb));
+        vbFlip = vbMaxOf(landWidth(wf, Wn, Hn, win, P, EDGE_U, opts.vb));
       }
       const vbs = [vbArg, vbLo, vbHi].concat(vbFlip === null ? [] : [vbFlip]), vbSpreadMm = Math.max(...vbs) - Math.min(...vbs);
       if (vbSpreadMm > UNC_ABS || vbSpreadMm > UNC_REL * Math.max(vbArg, .1) || (vbFlip !== null && Math.abs(vbFlip - vbArg) > UNC_FLIP)) flags.push('vb-uncertain');
-      // tip damage: the chip blobs (+ saturated fracture faces) measured by wear-core's tipDamage, merged with its colour stage
-      const netTip = CB.chip && core.tipDamage ? core.tipDamage(strip, null, 0, band, CB.chip) : tipChips(wc, cls, Wn, Hn, win, P, strip, y1);
-      const tip = mergeTip(netTip && netTip.depthMm > 0 ? Object.assign(netTip, {source: 'seg'}) : null, opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
+      const tip = mergeTip(tipChips(wc, cls, Wn, Hn, win, P, strip, y1), opts.oracle || opts.classicTip === false ? null : classicTip(core, P, cls), flags);
       // per-class areas in the zone (projected, mm^2) on the network window
       const ppmNet = win.k * P.al.pxPerMm, areas = {2: 0, 3: 0, 4: 0}, zEnd = (P.al.vTip + P.zoneRows - win.v0) * win.k;
       for (let Y = 0; Y < Math.min(Hn, zEnd); Y++) for (let X = 0; X < Wn; X++) { const c = wc[Y * Wn + X]; if (c >= 2) areas[c]++; }
@@ -299,10 +270,10 @@
         toTool: (X, Y) => { const u = (X + .5 - Wn / 2) / win.k / al.pxPerMm, z = (win.v0 + (Y + .5) / win.k - al.vTip) / al.pxPerMm; return {zMm: z, uMm: u, thetaDeg: (faces[i].angleDeg || 0) + Math.asin(Math.max(-1, Math.min(1, u / Rmm))) * 180 / Math.PI}; },
         areasMm2: areas, confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), bandPieces: sizes.length - 1, wearSoftMm2: r4(wearSoft), wearPeak: r4(wearPk),
         tip: tip ? {depthMm: tip.depthMm, source: tip.source || 'seg', netDepthMm: tip.netDepthMm, colorDepthMm: tip.colorDepthMm} : null,
-        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}, post};
+        vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}, post};
       return {band, rowVbMm, tip, thr: r4(confidence), med: 0, sig: 0, y1, method: 'seg', classes: cls, flags,
-        blobs: CB.blobs, seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
-          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm), edgeOn: r4(edgeShare), edgeBy}}};
+        seg: {confidence: r4(confidence), toolFrac: r4(toolFrac), aboveTip: r4(aboveTip), pieces: sizes.length - 1, areasMm2: areas, netD: win.netD, Wn, Hn,
+          vb: {arg: r4(vbArg), lo: r4(vbLo), hi: r4(vbHi), flip: vbFlip === null ? null : r4(vbFlip), spreadMm: r4(vbSpreadMm)}}};
     }
     const segmenter = (P, i) => segmentSide(P, i);
     segmenter.faces = faces;
@@ -375,22 +346,6 @@
     sessionP.catch(() => { sessionP = null; });
     return sessionP;
   }
-  // microscope variant (models/wear-seg-micro.onnx.js, scripts/seg/train_micro.py): loaded only in microscope mode;
-  // without the file the phone model is used (micro: false). Not shipped: the leave-one-view-out Keyence folds gave
-  // no VB gain on held-out views (research/keyence-reference.md), so the failed load is kept (one attempt per session)
-  let microP = null, microWarned = false;
-  function loadMicro() {
-    if (microP) return microP;
-    microP = (async () => {
-      const T = self.Tool3D, ort = await ortInit();
-      if (!T.segMicroModelB64) await loadScript(base() + 'models/wear-seg-micro.onnx.js');
-      const session = await ort.InferenceSession.create(b64(T.segMicroModelB64), {executionProviders: ['wasm'], graphOptimizationLevel: 'all'});
-      T.segMicroModelB64 = null;
-      return {ort, session};
-    })();
-    microP.catch(() => {});
-    return microP;
-  }
   const ortRunner = ({ort, session}) => async (x, H, W) => (await session.run({image: new ort.Tensor('float32', x, [1, 3, H, W])})).probs.data;
 
   // same inputs as Tool3D.wear.run; resolves to the wearResult (engine 'seg'); sides the network cannot read use the classic path
@@ -398,8 +353,7 @@
     const T = self.Tool3D, W = T.wear, k = opts.flutes;
     const sides = shots.slice(0, k).filter(Boolean).map(W.toImage), top = shots[k] ? W.toImage(shots[k]) : null;
     if (sides.length < k) throw new Error(`wear: need ${k} side photos, got ${sides.length}`);
-    const t0 = Date.now(), runner = ortRunner(await load());
-    const seg = createSegmenter(runner, W, {flutes: k});
+    const t0 = Date.now(), runner = ortRunner(await load()), seg = createSegmenter(runner, W, {flutes: k});
     const {result, debug} = await W.measureAsync(Object.assign({}, opts, {sides, top}), seg, 'seg');
     let topFace = null;
     try { topFace = top && debug.top ? await seg.segmentTop(top, debug.top, opts.diameterMm) : null; } catch (e) { debug.segTopError = String(e && e.message || e); }
@@ -414,7 +368,6 @@
   }
   const segment = async img => segmentImage(ortRunner(await load()), img);
   const runner = async () => ortRunner(await load());   // browser runProbs for segmentImageProbs (js/micro)
-  const microRunner = async () => { try { return Object.assign(ortRunner(await loadMicro()), {micro: true}); } catch (e) { if (!microWarned) console.info('seg: no microscope model, phone model used', e.message); microWarned = true; return Object.assign(await runner(), {micro: false}); } };
 
-  return {createSegmenter, segmentImage, segmentImageProbs, runner, microRunner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
+  return {createSegmenter, segmentImage, segmentImageProbs, runner, sideWindow, windowInput, classAt, components, load, ortInit, run, segment, CLASSES, NC};
 });
