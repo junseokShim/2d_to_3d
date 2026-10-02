@@ -219,10 +219,13 @@
   const S_THR = 1.6;            // land: anomaly above this (intact flank ~0.8-1.0, land ~2 on the labelled reference images)
   const GAP_UM = 6;             // gaps inside the land shorter than this are bridged (glints, coating fragments)
   const MIN_VB_UM = 15, MIN_VB_PX = 4;   // narrower than this is the edge transition itself, not a land
+  const TAU = 1.3;              // evidence threshold between intact flank (S ~0.8-1.0) and land (S ~2)
+  const JUMP_PEN = 0.5;
+  const INTACT_UM = 25;         // this much intact flank after the land ends the search along a normal         // DP penalty per work px of front jump between neighbouring positions
   const MAX_VB_UM = 600;        // search depth into the tool
   const REF_UM = [150, 300];    // flank reference band (distance from the edge line)
   const FEAT_UM = [1.5, 6, 15]; // box radii of the multi-scale features
-  function anomaly(I, valid, L, um) {
+  function anomaly(I, valid, L, um, o) {
     const {w, h} = I, n = w * h, R = v => Math.max(1, Math.round(v / um));
     const g = new Float32Array(n), c = new Float32Array(n);
     for (let i = 0; i < n; i++) { const r = I.r[i], gg = I.g[i], b = I.b[i]; g[i] = .299 * r + .587 * gg + .114 * b; c[i] = (Math.max(r, gg, b) - Math.min(r, gg, b)) / 255; }
@@ -232,7 +235,8 @@
     const r1 = R(FEAT_UM[0]), r4_ = R(FEAT_UM[1]), r10 = R(FEAT_UM[2]);
     const b1 = B(g, r1), b4 = B(g, r4_), b10 = B(g, r10), g2 = new Float32Array(n); for (let i = 0; i < n; i++) g2[i] = g[i] * g[i];
     const s4 = B(g2, r4_), sd4 = new Float32Array(n); for (let i = 0; i < n; i++) sd4[i] = Math.sqrt(Math.max(0, s4[i] - b4[i] * b4[i]));
-    const F = [b1, b4, b10, B(absd(g, b1), R(4.5)), B(absd(b1, b4), R(6)), B(absd(b4, b10), R(9)), B(c, R(4.5)), B(c, R(12)), sd4, B(absd(c, B(c, R(3))), R(6))];
+    const F0 = [b1, b4, b10, B(absd(g, b1), R(4.5)), B(absd(b1, b4), R(6)), B(absd(b4, b10), R(9)), B(c, R(4.5)), B(c, R(12)), sd4, B(absd(c, B(c, R(3))), R(6))];
+    const F = o.feat ? o.feat.map(j => F0[j]) : F0;
     // reference band
     const lo = REF_UM[0] / um, hi = REF_UM[1] / um, ref = [];
     for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
@@ -265,15 +269,37 @@
     }
     const thr = o.sThr || S_THR, gap = Math.max(2, Math.round(GAP_UM / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
     const vb = new Float32Array(nU).fill(NaN), sharp = new Float32Array(nU).fill(NaN);
+    // front per position: change point of the cumulative evidence C(d) = sum_{D0..d} (S - TAU) (land is anomalous, intact
+    // flank is not; holes inside the land only dent C), chosen jointly over all positions by dynamic programming with an
+    // L1 penalty on front jumps between neighbours (the wear front is a connected curve)
+    const tau = o.tau || TAU, drop = (o.intactUm || INTACT_UM) / um * .35, lam = (o.jumpPen || JUMP_PEN), C = new Float32Array(nU * nD), seenK = new Uint8Array(nU);
     for (let k = 0; k < nU; k++) {
-      let last = D0 - 1, miss = 0, seen = 0;
-      for (let d = D0; d < nD; d++) {
-        const v = Ts[k * nD + d]; if (v !== v) { if (++miss > gap) break; continue; }
-        seen++;
-        if (v > thr) { last = d; miss = 0; } else if (++miss > gap) break;
+      let c = 0, cMax = 0, miss = 0, dEnd = nD;
+      for (let d = 0; d < nD; d++) {
+        const v = Ts[k * nD + d];
+        if (d < D0) { C[k * nD + d] = 0; continue; }
+        if (v !== v) { if (++miss > gap) { dEnd = d; break; } C[k * nD + d] = c; continue; }
+        miss = 0; seenK[k] = 1; c += v - tau; C[k * nD + d] = c; if (c > cMax) cMax = c;
+        if (c < cMax - drop) { dEnd = d + 1; break; }    // a run of intact flank: the land is behind
       }
-      if (!seen) continue;
-      const W = last + 1; vb[k] = W >= minPx ? W : 0;
+      for (let d = dEnd; d < nD; d++) C[k * nD + d] = -1e9;
+      for (let d = 0; d < D0; d++) C[k * nD + d] = 0;
+    }
+    const acc = new Float32Array(nU * nD), arg = new Int32Array(nU * nD), tmp = new Float32Array(nD), ta = new Int32Array(nD);
+    for (let d = 0; d < nD; d++) acc[d] = C[d];
+    for (let k = 1; k < nU; k++) {
+      // max-convolution of the previous row with -lam*|dd| (two passes)
+      for (let d = 0; d < nD; d++) { tmp[d] = acc[(k - 1) * nD + d]; ta[d] = d; }
+      for (let d = 1; d < nD; d++) if (tmp[d - 1] - lam > tmp[d]) { tmp[d] = tmp[d - 1] - lam; ta[d] = ta[d - 1]; }
+      for (let d = nD - 2; d >= 0; d--) if (tmp[d + 1] - lam > tmp[d]) { tmp[d] = tmp[d + 1] - lam; ta[d] = ta[d + 1]; }
+      for (let d = 0; d < nD; d++) { acc[k * nD + d] = tmp[d] + C[k * nD + d]; arg[k * nD + d] = ta[d]; }
+    }
+    const front = new Int32Array(nU); let bd = 0;
+    for (let d = 1; d < nD; d++) if (acc[(nU - 1) * nD + d] > acc[(nU - 1) * nD + bd]) bd = d;
+    for (let k = nU - 1; k >= 0; k--) { front[k] = bd; if (k) bd = arg[k * nD + bd]; }
+    for (let k = 0; k < nU; k++) {
+      if (!seenK[k]) continue;
+      const W = front[k] < D0 ? 0 : front[k] + 1; vb[k] = W >= minPx ? W : 0;
       if (W >= minPx) {
         let a = 0, ca = 0, b = 0, cb = 0;
         for (let d = Math.max(D0, W - 2 * gap); d < W; d++) { const v = Ts[k * nD + d]; if (v === v) { a += v; ca++; } }
@@ -300,8 +326,8 @@
     if (!E.best || E.best.lenPx < .25 * Math.max(I.w, I.h) || E.best.step < 20) return fail('not-detected', 'no straight cutting edge (dark / bright boundary) in the image', {edgeCand: E.best && {lenPx: E.best.lenPx, step: r2(E.best.step)}});
     const L = refineEdge(I, F, valid, E.best);
     if (o.debug && L) Object.defineProperty(base, 'dbgL', {enumerable: false, value: {L, E: E.cands.slice(0, 3).map(c => ({a: c.a, r: c.r, len: c.lenPx, step: r2(c.step), tr: r2(c.texRatio), dc: r2(c.darkClean), score: Math.round(c.score)}))}});
-    if (!L || L.nFit < 30 || L.rms > 2.5) return fail('not-detected', 'cutting edge is not straight enough to fit a reference line', {edgeRms: L && r2(L.rms), cands: o.debug ? base.dbgL : undefined});
-    const A = anomaly(I, valid, L, um);
+    if (!L || L.nFit < 30 || L.rms * um > (o.edgeRmsUm || 6)) return fail('not-detected', 'cutting edge is not straight enough to fit a reference line', {edgeRms: L && r2(L.rms), cands: o.debug ? base.dbgL : undefined});
+    const A = anomaly(I, valid, L, um, o);
     if (!A) return fail('not-detected', 'no intact flank beside the edge to compare the land with', {});
     const P = landProfile(I, valid, L, um, A, o);
     // VB(t): running median (+-3) over the positions, then statistics
