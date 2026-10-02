@@ -125,19 +125,37 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await mouse('mouseReleased', [n0[0] + dx, n0[1]]); await sleep(300);
   m.edit = await ev(`JSON.stringify({area:Tool3D.metro.summary().flutes[0].areaMm2,wrArea:Tool3D.wearResult.perFlute[0].areaMm2,vb:Tool3D.metro.summary().flutes[0].vbMaxMm,edited:Tool3D.metro.summary().flutes[0].edited,contract:Tool3D.wearResult.metro,wr:Tool3D.wearResult.perFlute[0].vbMaxMm})`);
   const me = JSON.parse(m.edit); m.editOk = me.edited === true && me.area > before && Math.abs(me.wr - me.vb) < 1e-4 && Math.abs(me.wrArea - me.area) < 1e-4 && me.contract && me.contract.edited === true; m.areaBefore = before;
+  const shotEl = async (sel, name) => { const clip = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`); const {data} = await s('Page.captureScreenshot', {format: 'png', clip, captureBeyondViewport: true}); fs.writeFileSync(path.join(OUT, name), Buffer.from(data, 'base64')); };
+  // ---------- ④ end-face segmentation (upload slot) + profile graph (reference line, perpendicular deviation) ----------
+  const EP = m.ep = {};
+  await ev(`(()=>{const set=(id,v)=>{const e=document.querySelector(id);e.value=v;e.dispatchEvent(new Event('change'));};set('#mtSegK','4');set('#mtSegBar','2000');set('#mtSegD','10');return 1})()`);
+  EP.fromRun = await ev(`(()=>{const s=Tool3D.metroEPui.state;return s.seg?{src:s.seg.src,k:s.seg.k}:null})()`);
+  const segIn = (await s('DOM.querySelector', {nodeId: root.nodeId, selector: '#mtSegFile'})).nodeId;
+  await s('DOM.setFileInputFiles', {nodeId: segIn, files: [path.join(REPO, 'test/data/req261002/ref-endface-seg.png').replace(/\//g, '\\')]});
+  for (let t = 0; t < 40 && !(await ev(`(()=>{const s=Tool3D.metroEPui.state.seg;return !!(s&&/^upload/.test(s.src))})()`)); t++) await sleep(250);
+  Object.assign(EP, JSON.parse(await ev(`JSON.stringify((()=>{const a=Tool3D.metroEPui.state.seg;return a&&{src:a.src,k:a.k,areas:a.teeth.map(t=>t.areaMm2),total:a.total.areaMm2,rPx:a.circle.rPx,rms:a.circle.rmsPx,barPx:a.bar&&a.bar.px,scale:a.scale.method,dia:a.scale.diameterMm,rows:document.querySelectorAll('#mtSegOut .mt-segtab tr').length,cv:document.querySelector('#mtSegCv').width}})())`)));
+  const profIn = (await s('DOM.querySelector', {nodeId: root.nodeId, selector: '#mtProfFile'})).nodeId;
+  await s('DOM.setFileInputFiles', {nodeId: profIn, files: [path.join(REPO, 'test/metro/fixtures/ref-profile-52.90um.csv').replace(/\//g, '\\')]});
+  for (let t = 0; t < 40 && !(await ev(`!!Tool3D.metroEPui.state.prof`)); t++) await sleep(250);
+  await ev(`(()=>{const set=(id,v)=>{const e=document.querySelector(id);e.value=v;e.dispatchEvent(new Event('change'));};set('#mtProfX0','75');set('#mtProfX1','358');document.querySelector('[data-pmode="pick"]').click();document.querySelector('#mtProf').scrollIntoView({block:'center'});return 1})()`); await sleep(300);
+  const gp = await ev(`Tool3D.metroEPui.graphClient(595)`);   // operator clicks the profile near x = 595 um
+  await mouse('mouseMoved', gp, 0); await mouse('mousePressed', gp); await mouse('mouseReleased', gp); await sleep(300);
+  Object.assign(EP, JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metroEPui.state,R=s.res;return {n:R&&R.n,seg:R&&[R.line.x0,R.line.x1],rms:R&&R.line.rmsUm,pickX:R&&R.pick&&R.pick.x,pickUm:R&&R.pick&&R.pick.absUm,maxUm:R&&R.max&&R.max.absUm,txt:document.querySelector('#mtProfPick').textContent}})())`)));
+  await shotEl('#mtEP', 'metro-endface-profile.png');
+  EP.ok = EP.src && /^upload/.test(EP.src) && EP.k === 4 && EP.areas.every(a => a > 3 && a < 6.5) && Math.abs(EP.barPx - 166.5) < 2 && EP.scale === 'bar' && Math.abs(EP.dia - 7.95) < .15 && EP.rows === 6 && EP.cv > 100 &&
+    EP.n > 800 && Math.abs(EP.seg[0] - 75) < 1e-6 && Math.abs(EP.seg[1] - 358) < 1e-6 && Math.abs(EP.pickX - 595) < 3 && Math.abs(EP.pickUm - 52.9) < 1.5 && (m => m && Math.abs(+m[1] - EP.pickUm) < .006)(EP.txt.match(/(\d+\.\d\d) µm\D*$/)) && EP.maxUm > 0;
   // report + CSV + HTML + history
   await ev(`document.querySelector('#mtTool').value='E2E-01';document.querySelector('#mtTool').dispatchEvent(new Event('input'));document.querySelector('#mtOp').value='e2e';document.querySelector('#mtOp').dispatchEvent(new Event('input'));1`);
   const waitFile = async re => { for (let t = 0; t < 30; t++) { const f = fs.readdirSync(dl).find(n => re.test(n) && !/crdownload$/.test(n)); if (f) return path.join(dl, f); await sleep(300); } return null; };
   await ev(`document.querySelector('#mtPdf').click();1`); const pf = await waitFile(/^tool3d-report-E2E-01-.*\.pdf$/);
-  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [123]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 3/.test(t) && /End-face wear area per tooth/.test(t) && /All flutes/.test(t) && /Tolerance verdict/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/\/DCTDecode[\s\S]*?endstream/g, ''))}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
+  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [1234]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 4/.test(t) && /End-face segmentation \\?\(top view\\?\)/.test(t) && /perpendicular deviation 5\d\.\d\d um/.test(t) && /End-face wear area per tooth/.test(t) && /All flutes/.test(t) && /Tolerance verdict/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/\/DCTDecode[\s\S]*?endstream/g, ''))}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
   await ev(`document.querySelector('#mtCsv').click();1`); const cf = await waitFile(/^tool3d-E2E-01-.*\.csv$/);
-  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
+  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /endface_seg_tooth,angle_deg,area_mm2/.test(t) && /\r?\npicked,/.test(t) && /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
   await ev(`document.querySelector('#mtHtml').click();1`); const hf = await waitFile(/^tool3d-report-E2E-01-.*\.html$/);
-  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /End-face wear area/.test(t) && /reference line/i.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/data:[^"')\s]+/g, ''))}))(fs.readFileSync(hf, 'utf8')) : 'missing';
+  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /End-face segmentation \(top view\)/.test(t) && /Profile and reference-line deviation/.test(t) && /End-face wear area/.test(t) && /reference line/i.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/data:[^"')\s]+/g, ''))}))(fs.readFileSync(hf, 'utf8')) : 'missing';
   if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
   await ev(`document.querySelector('#mtSave').click();document.querySelector('#mtSave').click();1`);
   m.history = await ev(`JSON.parse(localStorage.getItem('tool3d.metro.history')||'{}')['E2E-01']?.length||0`);
-  const shotEl = async (sel, name) => { const clip = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`); const {data} = await s('Page.captureScreenshot', {format: 'png', clip, captureBeyondViewport: true}); fs.writeFileSync(path.join(OUT, name), Buffer.from(data, 'base64')); };
   await shotEl('#metro', 'metro-edit.png');
   await s('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 2, mobile: true}); await sleep(800);
   await ev(`Tool3D.metro.setTool('vb');Tool3D.metro.fit();1`); await sleep(300);
@@ -150,7 +168,8 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   Object.assign(Pp, JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metro.summary(),v=(s.vb||[]).filter(Boolean);return {n:v.length,lines:v.map(x=>x.lines.length),vbMaxUm:v.map(x=>x.stats.maxUm),metroVb:s.flutes.map(e=>e&&Math.round(e.q.vbFlankMax.v*1e5)/100),mag:v[0]&&v[0].mag,pos:v.every(x=>x.pos&&x.pos.vbMax&&x.pos.vbb),teeth:s.endFace?s.endFace.teeth.length:0,endTotal:s.endFace&&s.endFace.total,tol:!!(s.tolerance&&s.tolerance.rows)}})())`)));
   await shotEl('#metro', 'metro-vb.png');
   Pp.vbOk = Pp.n === 4 && Pp.lines.every(n => n >= 1) && Pp.vbMaxUm.every((v, i) => Pp.metroVb[i] == null || Math.abs(v - Pp.metroVb[i]) < .06) && /^[×X]\d/.test(Pp.mag) && Pp.pos && Pp.tol;
-  Pp.ok = Pp.vbOk && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
+  Pp.endProfile = !!(m.ep && m.ep.ok);
+  Pp.ok = Pp.vbOk && Pp.endProfile && !!(m.pdf && m.pdf.post && m.csv && m.csv.post && m.html && m.html.post);
   // ---------- operator-assisted fallback on degraded low-light photos (auto band empty on every flute) ----------
   const A = res.checks.assisted = {};
   const deg = require('./degraded-inputs.js')(path.join(OUT, 'degraded')).slice(0, 4).map(f => f.replace(/\//g, '\\'));
