@@ -350,6 +350,7 @@
   const INTACT_STEP_UM = 40;    // intact flank stretch that ends the search along a normal
   const INTACT_SD = 0.07;       // its grey spread (normalised, after along-edge averaging)
   const INTACT_LVL = 0.8;       // and its brightness relative to the flank reference band
+  const DEPTH_BONUS = 0;           // per um of front depth (inside the intact cut)
   const BEYOND = 0.3;           // weight of steps beyond the intact stretch          // DP penalty land <-> no land
   function landStep(I, valid, L, um, o) {
     const {w, h} = I, n = w * h, maxD = Math.min(Math.round((o.maxVbUm || MAX_VB_UM) / um), Math.round(.6 * Math.max(w, h)));
@@ -380,7 +381,7 @@
     // the search along a normal ends where intact flank starts: a stretch of INTACT_STEP_UM that is homogeneous (the
     // land is broken up, the flank even under the along-edge averaging) and about as bright as the flank reference band
     // (REF_UM from the edge); steps beyond it (flank -> next face) are damped, so the DP only takes them with support
-    const kI = Math.max(4, Math.round(INTACT_STEP_UM / um)), r0 = Math.round(REF_UM[0] / um), r1 = Math.min(nD - 1, Math.round(REF_UM[1] / um));
+    const depthB = o.depthBonus != null ? o.depthBonus : DEPTH_BONUS, kI = Math.max(4, Math.round(INTACT_STEP_UM / um)), r0 = Math.round(REF_UM[0] / um), r1 = Math.min(nD - 1, Math.round(REF_UM[1] / um));
     const refV = []; for (let k = 0; k < nU; k += 2) for (let d = r0; d <= r1; d += 2) { const v = Ts[k * nD + d]; if (v === v) refV.push(v); }
     refV.sort((p, q) => p - q); const flank = refV.length > 50 ? refV[refV.length >> 1] : 0.7;
     const cut = new Int32Array(nU).fill(nD);
@@ -392,6 +393,9 @@
         if (sd < (o.intactSd || INTACT_SD) && m > INTACT_LVL * flank) { cut[k] = d; break; }
       }
       for (let d = cut[k] + sw + 1; d < nD; d++) G[k * nD + d] *= BEYOND;
+      // the front is the OUTERMOST boundary of the land: a real step further out (inside the intact cut) is preferred
+      // over an inner one (crater floor, chip facets) by a small depth bonus
+      for (let d = D0; d <= Math.min(nD - 1, cut[k] + sw); d++) if (G[k * nD + d] > 0.05) G[k * nD + d] += depthB * d * um;
     }
     const gThr = o.gThr || G_THR, lam = o.jumpStep || JUMP_STEP, swp = o.switchPen || SWITCH;
     const acc = new Float32Array(nU * nD), arg = new Int32Array(nU * nD), tmp = new Float32Array(nD), ta = new Int32Array(nD);
@@ -443,7 +447,7 @@
     if (!E.best || E.best.lenPx < .25 * Math.max(I.w, I.h) || E.best.step < 20) return fail('not-detected', 'no straight cutting edge (dark / bright boundary) in the image', {edgeCand: E.best && {lenPx: E.best.lenPx, step: r2(E.best.step)}});
     const L = refineEdge(I, F, valid, E.best);
     if (o.debug && L) Object.defineProperty(base, 'dbgL', {enumerable: false, value: {L, E: E.cands.slice(0, 3).map(c => ({a: c.a, r: c.r, len: c.lenPx, step: r2(c.step), tr: r2(c.texRatio), dc: r2(c.darkClean), score: Math.round(c.score)}))}});
-    if (!L || L.nFit < 30 || L.rms * um > (o.edgeRmsUm || 6)) return fail('not-detected', 'cutting edge is not straight enough to fit a reference line', {edgeRms: L && r2(L.rms), cands: o.debug ? base.dbgL : undefined});
+    if (!L || L.nFit < 30 || (L.rms > 2.5 && L.rms * um > (o.edgeRmsUm || 6))) return fail('not-detected', 'cutting edge is not straight enough to fit a reference line', {edgeRms: L && r2(L.rms), cands: o.debug ? base.dbgL : undefined});
     const A = anomaly(I, valid, L, um, o);
     if (!A) return fail('not-detected', 'no intact flank beside the edge to compare the land with', {});
     const P = o.mode === 'anomaly' ? landProfile(I, valid, L, um, A, o) : landStep(I, valid, L, um, o);
