@@ -130,11 +130,11 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await ev(`(()=>{const set=(id,v)=>{const e=document.querySelector(id);e.value=v;e.dispatchEvent(new Event('change'));};set('#mtSegK','4');set('#mtSegBar','2000');set('#mtSegD','10');return 1})()`);
   EP.fromRun = await ev(`(()=>{const s=Tool3D.metroEPui.state;return s.seg?{src:s.seg.src,k:s.seg.k}:null})()`);
   const segIn = (await s('DOM.querySelector', {nodeId: root.nodeId, selector: '#mtSegFile'})).nodeId;
-  await s('DOM.setFileInputFiles', {nodeId: segIn, files: [path.join(REPO, 'test/data/req261002/ref-endface-seg.png').replace(/\//g, '\')]});
+  await s('DOM.setFileInputFiles', {nodeId: segIn, files: [path.join(REPO, 'test/data/req261002/ref-endface-seg.png').replace(/\//g, '\\')]});
   for (let t = 0; t < 40 && !(await ev(`(()=>{const s=Tool3D.metroEPui.state.seg;return !!(s&&/^upload/.test(s.src))})()`)); t++) await sleep(250);
   Object.assign(EP, JSON.parse(await ev(`JSON.stringify((()=>{const a=Tool3D.metroEPui.state.seg;return a&&{src:a.src,k:a.k,areas:a.teeth.map(t=>t.areaMm2),total:a.total.areaMm2,rPx:a.circle.rPx,rms:a.circle.rmsPx,barPx:a.bar&&a.bar.px,scale:a.scale.method,dia:a.scale.diameterMm,rows:document.querySelectorAll('#mtSegOut .mt-segtab tr').length,cv:document.querySelector('#mtSegCv').width}})())`)));
   const profIn = (await s('DOM.querySelector', {nodeId: root.nodeId, selector: '#mtProfFile'})).nodeId;
-  await s('DOM.setFileInputFiles', {nodeId: profIn, files: [path.join(REPO, 'test/metro/fixtures/ref-profile-52.90um.csv').replace(/\//g, '\')]});
+  await s('DOM.setFileInputFiles', {nodeId: profIn, files: [path.join(REPO, 'test/metro/fixtures/ref-profile-52.90um.csv').replace(/\//g, '\\')]});
   for (let t = 0; t < 40 && !(await ev(`!!Tool3D.metroEPui.state.prof`)); t++) await sleep(250);
   await ev(`(()=>{const set=(id,v)=>{const e=document.querySelector(id);e.value=v;e.dispatchEvent(new Event('change'));};set('#mtProfX0','75');set('#mtProfX1','358');document.querySelector('[data-pmode="pick"]').click();document.querySelector('#mtProf').scrollIntoView({block:'center'});return 1})()`); await sleep(300);
   const gp = await ev(`Tool3D.metroEPui.graphClient(595)`);   // operator clicks the profile near x = 595 um
@@ -149,9 +149,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await ev(`document.querySelector('#mtPdf').click();1`); const pf = await waitFile(/^tool3d-report-E2E-01-.*\.pdf$/);
   if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [1234]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 4/.test(t) && /End-face segmentation \(top view\)/.test(t) && /perpendicular deviation 5\d\.\d\d um/.test(t) && /End-face wear area per tooth/.test(t) && /All flutes/.test(t) && /Tolerance verdict/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/\/DCTDecode[\s\S]*?endstream/g, ''))}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
   await ev(`document.querySelector('#mtCsv').click();1`); const cf = await waitFile(/^tool3d-E2E-01-.*\.csv$/);
-  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /endface_seg_tooth,angle_deg,area_mm2/.test(t) && /
-?
-picked,/.test(t) && /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
+  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /endface_seg_tooth,angle_deg,area_mm2/.test(t) && /\r?\npicked,/.test(t) && /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
   await ev(`document.querySelector('#mtHtml').click();1`); const hf = await waitFile(/^tool3d-report-E2E-01-.*\.html$/);
   m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /End-face segmentation \(top view\)/.test(t) && /Profile and reference-line deviation/.test(t) && /End-face wear area/.test(t) && /reference line/i.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/data:[^"')\s]+/g, ''))}))(fs.readFileSync(hf, 'utf8')) : 'missing';
   if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
