@@ -6,6 +6,8 @@
 //  - our reference line on the operator's line (angle, offset)
 //  - VB at the operator's marker within +-10 %; VBmax not below the marked spot and within +20 % of it (the marked spot
 //    is one measured position, not necessarily the widest one)
+//  - spot [2] of the 90.34 photo (24.33 um): the real edge stands outside the reference line there; our edge deviation
+//    at that place within +-15 % or +-5 um, and ~0 on the unworn stretch
 //  - background-only crops, an unworn stretch of edge and flat / noise images: no wear, never a number on background
 //  - the human's failing app screenshot without a scale: no number (status no-scale)
 // Run: node test/wear/req261002-run.js
@@ -26,6 +28,12 @@ function vbAt(r, p) {
   const uUm = ((p[0] - x0) * tx + (p[1] - y0) * ty) * r.umPerPx, a = r.profile.filter(q => Math.abs(q.uUm - uUm) <= 8).map(q => q.vbUm).sort((p, q) => p - q);
   return a.length ? a[a.length >> 1] : null;
 }
+// edge deviation (+ = outside the reference line) at the along-edge position of an image point
+function devAt(r, p) {
+  const [x0, y0] = r.edge.p0, [x1, y1] = r.edge.p1, L = Math.hypot(x1 - x0, y1 - y0), tx = (x1 - x0) / L, ty = (y1 - y0) / L;
+  const uUm = ((p[0] - x0) * tx + (p[1] - y0) * ty) * r.umPerPx, a = r.profile.filter(q => Math.abs(q.uUm - uUm) <= 8 && q.devUm != null).map(q => q.devUm).sort((p, q) => p - q);
+  return a.length ? a[a.length >> 1] : null;
+}
 // our edge line vs the operator's dotted line y = k x + c: angle difference (deg) and normal offset (um) at x
 function lineDiff(r, k, c, x) {
   const [x0, y0] = r.edge.p0, [x1, y1] = r.edge.p1, kk = (y1 - y0) / (x1 - x0), y = y0 + kk * (x - x0);
@@ -35,7 +43,10 @@ function lineDiff(r, k, c, x) {
 const REF = [
   // file, operator marker (image px), annotated VB (um), dotted reference line y = k x + c (fitted on its green dots), bar px
   {f: 'ref-vb-77.60um.png', marker: [478.5, 366.5], vb: 77.60, line: [.5999, 141.99], barPx: 71},
-  {f: 'ref-vb-90.34um-24.33um.png', marker: [922.4, 482.8], vb: 90.34, line: [.6167, 46.78], barPx: 127}
+  {f: 'ref-vb-90.34um-24.33um.png', marker: [922.4, 482.8], vb: 90.34, line: [.6167, 46.78], barPx: 127,
+    // spot [2]: the operator's second marker sits at the same place along the edge, 24.33 um OUTSIDE the reference
+    // line (on the background side): the real tool edge there stands beyond the line (edge deviation, not a land)
+    dev: {marker: [853.8, 607.6], um: 24.33}, unwornU: [0, 450]}
 ];
 const imgs = {};
 for (const R of REF) {
@@ -50,6 +61,12 @@ for (const R of REF) {
   check(`${R.f} VB at the operator's marker ${R.vb} um +-10 %`, v != null && Math.abs(v - R.vb) <= .1 * R.vb, `got ${v} um`);
   check(`${R.f} VBmax in [0.9, 1.2] x ${R.vb} um`, r.vbMaxUm >= .9 * R.vb && r.vbMaxUm <= 1.2 * R.vb, `got ${r.vbMaxUm} um`);
   check(`${R.f} fast`, ms < 3000, `${ms} ms`);
+  if (R.dev) {
+    const dv = devAt(r, R.dev.marker), tol = Math.max(5, .15 * R.dev.um);
+    check(`${R.f} edge deviation at spot [2] ${R.dev.um} um outside the line (+-15 % or +-5 um)`, dv != null && Math.abs(dv - R.dev.um) <= tol, `got ${dv} um`);
+    const un = r.profile.filter(q => q.uUm >= R.unwornU[0] && q.uUm <= R.unwornU[1] && q.devUm != null).map(q => Math.abs(q.devUm)).sort((p, q) => p - q);
+    check(`${R.f} unworn edge on the reference line (deviation p90 < 4 um)`, un.length > 50 && un[Math.floor(.9 * un.length)] < 4, `p90 ${un.length ? un[Math.floor(.9 * un.length)] : '-'} um`);
+  }
 }
 
 // no wear: background only, an unworn stretch of edge, flat and noise images

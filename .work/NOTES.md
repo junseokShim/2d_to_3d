@@ -11,3 +11,4 @@
   Fix: front = half-rise crossing between land min (15 um back) and max (15 um ahead) -> 90.34: 102 -> 95.5 um, 77.60: 78 -> 81.1 um. 19/0.
 - 24.33 um spot: operator marker 2 (853.8,607.6) is at the SAME along-edge position as marker 1, 23 um on the BACKGROUND side
   of the dotted line: it is the real tool edge protruding beyond the reference line (edge deviation), not a land width.
+- Edge deviation profile (devUm per position, edgeDevOutUm/InUm): first departure from background level (15 % of bg->tool) with no gaps to the line. Spot [2]: 21.8 um vs 24.33 (ok +-5). Unworn p90 2.3 um. req261002 21/0.

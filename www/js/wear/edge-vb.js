@@ -454,6 +454,42 @@
     return {U, vb, sharp, nU, nD, Ts, front, G, cut, flank};
   }
 
+  // ---------- edge deviation from the reference line ----------
+  // The reference line is fitted on the straight (unworn) run of the edge; where the real tool boundary leaves it
+  // (built-up material or a rounded / bent edge outside, chipping inside) the deviation is the normal distance of that
+  // boundary from the line, + = outside (towards the background), - = inside the tool. Along each normal, from the
+  // background side inward, the first crossing half way between the background level and the tool level near the line.
+  const DEV_OUT_UM = 45, DEV_IN_UM = 30, DEV_FRAC = 0.15;
+  function edgeDeviation(I, F, valid, L, um) {
+    const {w, h} = I, G = F.g1, out = Math.round(DEV_OUT_UM / um), inn = Math.round(DEV_IN_UM / um), nb = Math.max(4, Math.round(12 / um));
+    const val = (x, y) => { const xi = Math.round(x), yi = Math.round(y); return xi < 1 || yi < 1 || xi >= w - 1 || yi >= h - 1 || !valid[yi * w + xi] ? null : G[yi * w + xi]; };
+    const nU = Math.floor((L.u1 - L.u0) / DU) + 1, dev = new Float32Array(nU).fill(NaN);
+    for (let k = 0; k < nU; k++) {
+      const u = L.u0 + k * DU, x0 = L.cx + L.tx * u, y0 = L.cy + L.ty * u, bg = [], tl = [];
+      for (let d = -out - nb; d < -out; d++) { const v = val(x0 + L.nx * d, y0 + L.ny * d); if (v != null) bg.push(v); }
+      for (let d = 0; d <= inn; d++) { const v = val(x0 + L.nx * d, y0 + L.ny * d); if (v != null) tl.push(v); }
+      if (bg.length < nb / 2 || tl.length < inn / 2) continue;
+      bg.sort((p, q) => p - q); tl.sort((p, q) => p - q);
+      const b = bg[bg.length >> 1], t = tl[Math.floor(.8 * tl.length)]; if (t - b < 15) continue;
+      // the tool starts where the grey first leaves the background level for good (an out-of-focus background has no
+      // detail; a dim strip of tool beyond a bright edge zone is still tool, so not the half-way level)
+      const thr = b + DEV_FRAC * (t - b); let prev = null;
+      for (let d = -out; d < inn; d++) {
+        const v = val(x0 + L.nx * d, y0 + L.ny * d), v2 = val(x0 + L.nx * (d + 1), y0 + L.ny * (d + 1)); if (v == null) { prev = null; continue; }
+        if (prev != null && prev < thr && v >= thr && v2 != null && v2 >= thr) {
+          // tool from here to the line without gaps (dust and glints in the background are islands)
+          let lo = 0, c = 0; for (let j = d; j <= 0; j++) { const vj = val(x0 + L.nx * j, y0 + L.ny * j); if (vj != null) { c++; if (vj < thr) lo++; } }
+          if (lo <= .1 * c) { dev[k] = -(d - 1 + (thr - prev) / (v - prev)); break; }
+        }
+        prev = v;
+      }
+    }
+    // running median +-3 positions (single rows are noise)
+    const ds = new Float32Array(nU).fill(NaN);
+    for (let k = 0; k < nU; k++) { const a = []; for (let j = Math.max(0, k - 3); j <= Math.min(nU - 1, k + 3); j++) if (dev[j] === dev[j]) a.push(dev[j]); if (a.length >= 4) { a.sort((p, q) => p - q); ds[k] = a[a.length >> 1]; } }
+    return ds;
+  }
+
   // ---------- main ----------
   // img: ImageData-like; o.umPerPx (image px) or o.scaleBarUm (length of the on-image bar, default 100) ->
   // {status: 'ok' | 'no-wear' | 'not-detected' | 'no-scale', reason, vbMaxUm, vbMeanUm, ...}
@@ -477,16 +513,17 @@
     // VB(t): running median (+-3) over the positions, then statistics
     const vbs = new Float32Array(P.nU).fill(NaN);
     for (let k = 0; k < P.nU; k++) { const a = []; for (let j = Math.max(0, k - 3); j <= Math.min(P.nU - 1, k + 3); j++) if (P.vb[j] === P.vb[j]) a.push(P.vb[j]); if (a.length >= 3) { a.sort((p, q) => p - q); vbs[k] = a[a.length >> 1]; } }
-    const prof = []; let kMax = -1, sum = 0, nW = 0, nAll = 0;
+    const prof = [], DV = edgeDeviation(I, F, valid, L, um); let kMax = -1, sum = 0, nW = 0, nAll = 0, devOut = 0, devIn = 0;
     const edgeSkip = Math.max(3, Math.round(SMOOTH_UM / um / DU));   // ends of the fitted run: half the smoothing window is outside it
     for (let k = edgeSkip; k < P.nU - edgeSkip; k++) {
       if (vbs[k] !== vbs[k]) continue; nAll++;
-      const vUm = vbs[k] * um; prof.push({uUm: r2((P.U[k] - P.U[0]) * um), vbUm: r2(vUm)});
+      const vUm = vbs[k] * um; prof.push({uUm: r2((P.U[k] - P.U[0]) * um), vbUm: r2(vUm), devUm: DV[k] === DV[k] ? r2(DV[k] * um) : null});
+      if (DV[k] === DV[k]) { if (DV[k] > devOut) devOut = DV[k]; if (DV[k] < devIn) devIn = DV[k]; }
       if (vbs[k] > 0) { nW++; sum += vUm; if (kMax < 0 || vbs[k] > vbs[kMax]) kMax = k; }
     }
     const toImg = (x, y) => [r2(x * I.s), r2(y * I.s)];
     const edge = {p0: toImg(L.cx + L.tx * L.u0, L.cy + L.ty * L.u0), p1: toImg(L.cx + L.tx * L.u1, L.cy + L.ty * L.u1), normal: [r4(L.nx), r4(L.ny)], rmsUm: r2(L.rms * um), fitShare: r2(L.nFit / L.nPts)};
-    const out = Object.assign(base, {edge, profile: prof, wornPct: r2(100 * nW / (nAll || 1)), ms: 0});
+    const out = Object.assign(base, {edge, profile: prof, edgeDevOutUm: r2(devOut * um), edgeDevInUm: r2(-devIn * um), wornPct: r2(100 * nW / (nAll || 1)), ms: 0});
     if (o.debug) Object.defineProperty(out, 'dbg', {value: {I, F, L, P, vbs, E, A, cands: E.cands.slice(0, 4).map(c => ({a: c.a, r: c.r, len: c.lenPx, step: r2(c.step), tr: r2(c.texRatio), dc: r2(c.darkClean), score: Math.round(c.score)}))}, enumerable: false});
     if (!nW) return Object.assign(out, {status: 'no-wear', reason: 'no land wider than ' + MIN_VB_UM + ' um along the edge', vbMaxUm: 0, vbMeanUm: 0, ms: Date.now() - t0});
     const u = P.U[kMax], xE = L.cx + L.tx * u, yE = L.cy + L.ty * u, d = vbs[kMax];
