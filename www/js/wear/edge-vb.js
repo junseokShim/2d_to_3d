@@ -76,7 +76,7 @@
         for (const j of [i - 1, i + 1, i - I.w, i + I.w]) if (j >= 0 && j < n && wt[j] && !seen[j] && Math.abs((j % I.w) - x) <= 1) { seen[j] = 1; q[qt++] = j; }
       }
       const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-      if (qt >= 60 && qt >= .55 * bw * bh && bw >= 8 && bh >= 5) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) m[y * I.w + x] = 1;
+      if (qt >= 60 && qt >= .55 * bw * bh && bw >= 8 && bh >= 5) for (let y = Math.max(0, y0 - 3); y <= Math.min(I.h - 1, y1 + 3); y++) for (let x = Math.max(0, x0 - 3); x <= Math.min(I.w - 1, x1 + 3); x++) m[y * I.w + x] = 1;
     }
     // grow by 1 px (anti-aliased rims)
     const o = m.slice();
@@ -243,7 +243,7 @@
   const SMOOTH_UM = 12;         // +- along-edge averaging of S (um): one row is noise
   const S_THR = 1.6;            // land: anomaly above this (intact flank ~0.8-1.0, land ~2 on the labelled reference images)
   const GAP_UM = 6;             // gaps inside the land shorter than this are bridged (glints, coating fragments)
-  const MIN_VB_UM = 15, MIN_VB_PX = 4;   // narrower than this is the edge transition itself, not a land
+  const MIN_VB_UM = 20, MIN_VB_PX = 4;   // narrower than this is the edge transition itself, not a land
   const TAU = 1.3;              // evidence threshold between intact flank (S ~0.8-1.0) and land (S ~2)
   const JUMP_PEN = 0.5;
   const INTACT_UM = 25;         // this much intact flank after the land ends the search along a normal         // DP penalty per work px of front jump between neighbouring positions
@@ -351,6 +351,7 @@
   const INTACT_SD = 0.07;       // its grey spread (normalised, after along-edge averaging)
   const INTACT_LVL = 0.8;       // and its brightness relative to the flank reference band
   const DEPTH_BONUS = 0;           // per um of front depth (inside the intact cut)
+  const OUT_UM = 15;            // level after a front, compared with the flank
   const BEYOND = 0.3;           // weight of steps beyond the intact stretch          // DP penalty land <-> no land
   function landStep(I, valid, L, um, o) {
     const {w, h} = I, n = w * h, maxD = Math.min(Math.round((o.maxVbUm || MAX_VB_UM) / um), Math.round(.6 * Math.max(w, h)));
@@ -371,7 +372,7 @@
       let s = 0, c = 0; for (let j = Math.max(0, k - sm); j <= Math.min(nU - 1, k + sm); j++) { const v = T[j * nD + d]; if (v === v) { s += v; c++; } }
       if (c > sm) Ts[k * nD + d] = s / c;
     }
-    const sw = Math.max(2, Math.round(STEP_W_UM / um)), D0 = Math.max(2, Math.round((o.d0Um || D0_UM) / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
+    const sw = Math.max(2, Math.round((o.stepWUm || STEP_W_UM) / um)), D0 = Math.max(2, Math.round((o.d0Um || D0_UM) / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
     const G = new Float32Array(nU * nD).fill(-1), seenK = new Uint8Array(nU);
     for (let k = 0; k < nU; k++) for (let d = D0 + sw; d < nD - sw; d++) {
       let a = 0, ca = 0, b = 0, cb = 0;
@@ -381,18 +382,26 @@
     // the search along a normal ends where intact flank starts: a stretch of INTACT_STEP_UM that is homogeneous (the
     // land is broken up, the flank even under the along-edge averaging) and about as bright as the flank reference band
     // (REF_UM from the edge); steps beyond it (flank -> next face) are damped, so the DP only takes them with support
-    const depthB = o.depthBonus != null ? o.depthBonus : DEPTH_BONUS, kI = Math.max(4, Math.round(INTACT_STEP_UM / um)), r0 = Math.round(REF_UM[0] / um), r1 = Math.min(nD - 1, Math.round(REF_UM[1] / um));
+    const kO = Math.max(3, Math.round(OUT_UM / um)), depthB = o.depthBonus != null ? o.depthBonus : DEPTH_BONUS, kI = Math.max(4, Math.round(INTACT_STEP_UM / um)), r0 = Math.round(REF_UM[0] / um), r1 = Math.min(nD - 1, Math.round(REF_UM[1] / um));
     const refV = []; for (let k = 0; k < nU; k += 2) for (let d = r0; d <= r1; d += 2) { const v = Ts[k * nD + d]; if (v === v) refV.push(v); }
     refV.sort((p, q) => p - q); const flank = refV.length > 50 ? refV[refV.length >> 1] : 0.7;
     const cut = new Int32Array(nU).fill(nD);
     for (let k = 0; k < nU; k++) {
+      let lvlK = flank;
       for (let d = D0; d + kI < nD; d++) {
         let s1 = 0, s2 = 0, c = 0; for (let j = d; j < d + kI; j++) { const v = Ts[k * nD + j]; if (v === v) { s1 += v; s2 += v * v; c++; } }
         if (c < kI / 2) continue;
         const m = s1 / c, sd = Math.sqrt(Math.max(0, s2 / c - m * m));
-        if (sd < (o.intactSd || INTACT_SD) && m > INTACT_LVL * flank) { cut[k] = d; break; }
+        if (sd < (o.intactSd || INTACT_SD) && m > INTACT_LVL * flank) { cut[k] = d; lvlK = m; break; }
       }
       for (let d = cut[k] + sw + 1; d < nD; d++) G[k * nD + d] *= BEYOND;
+      // a front steps up INTO flank brightness: a step that ends on a level still well below the flank (a ledge inside
+      // a crater) counts in proportion
+      for (let d = D0; d < nD; d++) {
+        const gi = k * nD + d; if (G[gi] <= 0.05) continue;
+        let a = 0, c = 0; for (let j = d + 1; j <= Math.min(nD - 1, d + kO); j++) { const v = Ts[k * nD + j]; if (v === v) { a += v; c++; } }
+        G[gi] *= c ? Math.min(1, a / c / (INTACT_LVL * lvlK)) : 0;
+      }
       // the front is the OUTERMOST boundary of the land: a real step further out (inside the intact cut) is preferred
       // over an inner one (crater floor, chip facets) by a small depth bonus
       for (let d = D0; d <= Math.min(nD - 1, cut[k] + sw); d++) if (G[k * nD + d] > 0.05) G[k * nD + d] += depthB * d * um;
@@ -424,7 +433,7 @@
     }
     const vb = new Float32Array(nU).fill(NaN), sharp = new Float32Array(nU).fill(NaN);
     for (let k = 0; k < nU; k++) {
-      if (!seenK[k]) continue;
+      if (!seenK[k] || cut[k] >= nD) continue;      // no intact flank found along this normal (image border, label): the front is unconfirmed
       const W = front[k] < 0 ? 0 : front[k]; vb[k] = W >= minPx ? W : 0;
       if (W >= minPx) sharp[k] = G[k * nD + W];
     }
