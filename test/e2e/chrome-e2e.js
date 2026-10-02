@@ -144,15 +144,26 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await shotEl('#mtEP', 'metro-endface-profile.png');
   EP.ok = EP.src && /^upload/.test(EP.src) && EP.k === 4 && EP.areas.every(a => a > 3 && a < 6.5) && Math.abs(EP.barPx - 166.5) < 2 && EP.scale === 'bar' && Math.abs(EP.dia - 7.95) < .15 && EP.rows === 6 && EP.cv > 100 &&
     EP.n > 800 && Math.abs(EP.seg[0] - 75) < 1e-6 && Math.abs(EP.seg[1] - 358) < 1e-6 && Math.abs(EP.pickX - 595) < 3 && Math.abs(EP.pickUm - 52.9) < 1.5 && (m => m && Math.abs(+m[1] - EP.pickUm) < .006)(EP.txt.match(/(\d+\.\d\d) µm\D*$/)) && EP.maxUm > 0;
+  // ---------- ④ close-up VB (edge-vb): high-magnification photo with a 100 um scale bar; operator marker at (478.5, 366.5) = 77.60 um ----------
+  const CU = m.cu = {};
+  const cuIn = (await s('DOM.querySelector', {nodeId: root.nodeId, selector: '#mtCuFile'})).nodeId;
+  await s('DOM.setFileInputFiles', {nodeId: cuIn, files: [path.join(REPO, 'test/data/req261002/ref-vb-77.60um.png').replace(/\//g, '\\')]});
+  for (let t = 0; t < 60 && !(await ev(`(()=>{const s=Tool3D.metroCU.state;return !!(s.res&&/^upload/.test(s.src))})()`)); t++) await sleep(250);
+  Object.assign(CU, JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metroCU.state,r=s.res;if(!r)return {};
+    let at=null;if(r.edge){const [x0,y0]=r.edge.p0,[x1,y1]=r.edge.p1,L=Math.hypot(x1-x0,y1-y0),u=((478.5*s.k-x0)*(x1-x0)/L+(366.5*s.k-y0)*(y1-y0)/L)*r.umPerPx,a=r.profile.filter(q=>Math.abs(q.uUm-u)<=8).map(q=>q.vbUm).sort((p,q)=>p-q);at=a.length?a[a.length>>1]:null;}
+    return {src:s.src,status:r.status,vbMax:r.vbMaxUm,atMarker:at,barPx:r.scaleBar&&r.scaleBar.px,lines:s.lines.length,txt:(document.querySelector('#mtCuVb')||{}).textContent,cv:document.querySelector('#mtCuCv').width}})())`)));
+  CU.ok = /^upload/.test(CU.src) && CU.status === 'ok' && Math.abs(CU.barPx - 71) <= 2 && Math.abs(CU.atMarker - 77.6) <= 7.76 && CU.vbMax >= .9 * 77.6 && CU.vbMax <= 1.2 * 77.6 && CU.lines >= 3 && CU.cv > 100 &&
+    (t => !!t && Math.abs(+t[1] - CU.vbMax) < .006)((CU.txt || '').match(/VBmax (\d+\.\d\d) µm/));
+  await shotEl('#mtCU', 'metro-closeup-vb.png');
   // report + CSV + HTML + history
   await ev(`document.querySelector('#mtTool').value='E2E-01';document.querySelector('#mtTool').dispatchEvent(new Event('input'));document.querySelector('#mtOp').value='e2e';document.querySelector('#mtOp').dispatchEvent(new Event('input'));1`);
   const waitFile = async re => { for (let t = 0; t < 30; t++) { const f = fs.readdirSync(dl).find(n => re.test(n) && !/crdownload$/.test(n)); if (f) return path.join(dl, f); await sleep(300); } return null; };
   await ev(`document.querySelector('#mtPdf').click();1`); const pf = await waitFile(/^tool3d-report-E2E-01-.*\.pdf$/);
-  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [1234]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 4/.test(t) && /End-face segmentation \\?\(top view\\?\)/.test(t) && /perpendicular deviation 5\d\.\d\d um/.test(t) && /End-face wear area per tooth/.test(t) && /All flutes/.test(t) && /Tolerance verdict/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/\/DCTDecode[\s\S]*?endstream/g, ''))}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
+  if (pf) { const b = fs.readFileSync(pf), t = b.toString('latin1'); m.pdf = {bytes: b.length, ok: t.startsWith('%PDF-1.4') && /\/Count [12345]/.test(t) && /\/DCTDecode/.test(t) && /%%EOF/.test(t) && /E2E-01/.test(t), post: /\/Count 5/.test(t) && /Close-up flank wear VB/.test(t) && /VBmax \d+\.\d\d um/.test(t) && /End-face segmentation \\?\(top view\\?\)/.test(t) && /perpendicular deviation 5\d\.\d\d um/.test(t) && /End-face wear area per tooth/.test(t) && /All flutes/.test(t) && /Tolerance verdict/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/\/DCTDecode[\s\S]*?endstream/g, ''))}; fs.copyFileSync(pf, path.join(OUT, 'report.pdf')); } else m.pdf = 'missing';
   await ev(`document.querySelector('#mtCsv').click();1`); const cf = await waitFile(/^tool3d-E2E-01-.*\.csv$/);
-  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /endface_seg_tooth,angle_deg,area_mm2/.test(t) && /\r?\npicked,/.test(t) && /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
+  m.csv = cf ? (t => ({ok: /VBmax_mm,U_VBmax/.test(t) && /VBC_mm/.test(t) && /manual_measurement/.test(t) && /\n1,/.test(t), lines: t.split('\n').length, post: /endface_seg_tooth,angle_deg,area_mm2/.test(t) && /\[close-up VB\]\r?\nstatus,VBmax_um/.test(t) && /\r?\nok,\d/.test(t) && /\r?\npicked,/.test(t) && /vb_position_flute,VBmax_mm/.test(t) && /vb_line_flute,n/.test(t) && /tolerance,value/.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t)}))(fs.readFileSync(cf, 'utf8')) : 'missing';
   await ev(`document.querySelector('#mtHtml').click();1`); const hf = await waitFile(/^tool3d-report-E2E-01-.*\.html$/);
-  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /End-face segmentation \(top view\)/.test(t) && /Profile and reference-line deviation/.test(t) && /End-face wear area/.test(t) && /reference line/i.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/data:[^"')\s]+/g, ''))}))(fs.readFileSync(hf, 'utf8')) : 'missing';
+  m.html = hf ? (t => ({ok: /Tool wear inspection report/.test(t) && /<svg/.test(t) && /data:image\/jpeg/.test(t), bytes: t.length, post: /End-face segmentation \(top view\)/.test(t) && /Close-up flank wear VB/.test(t) && /Profile and reference-line deviation/.test(t) && /End-face wear area/.test(t) && /reference line/i.test(t) && !/keyence|alicona|vhx|edgequality|infinitefocus/i.test(t.replace(/data:[^"')\s]+/g, ''))}))(fs.readFileSync(hf, 'utf8')) : 'missing';
   if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
   await ev(`document.querySelector('#mtSave').click();document.querySelector('#mtSave').click();1`);
   m.history = await ev(`JSON.parse(localStorage.getItem('tool3d.metro.history')||'{}')['E2E-01']?.length||0`);
@@ -316,6 +327,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
     map3dFaces: !!(c.map3dRun && c.map3dRun.n === 5 && c.map3dRun.names.join() === 'side1,side2,side3,side4,top' && c.map3dRun.rows >= 7 && c.map3dRun.areas.every(a => a && a[2] >= 0)),
     map3dDeform: !!(c.map3d && c.map3d.ok), map3dEngineSeg: !!(c.map3dSeg && c.map3dSeg.ok), helixHand: !!(c.hand && c.hand.ok), oneCameraFlow: !!(c.micro && c.micro.ok), postProcessing: !!(c.post && c.post.ok)};
   res.pass.surface3d = !!(c.surface3d && c.surface3d.ok);
+  res.pass.closeupVb = !!(m.cu && m.cu.ok);
   res.ok = Object.values(res.pass).every(Boolean);
   fs.writeFileSync(path.join(OUT, 'e2e.json'), JSON.stringify(res, null, 1));
   console.log(JSON.stringify(res, null, 1));

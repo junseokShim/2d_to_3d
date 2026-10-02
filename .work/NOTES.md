@@ -12,3 +12,8 @@
 - 24.33 um spot: operator marker 2 (853.8,607.6) is at the SAME along-edge position as marker 1, 23 um on the BACKGROUND side
   of the dotted line: it is the real tool edge protruding beyond the reference line (edge deviation), not a land width.
 - Edge deviation profile (devUm per position, edgeDevOutUm/InUm): first departure from background level (15 % of bg->tool) with no gaps to the line. Spot [2]: 21.8 um vs 24.33 (ok +-5). Unworn p90 2.3 um. req261002 21/0.
+- Wired: www/js/metro/metro-cu-ui.js = section 4 card 'close-up VB' (#mtCU: upload, scale bar um, um/px, n lines; dotted
+  reference line, yellow front, VB dimension lines + VBmax, edge deviation; not-detected/no-scale -> 'operator needed', no number).
+  Wear flow: on tool3d:metro, the first run side photo with a scale bar is measured (upload wins). Report: Tool3D.closeupReport
+  csv/html/pdf page (metro-report). E2E: closeupVb check (77.60 photo: marker 81.1 um, VBmax 90.7, bar 71 px); PDF now /Count 5.
+- All suites green; E2E PASS 23/23 (screenshot metro-closeup-vb.png).
