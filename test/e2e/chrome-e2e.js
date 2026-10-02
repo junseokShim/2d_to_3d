@@ -143,7 +143,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   Object.assign(EP, JSON.parse(await ev(`JSON.stringify((()=>{const s=Tool3D.metroEPui.state,R=s.res;return {n:R&&R.n,seg:R&&[R.line.x0,R.line.x1],rms:R&&R.line.rmsUm,pickX:R&&R.pick&&R.pick.x,pickUm:R&&R.pick&&R.pick.absUm,maxUm:R&&R.max&&R.max.absUm,txt:document.querySelector('#mtProfPick').textContent}})())`)));
   await shotEl('#mtEP', 'metro-endface-profile.png');
   EP.ok = EP.src && /^upload/.test(EP.src) && EP.k === 4 && EP.areas.every(a => a > 3 && a < 6.5) && Math.abs(EP.barPx - 166.5) < 2 && EP.scale === 'bar' && Math.abs(EP.dia - 7.95) < .15 && EP.rows === 6 && EP.cv > 100 &&
-    EP.n > 800 && Math.abs(EP.seg[0] - 75) < 1e-6 && Math.abs(EP.seg[1] - 358) < 1e-6 && Math.abs(EP.pickX - 595) < 3 && Math.abs(EP.pickUm - 52.9) < 1.5 && (m => m && Math.abs(+m[1] - EP.pickUm) < .006)(EP.txt.match(/(\d+\.\d\d) µm/)) && EP.maxUm > 0;
+    EP.n > 800 && Math.abs(EP.seg[0] - 75) < 1e-6 && Math.abs(EP.seg[1] - 358) < 1e-6 && Math.abs(EP.pickX - 595) < 3 && Math.abs(EP.pickUm - 52.9) < 1.5 && (m => m && Math.abs(+m[1] - EP.pickUm) < .006)(EP.txt.match(/(\d+\.\d\d) µm\D*$/)) && EP.maxUm > 0;
   // report + CSV + HTML + history
   await ev(`document.querySelector('#mtTool').value='E2E-01';document.querySelector('#mtTool').dispatchEvent(new Event('input'));document.querySelector('#mtOp').value='e2e';document.querySelector('#mtOp').dispatchEvent(new Event('input'));1`);
   const waitFile = async re => { for (let t = 0; t < 30; t++) { const f = fs.readdirSync(dl).find(n => re.test(n) && !/crdownload$/.test(n)); if (f) return path.join(dl, f); await sleep(300); } return null; };
