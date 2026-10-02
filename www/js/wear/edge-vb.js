@@ -156,17 +156,28 @@
   // straight line fit: total least squares, points farther than max(1.5 px, 2.5 x MAD) dropped, repeated. Chipped (edge
   // inside the tool) and built-up (outside) stretches leave the line and are not used: the fit is the reference line.
   const SEARCH = 14;
+  // The cutting edge is the OUTERMOST tool boundary: walking along the normal from the background side, the first place
+  // where the grey crosses half way from the background level to the tool level (the land and the chips behind it have
+  // their own steps, which must not pull the line inside the tool).
   function edgePoints(I, F, valid, nx, ny, px, py, search) {
     const {w, h} = I, G = F.g1, tx = -ny, ty = nx, diag = Math.hypot(w, h), pts = [];
-    const val = (x, y) => { const xi = Math.round(x), yi = Math.round(y); return xi < 1 || yi < 1 || xi >= w - 1 || yi >= h - 1 ? null : G[yi * w + xi]; };
+    const val = (x, y) => { const xi = Math.round(x), yi = Math.round(y); return xi < 1 || yi < 1 || xi >= w - 1 || yi >= h - 1 || !valid[yi * w + xi] ? null : G[yi * w + xi]; };
+    const med = a => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
     for (let u = -diag; u < diag; u += 2) {
       const x0 = px + tx * u, y0 = py + ty * u; if (x0 < 4 || y0 < 4 || x0 >= w - 4 || y0 >= h - 4) continue;
-      let best = 0, bd = null;
+      const bg = [], tl = [];
+      for (let d = -search - 12; d < -search; d++) { const v = val(x0 + nx * d, y0 + ny * d); if (v != null) bg.push(v); }
+      for (let d = search; d < search + 12; d++) { const v = val(x0 + nx * d, y0 + ny * d); if (v != null) tl.push(v); }
+      if (bg.length < 6 || tl.length < 6) continue;
+      const b = med(bg), t = med(tl); if (t - b < 8) continue;
+      const half = b + .5 * (t - b);
+      let prev = null, hit = null;
       for (let d = -search; d <= search; d++) {
-        const a = val(x0 + nx * (d + 1.5), y0 + ny * (d + 1.5)), b = val(x0 + nx * (d - 1.5), y0 + ny * (d - 1.5)); if (a == null || b == null) continue;
-        const gr = a - b; if (gr > best) { best = gr; bd = d; }
+        const v = val(x0 + nx * d, y0 + ny * d); if (v == null) { prev = null; continue; }
+        if (prev != null && prev < half && v >= half) { hit = d - 1 + (half - prev) / (v - prev); break; }
+        prev = v;
       }
-      if (bd != null && best > 8) { const x = x0 + nx * bd, y = y0 + ny * bd, ii = Math.round(y) * w + Math.round(x); if (valid[ii]) pts.push({x, y, g: best}); }
+      if (hit != null) pts.push({x: x0 + nx * hit, y: y0 + ny * hit, g: t - b});
     }
     return pts;
   }
@@ -310,6 +321,78 @@
     return {U, vb, sharp, nU, nD, Ts, thr};
   }
 
+
+  // ---------- wear front as a brightness step (default) ----------
+  // On microscope close-ups the land (coating worn through, fractured, cratered) ends where the intact flank starts with
+  // a step up in brightness (often with an interference-colour rim at the coating boundary). Along each normal the front
+  // is the strongest dark -> bright step beyond the edge transition; the fronts of all positions are chosen together by
+  // dynamic programming (L1 penalty on jumps, a switch penalty between 'land' and 'no land'), so one bright scratch or
+  // glint cannot make a front on its own.
+  const STEP_W_UM = 5;          // half width of the step detector (um)
+  const D0_UM = 6;              // skip the edge transition itself (um)
+  const G_THR = 0.12;           // step (normalised grey, p5..p95 = 0..1) a 'no land' position is worth
+  const JUMP_STEP = 0.004;      // DP penalty per work px of front jump
+  const SWITCH = 0.25;          // DP penalty land <-> no land
+  function landStep(I, valid, L, um, o) {
+    const {w, h} = I, n = w * h, maxD = Math.min(Math.round((o.maxVbUm || MAX_VB_UM) / um), Math.round(.6 * Math.max(w, h)));
+    const g = new Float32Array(n);
+    for (let i = 0; i < n; i++) g[i] = .299 * I.r[i] + .587 * I.g[i] + .114 * I.b[i];
+    const srt = Float32Array.from(g).sort(), p5 = srt[Math.floor(.05 * n)], p95 = srt[Math.floor(.95 * n)];
+    const gs = boxMean(g, valid, w, h, Math.max(1, Math.round(1.5 / um)));
+    for (let i = 0; i < n; i++) gs[i] = (gs[i] - p5) / (p95 - p5 + 1);
+    const at = (x, y) => { const xi = Math.round(x), yi = Math.round(y); return xi < 0 || yi < 0 || xi >= w || yi >= h ? -1 : yi * w + xi; };
+    const U = [], nU = Math.floor((L.u1 - L.u0) / DU) + 1, nD = maxD + 1, sm = Math.max(1, Math.round(SMOOTH_UM / um / DU));
+    const T = new Float32Array(nU * nD).fill(NaN);
+    for (let k = 0; k < nU; k++) {
+      const u = L.u0 + k * DU, x0 = L.cx + L.tx * u, y0 = L.cy + L.ty * u; U.push(u);
+      for (let d = 0; d < nD; d++) { const i = at(x0 + L.nx * d, y0 + L.ny * d); if (i >= 0 && valid[i]) T[k * nD + d] = gs[i]; }
+    }
+    const Ts = new Float32Array(nU * nD).fill(NaN);
+    for (let k = 0; k < nU; k++) for (let d = 0; d < nD; d++) {
+      let s = 0, c = 0; for (let j = Math.max(0, k - sm); j <= Math.min(nU - 1, k + sm); j++) { const v = T[j * nD + d]; if (v === v) { s += v; c++; } }
+      if (c > sm) Ts[k * nD + d] = s / c;
+    }
+    const sw = Math.max(2, Math.round(STEP_W_UM / um)), D0 = Math.max(2, Math.round(D0_UM / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
+    const G = new Float32Array(nU * nD).fill(-1), seenK = new Uint8Array(nU);
+    for (let k = 0; k < nU; k++) for (let d = D0 + sw; d < nD - sw; d++) {
+      let a = 0, ca = 0, b = 0, cb = 0;
+      for (let j = 1; j <= sw; j++) { const v1 = Ts[k * nD + d + j], v0 = Ts[k * nD + d - j + 1]; if (v1 === v1) { a += v1; ca++; } if (v0 === v0) { b += v0; cb++; } }
+      if (ca > sw / 2 && cb > sw / 2) { G[k * nD + d] = a / ca - b / cb; seenK[k] = 1; }
+    }
+    const gThr = o.gThr || G_THR, lam = o.jumpStep || JUMP_STEP, swp = o.switchPen || SWITCH;
+    const acc = new Float32Array(nU * nD), arg = new Int32Array(nU * nD), tmp = new Float32Array(nD), ta = new Int32Array(nD);
+    const accN = new Float32Array(nU), argN = new Int32Array(nU), fromN = new Uint8Array(nU * nD);
+    let bestPrev = -1, bestPrevD = -1;
+    for (let k = 0; k < nU; k++) {
+      if (k === 0) { for (let d = 0; d < nD; d++) acc[d] = G[d]; accN[0] = gThr; }
+      else {
+        for (let d = 0; d < nD; d++) { tmp[d] = acc[(k - 1) * nD + d]; ta[d] = d; }
+        for (let d = 1; d < nD; d++) if (tmp[d - 1] - lam > tmp[d]) { tmp[d] = tmp[d - 1] - lam; ta[d] = ta[d - 1]; }
+        for (let d = nD - 2; d >= 0; d--) if (tmp[d + 1] - lam > tmp[d]) { tmp[d] = tmp[d + 1] - lam; ta[d] = ta[d + 1]; }
+        const nPrev = accN[k - 1] - swp;
+        for (let d = 0; d < nD; d++) {
+          if (nPrev > tmp[d]) { acc[k * nD + d] = nPrev + G[k * nD + d]; fromN[k * nD + d] = 1; } else { acc[k * nD + d] = tmp[d] + G[k * nD + d]; arg[k * nD + d] = ta[d]; }
+        }
+        if (bestPrev - swp > accN[k - 1]) { accN[k] = bestPrev - swp + gThr; argN[k] = bestPrevD; } else { accN[k] = accN[k - 1] + gThr; argN[k] = -1; }
+      }
+      bestPrev = -1e9; for (let d = 0; d < nD; d++) if (acc[k * nD + d] > bestPrev) { bestPrev = acc[k * nD + d]; bestPrevD = d; }
+    }
+    // backtrack: state -1 = no land
+    const front = new Int32Array(nU); let st = bestPrev > accN[nU - 1] ? bestPrevD : -1;
+    for (let k = nU - 1; k >= 0; k--) {
+      front[k] = st;
+      if (!k) break;
+      if (st < 0) st = argN[k]; else st = fromN[k * nD + st] ? -1 : arg[k * nD + st];
+    }
+    const vb = new Float32Array(nU).fill(NaN), sharp = new Float32Array(nU).fill(NaN);
+    for (let k = 0; k < nU; k++) {
+      if (!seenK[k]) continue;
+      const W = front[k] < 0 ? 0 : front[k]; vb[k] = W >= minPx ? W : 0;
+      if (W >= minPx) sharp[k] = G[k * nD + W];
+    }
+    return {U, vb, sharp, nU, nD, Ts, front};
+  }
+
   // ---------- main ----------
   // img: ImageData-like; o.umPerPx (image px) or o.scaleBarUm (length of the on-image bar, default 100) ->
   // {status: 'ok' | 'no-wear' | 'not-detected' | 'no-scale', reason, vbMaxUm, vbMeanUm, ...}
@@ -329,7 +412,7 @@
     if (!L || L.nFit < 30 || L.rms * um > (o.edgeRmsUm || 6)) return fail('not-detected', 'cutting edge is not straight enough to fit a reference line', {edgeRms: L && r2(L.rms), cands: o.debug ? base.dbgL : undefined});
     const A = anomaly(I, valid, L, um, o);
     if (!A) return fail('not-detected', 'no intact flank beside the edge to compare the land with', {});
-    const P = landProfile(I, valid, L, um, A, o);
+    const P = o.mode === 'anomaly' ? landProfile(I, valid, L, um, A, o) : landStep(I, valid, L, um, o);
     // VB(t): running median (+-3) over the positions, then statistics
     const vbs = new Float32Array(P.nU).fill(NaN);
     for (let k = 0; k < P.nU; k++) { const a = []; for (let j = Math.max(0, k - 3); j <= Math.min(P.nU - 1, k + 3); j++) if (P.vb[j] === P.vb[j]) a.push(P.vb[j]); if (a.length >= 3) { a.sort((p, q) => p - q); vbs[k] = a[a.length >> 1]; } }
