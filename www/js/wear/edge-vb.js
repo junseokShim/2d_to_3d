@@ -146,7 +146,7 @@
         const dm = b / kb; for (let d = 25; ; d += 10) { const i2 = at(x0 - nx * d, y0 - ny * d); if (i2 < 0) break; dn++; if (F.g6[i2] > dm + .5 * step) dk++; }
       }
       c.lenPx = good * 4; c.step = good ? cSum / good : 0; c.texRatio = kh ? (hb + 1) / (hd + 1) : 1; c.darkClean = dn ? 1 - dk / dn : 1;
-      c.score = c.lenPx * Math.max(.5, Math.min(3, c.texRatio)) * (.3 + .7 * c.darkClean);
+      c.score = c.lenPx * Math.max(.5, Math.min(3, c.texRatio)) * c.darkClean ** 3;
     }
     cands.sort((p, q) => q.score - p.score);
     return {cands, best: cands[0] || null, cs, sn};
@@ -218,7 +218,7 @@
   const SMOOTH_UM = 12;         // +- along-edge averaging of S (um): one row is noise
   const S_THR = 1.6;            // land: anomaly above this (intact flank ~0.8-1.0, land ~2 on the labelled reference images)
   const GAP_UM = 6;             // gaps inside the land shorter than this are bridged (glints, coating fragments)
-  const MIN_VB_UM = 10, MIN_VB_PX = 4;   // narrower than this is the edge transition itself, not a land
+  const MIN_VB_UM = 15, MIN_VB_PX = 4;   // narrower than this is the edge transition itself, not a land
   const MAX_VB_UM = 600;        // search depth into the tool
   const REF_UM = [150, 300];    // flank reference band (distance from the edge line)
   const FEAT_UM = [1.5, 6, 15]; // box radii of the multi-scale features
@@ -308,7 +308,8 @@
     const vbs = new Float32Array(P.nU).fill(NaN);
     for (let k = 0; k < P.nU; k++) { const a = []; for (let j = Math.max(0, k - 3); j <= Math.min(P.nU - 1, k + 3); j++) if (P.vb[j] === P.vb[j]) a.push(P.vb[j]); if (a.length >= 3) { a.sort((p, q) => p - q); vbs[k] = a[a.length >> 1]; } }
     const prof = []; let kMax = -1, sum = 0, nW = 0, nAll = 0;
-    for (let k = 0; k < P.nU; k++) {
+    const edgeSkip = Math.max(3, Math.round(SMOOTH_UM / um / DU));   // ends of the fitted run: half the smoothing window is outside it
+    for (let k = edgeSkip; k < P.nU - edgeSkip; k++) {
       if (vbs[k] !== vbs[k]) continue; nAll++;
       const vUm = vbs[k] * um; prof.push({uUm: r2((P.U[k] - P.U[0]) * um), vbUm: r2(vUm)});
       if (vbs[k] > 0) { nW++; sum += vUm; if (kMax < 0 || vbs[k] > vbs[kMax]) kMax = k; }
@@ -316,12 +317,13 @@
     const toImg = (x, y) => [r2(x * I.s), r2(y * I.s)];
     const edge = {p0: toImg(L.cx + L.tx * L.u0, L.cy + L.ty * L.u0), p1: toImg(L.cx + L.tx * L.u1, L.cy + L.ty * L.u1), normal: [r4(L.nx), r4(L.ny)], rmsUm: r2(L.rms * um), fitShare: r2(L.nFit / L.nPts)};
     const out = Object.assign(base, {edge, profile: prof, wornPct: r2(100 * nW / (nAll || 1)), ms: 0});
-    if (o.debug) Object.defineProperty(out, 'dbg', {value: {I, F, L, P, vbs, E, A}, enumerable: false});
+    if (o.debug) Object.defineProperty(out, 'dbg', {value: {I, F, L, P, vbs, E, A, cands: E.cands.slice(0, 4).map(c => ({a: c.a, r: c.r, len: c.lenPx, step: r2(c.step), tr: r2(c.texRatio), dc: r2(c.darkClean), score: Math.round(c.score)}))}, enumerable: false});
     if (!nW) return Object.assign(out, {status: 'no-wear', reason: 'no land wider than ' + MIN_VB_UM + ' um along the edge', vbMaxUm: 0, vbMeanUm: 0, ms: Date.now() - t0});
     const u = P.U[kMax], xE = L.cx + L.tx * u, yE = L.cy + L.ty * u, d = vbs[kMax];
     const sh = []; for (let k = Math.max(0, kMax - 4); k <= Math.min(P.nU - 1, kMax + 4); k++) if (P.sharp[k] === P.sharp[k]) sh.push(P.sharp[k]);
     const sharpMax = sh.length ? sh.sort((p, q) => p - q)[sh.length >> 1] : 0;
     Object.assign(out, {status: 'ok', vbMaxUm: r2(d * um), vbMeanUm: r2(sum / nW),
+      vbbUm: r2(sum / nW), wornLengthUm: r2(nW * DU * um),
       max: {ref: toImg(xE, yE), front: toImg(xE + L.nx * d, yE + L.ny * d), uUm: r2((u - P.U[0]) * um)}, sharpness: r2(sharpMax), ms: Date.now() - t0});
     return out;
   }
