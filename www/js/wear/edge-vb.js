@@ -62,7 +62,21 @@
     const n = I.w * I.h, m = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const r = I.r[i], g = I.g[i], b = I.b[i];
-      if ((r > 170 && g < 90 && b < 90 && r - g > 110) || (g > 150 && g - r > 70 && g - b > 70) || (b > 140 && b - r > 70 && b - g > 70) || (r > 248 && g > 248 && b > 248)) m[i] = 1;
+      if ((r > 170 && g < 90 && b < 90 && r - g > 110) || (g > 150 && g - r > 70 && g - b > 70) || (b > 140 && b - r > 70 && b - g > 70)) m[i] = 1;
+    }
+    // white label boxes: connected near-white regions that fill their bounding box (saturated glints on the tool are
+    // irregular and stay image content)
+    const wt = new Uint8Array(n), seen = new Uint8Array(n), q = new Int32Array(n);
+    for (let i = 0; i < n; i++) if (I.r[i] > 246 && I.g[i] > 246 && I.b[i] > 246) wt[i] = 1;
+    for (let i0 = 0; i0 < n; i0++) {
+      if (!wt[i0] || seen[i0]) continue;
+      let qh = 0, qt = 0, x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1; q[qt++] = i0; seen[i0] = 1;
+      while (qh < qt) {
+        const i = q[qh++], x = i % I.w, y = (i - x) / I.w; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        for (const j of [i - 1, i + 1, i - I.w, i + I.w]) if (j >= 0 && j < n && wt[j] && !seen[j] && Math.abs((j % I.w) - x) <= 1) { seen[j] = 1; q[qt++] = j; }
+      }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (qt >= 60 && qt >= .55 * bw * bh && bw >= 8 && bh >= 5) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) m[y * I.w + x] = 1;
     }
     // grow by 1 px (anti-aliased rims)
     const o = m.slice();
@@ -142,10 +156,10 @@
         for (let d = 3; d <= 20; d++) { const i1 = at(x0 + nx * d, y0 + ny * d), i2 = at(x0 - nx * d, y0 - ny * d); if (i1 >= 0 && valid[i1]) { a += F.g1[i1]; ka++; } if (i2 >= 0 && valid[i2]) { b += F.g1[i2]; kb++; } }
         if (!ka || !kb) continue;
         const step = a / ka - b / kb; if (step > STEP) { good++; cSum += step; }
-        for (let d = 15; d <= 90; d += 15) { const i1 = at(x0 + nx * d, y0 + ny * d), i2 = at(x0 - nx * d, y0 - ny * d); if (i1 >= 0 && i2 >= 0) { hb += F.texC[i1]; hd += F.texC[i2]; kh++; } }
+        for (let d = 15; d <= 90; d += 15) { const i1 = at(x0 + nx * d, y0 + ny * d), i2 = at(x0 - nx * d, y0 - ny * d); if (i1 >= 0 && i2 >= 0) { hb += F.tex[i1] / (F.g6[i1] + 20); hd += F.tex[i2] / (F.g6[i2] + 20); kh++; } }
         const dm = b / kb; for (let d = 25; ; d += 10) { const i2 = at(x0 - nx * d, y0 - ny * d); if (i2 < 0) break; dn++; if (F.g6[i2] > dm + .5 * step) dk++; }
       }
-      c.lenPx = good * 4; c.step = good ? cSum / good : 0; c.texRatio = kh ? (hb + 1) / (hd + 1) : 1; c.darkClean = dn ? 1 - dk / dn : 1;
+      c.lenPx = good * 4; c.step = good ? cSum / good : 0; c.texRatio = kh ? (hb + 1e-3 * kh) / (hd + 1e-3 * kh) : 1; c.darkClean = dn ? 1 - dk / dn : 1;
       c.score = c.lenPx * Math.max(.5, Math.min(3, c.texRatio)) * c.darkClean ** 3;
     }
     cands.sort((p, q) => q.score - p.score);
@@ -332,7 +346,11 @@
   const D0_UM = 6;              // skip the edge transition itself (um)
   const G_THR = 0.12;           // step (normalised grey, p5..p95 = 0..1) a 'no land' position is worth
   const JUMP_STEP = 0.004;      // DP penalty per work px of front jump
-  const SWITCH = 0.25;          // DP penalty land <-> no land
+  const SWITCH = 0.25;
+  const INTACT_STEP_UM = 40;    // intact flank stretch that ends the search along a normal
+  const INTACT_SD = 0.07;       // its grey spread (normalised, after along-edge averaging)
+  const INTACT_LVL = 0.8;       // and its brightness relative to the flank reference band
+  const BEYOND = 0.3;           // weight of steps beyond the intact stretch          // DP penalty land <-> no land
   function landStep(I, valid, L, um, o) {
     const {w, h} = I, n = w * h, maxD = Math.min(Math.round((o.maxVbUm || MAX_VB_UM) / um), Math.round(.6 * Math.max(w, h)));
     const g = new Float32Array(n);
@@ -352,12 +370,28 @@
       let s = 0, c = 0; for (let j = Math.max(0, k - sm); j <= Math.min(nU - 1, k + sm); j++) { const v = T[j * nD + d]; if (v === v) { s += v; c++; } }
       if (c > sm) Ts[k * nD + d] = s / c;
     }
-    const sw = Math.max(2, Math.round(STEP_W_UM / um)), D0 = Math.max(2, Math.round(D0_UM / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
+    const sw = Math.max(2, Math.round(STEP_W_UM / um)), D0 = Math.max(2, Math.round((o.d0Um || D0_UM) / um)), minPx = Math.max(MIN_VB_PX, MIN_VB_UM / um);
     const G = new Float32Array(nU * nD).fill(-1), seenK = new Uint8Array(nU);
     for (let k = 0; k < nU; k++) for (let d = D0 + sw; d < nD - sw; d++) {
       let a = 0, ca = 0, b = 0, cb = 0;
       for (let j = 1; j <= sw; j++) { const v1 = Ts[k * nD + d + j], v0 = Ts[k * nD + d - j + 1]; if (v1 === v1) { a += v1; ca++; } if (v0 === v0) { b += v0; cb++; } }
       if (ca > sw / 2 && cb > sw / 2) { G[k * nD + d] = a / ca - b / cb; seenK[k] = 1; }
+    }
+    // the search along a normal ends where intact flank starts: a stretch of INTACT_STEP_UM that is homogeneous (the
+    // land is broken up, the flank even under the along-edge averaging) and about as bright as the flank reference band
+    // (REF_UM from the edge); steps beyond it (flank -> next face) are damped, so the DP only takes them with support
+    const kI = Math.max(4, Math.round(INTACT_STEP_UM / um)), r0 = Math.round(REF_UM[0] / um), r1 = Math.min(nD - 1, Math.round(REF_UM[1] / um));
+    const refV = []; for (let k = 0; k < nU; k += 2) for (let d = r0; d <= r1; d += 2) { const v = Ts[k * nD + d]; if (v === v) refV.push(v); }
+    refV.sort((p, q) => p - q); const flank = refV.length > 50 ? refV[refV.length >> 1] : 0.7;
+    const cut = new Int32Array(nU).fill(nD);
+    for (let k = 0; k < nU; k++) {
+      for (let d = D0; d + kI < nD; d++) {
+        let s1 = 0, s2 = 0, c = 0; for (let j = d; j < d + kI; j++) { const v = Ts[k * nD + j]; if (v === v) { s1 += v; s2 += v * v; c++; } }
+        if (c < kI / 2) continue;
+        const m = s1 / c, sd = Math.sqrt(Math.max(0, s2 / c - m * m));
+        if (sd < (o.intactSd || INTACT_SD) && m > INTACT_LVL * flank) { cut[k] = d; break; }
+      }
+      for (let d = cut[k] + sw + 1; d < nD; d++) G[k * nD + d] *= BEYOND;
     }
     const gThr = o.gThr || G_THR, lam = o.jumpStep || JUMP_STEP, swp = o.switchPen || SWITCH;
     const acc = new Float32Array(nU * nD), arg = new Int32Array(nU * nD), tmp = new Float32Array(nD), ta = new Int32Array(nD);
@@ -390,7 +424,7 @@
       const W = front[k] < 0 ? 0 : front[k]; vb[k] = W >= minPx ? W : 0;
       if (W >= minPx) sharp[k] = G[k * nD + W];
     }
-    return {U, vb, sharp, nU, nD, Ts, front};
+    return {U, vb, sharp, nU, nD, Ts, front, G, cut, flank};
   }
 
   // ---------- main ----------
