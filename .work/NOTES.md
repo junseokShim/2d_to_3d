@@ -6,3 +6,8 @@
   90.34 -> 127.5 um (+41 %), front too short at the operator spot, too long on the right.
 - Tried: cumulative-evidence change point + DP along edge (TAU 1.3, INTACT_UM 25): overshoots into flank (S of
   near-edge flank elevated; ref band 150-300 um is lit differently). Brightness-free features: still ~150-180 um.
+# vbdetect3
+- 90.34 marker profile: grey rises in two steps (85->94 um, 100->106 um, coating rim); step detector peaked on the 2nd.
+  Fix: front = half-rise crossing between land min (15 um back) and max (15 um ahead) -> 90.34: 102 -> 95.5 um, 77.60: 78 -> 81.1 um. 19/0.
+- 24.33 um spot: operator marker 2 (853.8,607.6) is at the SAME along-edge position as marker 1, 23 um on the BACKGROUND side
+  of the dotted line: it is the real tool edge protruding beyond the reference line (edge deviation), not a land width.

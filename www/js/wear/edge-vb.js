@@ -353,6 +353,7 @@
   const DEPTH_BONUS = 0;           // per um of front depth (inside the intact cut)
   const OUT_UM = 15;            // level after a front, compared with the flank
   const BEYOND = 0.3;           // weight of steps beyond the intact stretch          // DP penalty land <-> no land
+  const FRONT_BACK_UM = 15, FRONT_AHEAD_UM = 15, FRONT_FRAC = 0.5;   // half-rise front: land level window, flank level window
   function landStep(I, valid, L, um, o) {
     const {w, h} = I, n = w * h, maxD = Math.min(Math.round((o.maxVbUm || MAX_VB_UM) / um), Math.round(.6 * Math.max(w, h)));
     const g = new Float32Array(n);
@@ -431,11 +432,24 @@
       if (!k) break;
       if (st < 0) st = argN[k]; else st = fromN[k * nD + st] ? -1 : arg[k * nD + st];
     }
+    // sub-step position: the step detector peaks at the steepest part of the rise, which on a stepped ramp (land ->
+    // coating rim -> flank) can be its far end; the front is where the grey first crosses half way from the land level
+    // (minimum just before the step) to the level after it (maximum just after), as for any edge
+    const kB = Math.max(3, Math.round(FRONT_BACK_UM / um)), kA = Math.max(3, Math.round(FRONT_AHEAD_UM / um));
+    const halfX = (k, d) => {
+      let lo = d, hi = d;
+      for (let j = Math.max(D0, d - kB); j <= d; j++) { const v = Ts[k * nD + j]; if (v === v && !(Ts[k * nD + lo] <= v)) lo = j; }
+      for (let j = d; j <= Math.min(nD - 1, d + kA); j++) { const v = Ts[k * nD + j]; if (v === v && !(Ts[k * nD + hi] >= v)) hi = j; }
+      const vl = Ts[k * nD + lo], vh = Ts[k * nD + hi]; if (!(vh - vl > .05)) return d;
+      const half = vl + FRONT_FRAC * (vh - vl);
+      for (let j = lo + 1; j <= hi; j++) { const v0 = Ts[k * nD + j - 1], v1 = Ts[k * nD + j]; if (v1 === v1 && v0 === v0 && v0 < half && v1 >= half) return j - 1 + (half - v0) / (v1 - v0); }
+      return d;
+    };
     const vb = new Float32Array(nU).fill(NaN), sharp = new Float32Array(nU).fill(NaN);
     for (let k = 0; k < nU; k++) {
       if (!seenK[k] || cut[k] >= nD) continue;      // no intact flank found along this normal (image border, label): the front is unconfirmed
-      const W = front[k] < 0 ? 0 : front[k]; vb[k] = W >= minPx ? W : 0;
-      if (W >= minPx) sharp[k] = G[k * nD + W];
+      const W = front[k] < 0 ? 0 : (o.noHalf ? front[k] : halfX(k, front[k])); vb[k] = W >= minPx ? W : 0;
+      if (W >= minPx) { sharp[k] = G[k * nD + front[k]]; continue; }
     }
     return {U, vb, sharp, nU, nD, Ts, front, G, cut, flank};
   }
