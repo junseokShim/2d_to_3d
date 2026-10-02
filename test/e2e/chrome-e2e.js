@@ -125,6 +125,7 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   await mouse('mouseReleased', [n0[0] + dx, n0[1]]); await sleep(300);
   m.edit = await ev(`JSON.stringify({area:Tool3D.metro.summary().flutes[0].areaMm2,wrArea:Tool3D.wearResult.perFlute[0].areaMm2,vb:Tool3D.metro.summary().flutes[0].vbMaxMm,edited:Tool3D.metro.summary().flutes[0].edited,contract:Tool3D.wearResult.metro,wr:Tool3D.wearResult.perFlute[0].vbMaxMm})`);
   const me = JSON.parse(m.edit); m.editOk = me.edited === true && me.area > before && Math.abs(me.wr - me.vb) < 1e-4 && Math.abs(me.wrArea - me.area) < 1e-4 && me.contract && me.contract.edited === true; m.areaBefore = before;
+  const shotEl = async (sel, name) => { const clip = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`); const {data} = await s('Page.captureScreenshot', {format: 'png', clip, captureBeyondViewport: true}); fs.writeFileSync(path.join(OUT, name), Buffer.from(data, 'base64')); };
   // ---------- ④ end-face segmentation (upload slot) + profile graph (reference line, perpendicular deviation) ----------
   const EP = m.ep = {};
   await ev(`(()=>{const set=(id,v)=>{const e=document.querySelector(id);e.value=v;e.dispatchEvent(new Event('change'));};set('#mtSegK','4');set('#mtSegBar','2000');set('#mtSegD','10');return 1})()`);
@@ -155,7 +156,6 @@ const res = {console: [], errors: [], requests: [], checks: {}};
   if (hf) fs.copyFileSync(hf, path.join(OUT, 'report.html'));
   await ev(`document.querySelector('#mtSave').click();document.querySelector('#mtSave').click();1`);
   m.history = await ev(`JSON.parse(localStorage.getItem('tool3d.metro.history')||'{}')['E2E-01']?.length||0`);
-  const shotEl = async (sel, name) => { const clip = await ev(`(()=>{const r=document.querySelector('${sel}').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`); const {data} = await s('Page.captureScreenshot', {format: 'png', clip, captureBeyondViewport: true}); fs.writeFileSync(path.join(OUT, name), Buffer.from(data, 'base64')); };
   await shotEl('#metro', 'metro-edit.png');
   await s('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 2, mobile: true}); await sleep(800);
   await ev(`Tool3D.metro.setTool('vb');Tool3D.metro.fit();1`); await sleep(300);
