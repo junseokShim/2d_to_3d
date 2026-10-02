@@ -5,6 +5,8 @@
  * statistics, VB profile along the edge. Page 2: end-face wear area per tooth (annotated top image + table), all flutes,
  * tolerance verdict, tool-life trend, uncertainty budget, calibration, manual measurements, method. Page 3 (Tool3D.surfaceReport.pdfPage from map3d/surface-ui.js): 3D view in deviation
  * mode, deviation statistics, per-flute wear volume + equivalent edge radius, 3D tolerance verdict, chips, wear-volume trend.
+ * Last page (Tool3D.endProfileReport.pdfPage from metro-ep-ui.js): end-face segmentation per tooth and the profile graph with the
+ * reference-line deviation; the same sections go into the HTML and CSV.
  */
 (function () {
   'use strict';
@@ -157,6 +159,8 @@
     const d = data(), pages = [page1(d), page2(d)];
     const s3 = T.surfaceReport && T.surfaceReport.pdfPage ? T.surfaceReport.pdfPage() : null;   // page 3: section ③ 3D surface metrology (surface-ui.js)
     if (s3) pages.push(s3);
+    const s4 = T.endProfileReport && T.endProfileReport.pdfPage ? T.endProfileReport.pdfPage() : null;   // end-face segmentation + profile deviation (metro-ep-ui.js)
+    if (s4) pages.push(s4);
     pages.forEach((P, i) => footer(P, i + 1, pages.length));
     return M.pdfBytes(pages);
   }
@@ -217,6 +221,7 @@ ${tol ? `<h2>Tolerance verdict — ${tol.pass == null ? '-' : tol.pass ? '<span 
 ${d.manual.length ? `<h2>Manual measurements</h2><table><tr><th>Type</th><th>Flute</th><th>Value mm</th><th>U mm</th></tr>${d.manual.map(mm => `<tr><td>${mm.kind}</td><td>F${mm.flute}</td><td>${f3(mm.mm)}</td><td>${f3(mm.U)}</td></tr>`).join('')}</table>` : ''}
 <p class="note">${esc(METHOD)}</p>
 ${T.surfaceReport && T.surfaceReport.html ? T.surfaceReport.html() || '' : ''}
+${T.endProfileReport ? T.endProfileReport.html() || '' : ''}
 <footer><span>Tool3D measurement — estimate from photographs, not a certified measurement.</span><span>Signature: ____________________</span></footer></body></html>`;
   }
 
@@ -227,7 +232,7 @@ ${T.surfaceReport && T.surfaceReport.html ? T.surfaceReport.html() || '' : ''}
     print() { const h = htmlDoc(); if (!h) return; const w = window.open('', '_blank'); if (!w) return this.html(); w.document.write(h); w.document.close(); setTimeout(() => { try { w.print(); } catch (e) { /* closed */ } }, 600); },
     csv() {
       if (!ready()) return null; const d = data();
-      const t = M.csv(d) + (T.metroVb ? T.metroVb.csvSections(d) : '') + (T.surfaceReport && T.surfaceReport.csv ? String.fromCharCode(13, 10) + (T.surfaceReport.csv() || '') : '');
+      const t = M.csv(d) + (T.metroVb ? T.metroVb.csvSections(d) : '') + (T.surfaceReport && T.surfaceReport.csv ? String.fromCharCode(13, 10) + (T.surfaceReport.csv() || '') : '') + (T.endProfileReport ? T.endProfileReport.csv() : '');
       save(`tool3d-${safeId()}-${fileStamp()}.csv`, new Blob(['﻿' + t], {type: 'text/csv'})); return t;
     }
   };
