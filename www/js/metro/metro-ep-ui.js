@@ -289,7 +289,8 @@ ${R.pick ? `<tr><td><b>[1] picked point</b></td><td>${f2(R.pick.x)}</td><td><b>$
     get state() { return S; }, build, setImage, setProfile, useSource, summary, segAnnotated, profAnnotated,
     setOptions(o) { Object.assign(S.opt, o); if (o.diameterMm != null) $('#mtSegD').value = o.diameterMm; if (o.k != null) $('#mtSegK').value = o.k; if (o.barUm != null) $('#mtSegBar').value = o.barUm; if (o.scale) $('#mtSegScale').value = o.scale; runSeg(); },
     setSegment(x0, x1) { S.segX = [Math.min(x0, x1), Math.max(x0, x1)]; evalProfile(); },
-    pick(x) { S.pickX = x; evalProfile(); }
+    pick(x) { S.pickX = x; evalProfile(); },
+    graphClient(x, y) { const c = $('#mtProfCv'), r = c.getBoundingClientRect(), g = model(S.gW, S.gH); return [r.left + g.X(x), r.top + (y == null ? (g.pad.t + S.gH - g.pad.b) / 2 : g.Y(y))]; }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build); else build();
 })();
